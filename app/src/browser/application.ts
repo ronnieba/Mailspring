@@ -46,6 +46,7 @@ import {
 } from './notification-ipc';
 import WindowsTaskbarManager from './windows-taskbar-manager';
 import { resetThemeForRecovery } from './theme-recovery';
+import { mailCacheRecoveryAction } from '../mail-database-policy';
 
 // The options renderers may pass to `new-window`: what the popout composer (DraftStore) and
 // thread popout (MessageStore) send, plus window sizing for plugins. The main process sets
@@ -435,6 +436,15 @@ export default class Application extends EventEmitter {
   }
 
   _resetDatabaseAndRelaunch = ({ errorMessage }: { errorMessage?: string } = {}) => {
+    // Demo has no mail cache. Rebuild+relaunch with the same --demo args is
+    // the endless Okay dialog (SqliteError readonly → delete → relaunch).
+    if (mailCacheRecoveryAction({ demoMode: this.demoMode }) !== 'rebuild-and-relaunch') {
+      console.error(
+        '[Demo Mode] Ignoring application:reset-database (no mail DB rebuild):',
+        errorMessage
+      );
+      return;
+    }
     if (this._resettingAndRelaunching) return;
     this._resettingAndRelaunching = true;
 

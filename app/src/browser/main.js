@@ -344,22 +344,6 @@ const start = () => {
   const configDirPath = setupConfigDir(options, identity);
   options.configDirPath = configDirPath;
 
-  if (options.demoMode) {
-    // Renderer DatabaseStore opens edgehill.db at boot. Demo skips mailsync
-    // migrate, so create an empty SQLite file so the window can load.
-    const dbPath = path.join(configDirPath, 'edgehill.db');
-    if (!fs.existsSync(dbPath)) {
-      try {
-        const Database = require('better-sqlite3');
-        const db = new Database(dbPath);
-        db.close();
-      } catch (err) {
-        fs.closeSync(fs.openSync(dbPath, 'a'));
-        console.warn('[Demo Mode] stub edgehill.db:', err.message);
-      }
-    }
-  }
-
   protocol.registerSchemesAsPrivileged([
     {
       scheme: 'mailspring',

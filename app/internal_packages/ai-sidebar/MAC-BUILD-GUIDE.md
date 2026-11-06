@@ -21,15 +21,26 @@ cd /path/to/Mailspring   # e.g. /Users/d623300/Developer/Mailspring-AI-Dev/src
 git checkout cursor/ai-sidebar-prototype-842c
 npm install
 npm run typecheck
-npx ts-node app/internal_packages/ai-sidebar/test-core.ts
-npx ts-node app/internal_packages/ai-sidebar/test-adapter.ts
-npx ts-node app/internal_packages/ai-sidebar/test-real-adapter.ts
-npx ts-node app/internal_packages/ai-sidebar/test-isolation.ts
-npx ts-node app/internal_packages/ai-sidebar/test-integration.ts
+npx ts-node --project app/tsconfig.json app/internal_packages/ai-sidebar/test-core.ts
+npx ts-node --project app/tsconfig.json app/internal_packages/ai-sidebar/test-adapter.ts
+npx ts-node --project app/tsconfig.json app/internal_packages/ai-sidebar/test-real-adapter.ts
+npx ts-node --project app/tsconfig.json app/internal_packages/ai-sidebar/test-isolation.ts
+npx ts-node --project app/tsconfig.json app/internal_packages/ai-sidebar/test-integration.ts
+npx ts-node --project app/tsconfig.json app/internal_packages/ai-sidebar/test-mail-database.ts
+
+# From any other cwd — pass ABSOLUTE paths and --prefix so npx uses the repo
+# ts-node. Do not use a local tsconfig.json (that was a tester command error,
+# not a test portability defect).
+# REPO=/Users/d623300/Developer/Mailspring-AI-Dev/src
+# cd /tmp
+# npx --prefix "$REPO" ts-node --project "$REPO/app/tsconfig.json" \
+#   "$REPO/app/internal_packages/ai-sidebar/test-mail-database.ts"
 
 # Accountless synthetic demo (NOT npm start — that is onboarding)
 npm run start:demo
 ```
+
+`--demo` does **not** open, migrate, rebuild, or relaunch over `edgehill.db`. A leftover empty stub in `Mailspring-demo/` from an older checkout is ignored; do not delete it. Production `application:reset-database` (Okay → rebuild → relaunch) is unchanged.
 
 Expected window title: `Mailspring Demo (synthetic — no account)`.
 Expected sidebar banner: `🧪 מצב DEMO` / `MOCK AI · synthetic fixtures`.

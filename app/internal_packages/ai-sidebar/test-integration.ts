@@ -149,6 +149,22 @@ async function runTests() {
     assertContains(appTs, 'Skipping mailsync migrate');
     assertContains(appTs, 'capturePage');
   });
+  await test('application.ts does not rebuild/relaunch the mail cache in demo', () => {
+    assertContains(appTs, 'mailCacheRecoveryAction');
+    assertContains(appTs, 'Ignoring application:reset-database');
+  });
+  await test('main.js does not create a stub edgehill.db', () => {
+    assertFalse(/stub edgehill\.db/.test(mainJs));
+    assertFalse(/edgehill\.db/.test(mainJs));
+  });
+  await test('default-client notification is skipped in demo', () => {
+    const notif = fs.readFileSync(
+      path.join(__dirname, '../notifications/lib/items/default-client-notif.tsx'),
+      'utf8'
+    );
+    assertContains(notif, 'isDemoMode()');
+    assertContains(notif, "registerForURLScheme('mailto'");
+  });
   await test('key-manager never loads safeStorage at module top', () => {
     assertFalse(
       /^const \{ safeStorage \} = require\('@electron\/remote'\)/m.test(keyManager),
