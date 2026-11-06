@@ -10,9 +10,13 @@ export function activate() {
     role: 'MessageListSidebar:Panel',
   });
   try {
-    if (AppEnv.getWindowProps && AppEnv.getWindowProps().demoMode) {
+    const demo =
+      (AppEnv.getWindowProps && AppEnv.getWindowProps().demoMode) ||
+      process.env.MAILSPRING_DEMO === '1';
+    if (demo) {
       AppEnv.config.set('core.workspace.mode', 'split');
       AppEnv.config.set('core.messageListSidebar.panel', 'ai-sidebar');
+      console.log('[Demo Mode] AISidebar registered (MessageListSidebar:Panel, syncInit)');
     }
   } catch {
     // Config may be unavailable in specs

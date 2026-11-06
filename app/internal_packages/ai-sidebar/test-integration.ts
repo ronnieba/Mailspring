@@ -148,6 +148,7 @@ async function runTests() {
     assertContains(appTs, 'demoMode: true');
     assertContains(appTs, 'Skipping mailsync migrate');
     assertContains(appTs, 'capturePage');
+    assertContains(appTs, 'evaluateDemoSidebarReady');
   });
   await test('application.ts does not rebuild/relaunch the mail cache in demo', () => {
     assertContains(appTs, 'mailCacheRecoveryAction');

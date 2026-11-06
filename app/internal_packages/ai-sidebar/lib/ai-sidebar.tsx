@@ -31,7 +31,7 @@ class AISidebarInner extends React.Component<Record<string, never>, AISidebarSta
   private _unsubscribe: (() => void) | null = null;
 
   state: AISidebarState = {
-    scopeMode: 'selected-messages',
+    scopeMode: isDemoMode() ? 'all-mail' : 'selected-messages',
     resolvedScope: null,
     retrievalMode: 'ranked',
     conversation: [],
@@ -62,6 +62,14 @@ class AISidebarInner extends React.Component<Record<string, never>, AISidebarSta
 
     // Initial scope resolution
     AISidebarStore.refreshScope();
+
+    if (isDemoMode()) {
+      (window as any).__mailspringDemoSidebar = {
+        setScopeMode: (mode: ScopeMode) => AISidebarStore.setScopeMode(mode),
+        submitQuery: (query: string) => AISidebarStore.submitQuery(query),
+        getState: () => AISidebarStore.getState(),
+      };
+    }
   }
 
   componentDidUpdate(_prevProps: Record<string, never>, prevState: AISidebarState) {
@@ -74,6 +82,9 @@ class AISidebarInner extends React.Component<Record<string, never>, AISidebarSta
   componentWillUnmount() {
     if (this._unsubscribe) {
       this._unsubscribe();
+    }
+    if ((window as any).__mailspringDemoSidebar) {
+      delete (window as any).__mailspringDemoSidebar;
     }
   }
 
@@ -360,7 +371,7 @@ class AISidebarInner extends React.Component<Record<string, never>, AISidebarSta
 
   render() {
     return (
-      <div className="ai-sidebar" dir="rtl">
+      <div className="ai-sidebar" dir="rtl" data-demo-ready={isDemoMode() ? 'true' : undefined}>
         <div className="ai-sidebar-header">
           <h2>🤖 עוזר AI</h2>
           <span className="provider-badge">{this.state.providerName}</span>

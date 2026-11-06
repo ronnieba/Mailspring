@@ -47,6 +47,14 @@ import {
 import WindowsTaskbarManager from './windows-taskbar-manager';
 import { resetThemeForRecovery } from './theme-recovery';
 import { mailCacheRecoveryAction } from '../mail-database-policy';
+import {
+  DEMO_SIDEBAR_SNAPSHOT_JS,
+  DEMO_SIDEBAR_RUN_QUERY_JS,
+  DEMO_SIDEBAR_REVEAL_CITATIONS_JS,
+  evaluateDemoSidebarReady,
+  evaluateDemoQueryComplete,
+  DemoSidebarSnapshot,
+} from '../demo-sidebar-readiness';
 
 // The options renderers may pass to `new-window`: what the popout composer (DraftStore) and
 // thread popout (MessageStore) send, plus window sizing for plugins. The main process sets
@@ -421,18 +429,123 @@ export default class Application extends EventEmitter {
       return;
     }
     win.waitForLoad(() => {
-      setTimeout(async () => {
-        try {
-          const image = await win.browserWindow.capturePage();
-          const png = image.toPNG();
-          fs.mkdirSync(path.dirname(dest), { recursive: true });
-          fs.writeFileSync(dest, png);
-          console.log(`[Demo Mode] Wrote own-window capture (${png.length} bytes) to ${dest}`);
-        } catch (err) {
-          console.error('[Demo Mode] capturePage failed:', (err as Error).message);
-        }
-      }, 2000);
+      this._captureDemoWhenReady(win, dest).catch((err) => {
+        console.error('[Demo Mode] capture failed:', (err as Error).message);
+      });
     });
+  }
+
+  async _pollDemoSidebarSnapshot(win, timeoutMs: number): Promise<DemoSidebarSnapshot | null> {
+    const deadline = Date.now() + timeoutMs;
+    let last: DemoSidebarSnapshot | null = null;
+    while (Date.now() < deadline) {
+      if (win.browserWindow.isDestroyed()) {
+        return last;
+      }
+      try {
+        last = (await win.browserWindow.webContents.executeJavaScript(
+          DEMO_SIDEBAR_SNAPSHOT_JS,
+          true
+        )) as DemoSidebarSnapshot;
+      } catch (err) {
+        last = {
+          readyAttr: false,
+          hasRoot: false,
+          hasDemoBanner: false,
+          hasMockWarning: false,
+          scopeCount: 0,
+          citationCount: 0,
+          conversationCount: 0,
+          tabs: [],
+          reason: (err as Error).message,
+        };
+      }
+      if (evaluateDemoSidebarReady(last).ready) {
+        return last;
+      }
+      await new Promise((resolve) => setTimeout(resolve, 250));
+    }
+    return last;
+  }
+
+  async _captureDemoWhenReady(win, dest: string) {
+    const started = Date.now();
+    const snap = await this._pollDemoSidebarSnapshot(win, 20000);
+    const ready = evaluateDemoSidebarReady(snap);
+    let queryComplete = false;
+    if (!ready.ready) {
+      console.error(
+        `[Demo Mode] capture FAILED after ${Date.now() - started}ms: ${ready.reason}`,
+        JSON.stringify(snap)
+      );
+    } else {
+      console.log(
+        `[Demo Mode] sidebar ready after ${Date.now() - started}ms tabs=${JSON.stringify(snap && snap.tabs)}`
+      );
+      try {
+        const ran = await win.browserWindow.webContents.executeJavaScript(
+          DEMO_SIDEBAR_RUN_QUERY_JS,
+          true
+        );
+        if (!ran || !ran.ok) {
+          console.error('[Demo Mode] mock query did not run:', ran && ran.reason);
+        } else {
+          const queryDeadline = Date.now() + 10000;
+          let querySnap = snap;
+          while (Date.now() < queryDeadline) {
+            querySnap = (await win.browserWindow.webContents.executeJavaScript(
+              DEMO_SIDEBAR_SNAPSHOT_JS,
+              true
+            )) as DemoSidebarSnapshot;
+            if (evaluateDemoQueryComplete(querySnap).complete) {
+              break;
+            }
+            await new Promise((resolve) => setTimeout(resolve, 200));
+          }
+          const q = evaluateDemoQueryComplete(querySnap);
+          queryComplete = q.complete;
+          if (!q.complete) {
+            console.error(
+              `[Demo Mode] mock query incomplete: ${q.reason}`,
+              JSON.stringify(querySnap)
+            );
+          } else {
+            console.log(
+              `[Demo Mode] mock query complete citations=${querySnap.citationCount} messages=${querySnap.conversationCount}`
+            );
+          }
+        }
+      } catch (err) {
+        console.error('[Demo Mode] mock query failed:', (err as Error).message);
+      }
+    }
+
+    if (win.browserWindow.isDestroyed()) {
+      console.error('[Demo Mode] capture skipped: window destroyed');
+      return;
+    }
+    if (queryComplete) {
+      try {
+        await win.browserWindow.webContents.executeJavaScript(
+          DEMO_SIDEBAR_REVEAL_CITATIONS_JS,
+          true
+        );
+        await new Promise((resolve) => setTimeout(resolve, 150));
+      } catch {
+        // still capture
+      }
+    }
+    const image = await win.browserWindow.capturePage();
+    const png = image.toPNG();
+    fs.mkdirSync(path.dirname(dest), { recursive: true });
+    fs.writeFileSync(dest, png);
+    if (ready.ready && queryComplete) {
+      console.log(`[Demo Mode] Wrote own-window capture (${png.length} bytes) to ${dest}`);
+    } else {
+      console.error(
+        `[Demo Mode] Wrote diagnostic capture (${png.length} bytes) to ${dest} (ready=${ready.ready} query=${queryComplete})`
+      );
+    }
   }
 
   _resetDatabaseAndRelaunch = ({ errorMessage }: { errorMessage?: string } = {}) => {

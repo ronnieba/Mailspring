@@ -27,6 +27,7 @@ npx ts-node --project app/tsconfig.json app/internal_packages/ai-sidebar/test-re
 npx ts-node --project app/tsconfig.json app/internal_packages/ai-sidebar/test-isolation.ts
 npx ts-node --project app/tsconfig.json app/internal_packages/ai-sidebar/test-integration.ts
 npx ts-node --project app/tsconfig.json app/internal_packages/ai-sidebar/test-mail-database.ts
+npx ts-node --project app/tsconfig.json app/internal_packages/ai-sidebar/test-demo-sidebar.ts
 
 # From any other cwd — pass ABSOLUTE paths and --prefix so npx uses the repo
 # ts-node. Do not use a local tsconfig.json (that was a tester command error,
@@ -52,7 +53,9 @@ electron ./app --enable-logging --dev --demo \
   --demo-capture="$PWD/ai-sidebar-demo.png"
 ```
 
-Electron `capturePage` writes only this window. Check stdout for `Wrote own-window capture`.
+Capture waits until `.ai-sidebar[data-demo-ready]` is mounted with the DEMO banner and three scope buttons, then runs a fixture mock query (`חפש חשבוניות`) and snapshots citations. It does **not** screenshot at `did-finish-load` / a fixed 2s delay.
+
+Check stdout for `sidebar ready`, `mock query complete`, and `Wrote own-window capture`. `Wrote diagnostic capture` means the sidebar never became ready — that PNG is a failure, not success.
 
 ## Verify isolation after launch
 

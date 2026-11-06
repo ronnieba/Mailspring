@@ -13,6 +13,7 @@ import {
 } from './core/types';
 import { mockProvider } from './core/mock-provider';
 import { mailspringAdapter } from './mailspring-adapter';
+import { isDemoMode } from './synthetic-demo';
 
 const DEFAULT_BUDGET: ProcessingBudget = {
   maxMessages: 100,
@@ -35,7 +36,8 @@ interface AISidebarState {
 
 class AISidebarStore extends MailspringStore {
   private _state: AISidebarState = {
-    scopeMode: 'selected-messages',
+    // Demo has no real thread selection. all-mail still uses synthetic fixtures.
+    scopeMode: isDemoMode() ? 'all-mail' : 'selected-messages',
     resolvedScope: null,
     retrievalMode: 'ranked',
     conversation: [],

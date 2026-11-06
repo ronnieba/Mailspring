@@ -139,15 +139,22 @@ export function searchDemoMessages(
     messages = [...SYNTHETIC_MESSAGES];
   }
 
-  // Filter by query
+  // Filter by query. Tokenize so "חפש חשבוניות" still hits the invoice fixture
+  // (full-string includes() would match nothing).
   if (query) {
-    const q = query.toLowerCase();
-    messages = messages.filter(
-      (m) =>
-        m.subject.toLowerCase().includes(q) ||
-        m.snippet.toLowerCase().includes(q) ||
-        m.from.toLowerCase().includes(q)
-    );
+    const tokens = query
+      .toLowerCase()
+      .replace(/חשבוניות/g, 'חשבונית')
+      .split(/\s+/)
+      .filter((t) => t.length > 1);
+    if (tokens.length > 0) {
+      messages = messages.filter((m) => {
+        const hay = `${m.subject} ${m.snippet} ${m.from}`
+          .toLowerCase()
+          .replace(/חשבוניות/g, 'חשבונית');
+        return tokens.some((t) => hay.includes(t));
+      });
+    }
   }
 
   // Apply pagination
