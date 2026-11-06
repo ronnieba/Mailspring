@@ -1,6 +1,7 @@
 /**
  * Mailspring-specific mail adapter implementation.
  * Connects core types to Mailspring's stores and APIs.
+ * Falls back to synthetic demo data when no accounts are configured.
  */
 import {
   DatabaseStore,
@@ -23,6 +24,13 @@ import {
   FolderRef,
   SearchProgress,
 } from './core/types';
+import {
+  isDemoMode,
+  getDemoScope,
+  searchDemoMessages,
+  getDemoSyncProgress,
+  SYNTHETIC_MESSAGES,
+} from './synthetic-demo';
 
 function messageToRef(msg: Message): MessageRef {
   return {
@@ -48,9 +56,15 @@ function folderToRef(cat: any): FolderRef {
 export class MailspringAdapter implements MailAdapter {
   /**
    * Resolves the current UI state into a concrete scope.
+   * Falls back to demo mode when no accounts are configured.
    * IMPORTANT: This uses actual multi-selection, not just focused thread.
    */
   async resolveScope(mode: ScopeMode): Promise<ResolvedScope> {
+    // Demo mode: return synthetic scope when no accounts configured
+    if (isDemoMode()) {
+      return getDemoScope(mode);
+    }
+
     const perspective = FocusedPerspectiveStore.current();
     const accountIds = perspective.accountIds || AccountStore.accountIds();
 
@@ -141,6 +155,7 @@ export class MailspringAdapter implements MailAdapter {
   /**
    * Search messages within the resolved scope.
    * Respects pagination and retrieval mode.
+   * Falls back to synthetic demo data when no accounts configured.
    */
   async searchMessages(
     scope: ResolvedScope,
@@ -150,6 +165,11 @@ export class MailspringAdapter implements MailAdapter {
     offset: number,
     signal?: AbortSignal
   ): Promise<SearchResult> {
+    // Demo mode: return synthetic messages
+    if (isDemoMode()) {
+      return searchDemoMessages(scope, query, limit, offset);
+    }
+
     const progress: SearchProgress = {
       totalEligible: null,
       processed: 0,
@@ -274,8 +294,15 @@ export class MailspringAdapter implements MailAdapter {
    * Navigate to a message.
    * NOTE: Standard navigation marks messages as read. This is a known limitation.
    * For read-only preview, a future enhancement could show a popover instead.
+   * In demo mode, navigation is a no-op since there's no real message list.
    */
   async navigateToMessage(messageId: string, preserveReadState: boolean): Promise<boolean> {
+    // Demo mode: no real messages to navigate to
+    if (isDemoMode()) {
+      console.log(`[AI Sidebar Demo] Would navigate to message: ${messageId}`);
+      return false;
+    }
+
     const msg = await DatabaseStore.find<Message>(Message, messageId);
     if (!msg) return false;
 
@@ -293,8 +320,14 @@ export class MailspringAdapter implements MailAdapter {
 
   /**
    * Get sync progress for accounts.
+   * Returns 100% in demo mode.
    */
   async getSyncProgress(accountIds: string[]): Promise<{ [accountId: string]: number }> {
+    // Demo mode: return synthetic progress
+    if (isDemoMode()) {
+      return getDemoSyncProgress();
+    }
+
     const result: { [accountId: string]: number } = {};
     const syncState = FolderSyncProgressStore.getSyncState();
 

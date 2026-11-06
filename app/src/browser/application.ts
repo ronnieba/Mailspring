@@ -217,11 +217,16 @@ export default class Application extends EventEmitter {
       this.openUrl(pendingUrl);
     }
 
-    if (process.platform === 'linux') {
-      const helper = new DefaultClientHelper();
-      helper.registerForURLScheme('mailspring');
-    } else {
-      app.setAsDefaultProtocolClient('mailspring');
+    // Skip URL scheme registration in dev/spec mode to avoid taking over links
+    // from the production app. Dev instances can still open mailspring:// URLs
+    // passed on the command line, but won't become the system handler.
+    if (!this.devMode && !this.specMode) {
+      if (process.platform === 'linux') {
+        const helper = new DefaultClientHelper();
+        helper.registerForURLScheme('mailspring');
+      } else {
+        app.setAsDefaultProtocolClient('mailspring');
+      }
     }
   }
 

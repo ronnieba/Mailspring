@@ -7,6 +7,7 @@ import { localized, Rx } from 'mailspring-exports';
 import { FluxContainer, Spinner } from 'mailspring-component-kit';
 import AISidebarStore from './ai-sidebar-store';
 import { ScopeMode, RetrievalMode, ConversationMessage, Citation } from './core/types';
+import { isDemoMode } from './synthetic-demo';
 import classNames from 'classnames';
 
 interface AISidebarState {
@@ -120,15 +121,25 @@ class AISidebarInner extends React.Component<Record<string, never>, AISidebarSta
   };
 
   _renderMockWarning() {
-    if (!this.state.isMockProvider) return null;
+    const inDemoMode = isDemoMode();
 
     return (
       <div className="ai-sidebar-mock-warning">
         <span className="icon">⚠️</span>
         <span className="text">
-          מצב Mock - אין חיבור ל-AI
-          <br />
-          <small>No external AI connected</small>
+          {inDemoMode ? (
+            <>
+              🧪 מצב DEMO - נתונים סינתטיים
+              <br />
+              <small>Synthetic data - no real account</small>
+            </>
+          ) : this.state.isMockProvider ? (
+            <>
+              מצב Mock - אין חיבור ל-AI
+              <br />
+              <small>No external AI connected</small>
+            </>
+          ) : null}
         </span>
       </div>
     );

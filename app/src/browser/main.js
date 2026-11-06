@@ -328,7 +328,8 @@ const start = () => {
   // mailto: links (this doesn't make it the default, just registers it as an option).
   // This handles existing installations and ensures registration completes even if
   // the Squirrel install hook's detached processes didn't finish in time.
-  if (process.platform === 'win32') {
+  // Skip in dev mode to avoid affecting production registration.
+  if (process.platform === 'win32' && !options.devMode) {
     const WindowsUpdater = require('./windows-updater');
     if (WindowsUpdater.existsSync()) {
       WindowsUpdater.registerAppUserModelId();
