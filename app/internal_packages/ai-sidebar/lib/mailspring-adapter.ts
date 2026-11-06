@@ -1,19 +1,8 @@
 /**
- * Mailspring-specific mail adapter implementation.
- * Connects core types to Mailspring's stores and APIs.
- * Falls back to synthetic demo data when no accounts are configured.
+ * Mailspring-specific mail adapter.
+ * Production stores are loaded lazily so Node tests can inject fakes and
+ * exercise this class without Electron or ThreadListStore.
  */
-import {
-  DatabaseStore,
-  FocusedContentStore,
-  FocusedPerspectiveStore,
-  FolderSyncProgressStore,
-  AccountStore,
-  Thread,
-  Message,
-  Actions,
-} from 'mailspring-exports';
-import ThreadListStore from '../../thread-list/lib/thread-list-store';
 import {
   MailAdapter,
   ScopeMode,
@@ -25,14 +14,69 @@ import {
   SearchProgress,
 } from './core/types';
 import {
-  isDemoMode,
+  isDemoMode as defaultIsDemoMode,
   getDemoScope,
   searchDemoMessages,
   getDemoSyncProgress,
-  SYNTHETIC_MESSAGES,
+  getDemoMessageBody,
 } from './synthetic-demo';
 
-function messageToRef(msg: Message): MessageRef {
+export interface QueryLike<T> {
+  where(condition: unknown): QueryLike<T>;
+  order?(order: unknown): QueryLike<T>;
+  limit?(n: number): QueryLike<T>;
+  offset?(n: number): QueryLike<T>;
+  search?(query: string): QueryLike<T>;
+  include?(attr: unknown): QueryLike<T> | Promise<T | null>;
+  then<TResult>(
+    resolve: (value: T[] | T | null) => TResult,
+    reject?: (err: unknown) => unknown
+  ): Promise<TResult>;
+}
+
+export interface MailAdapterStores {
+  isDemoMode: () => boolean;
+  accountIds: () => string[];
+  currentPerspective: () => {
+    accountIds?: string[];
+    categories: () => Array<{
+      id: string;
+      accountId: string;
+      displayName?: string;
+      name?: string;
+      role?: string;
+    }>;
+  };
+  selectedThreads: () => Array<{ id: string; accountId: string; subject?: string }>;
+  focusedThread: () => { id: string; accountId: string; subject?: string } | null;
+  findAllMessages: () => QueryLike<any>;
+  findAllThreads: () => QueryLike<any>;
+  findMessage: (id: string) => QueryLike<any> | Promise<any>;
+  findThread: (id: string) => QueryLike<any> | Promise<any>;
+  getSyncState: () => {
+    [accountId: string]: { [folderId: string]: { scanProgress: number; bodyProgress: number } };
+  };
+  setFocus: (args: { collection: string; item: unknown }) => void;
+  Message: {
+    attributes: {
+      id: { in: (val: unknown) => unknown };
+      threadId: { in: (val: unknown) => unknown; equal: (val: unknown) => unknown };
+      accountId: { in: (val: unknown) => unknown };
+      draft: { equal: (val: unknown) => unknown };
+      date: { descending: () => unknown };
+      body: unknown;
+    };
+  };
+  Thread: {
+    attributes: {
+      accountId: { in: (val: unknown) => unknown };
+      categories: { contains: (val: unknown) => unknown };
+      lastMessageReceivedTimestamp: { descending: () => unknown };
+    };
+  };
+}
+
+function messageToRef(msg: any): MessageRef {
   return {
     id: msg.id,
     threadId: msg.threadId,
@@ -53,37 +97,77 @@ function folderToRef(cat: any): FolderRef {
   };
 }
 
+function loadProductionStores(): MailAdapterStores {
+  const {
+    DatabaseStore,
+    FocusedContentStore,
+    FocusedPerspectiveStore,
+    FolderSyncProgressStore,
+    AccountStore,
+    Thread,
+    Message,
+    Actions,
+  } = require('mailspring-exports');
+  const ThreadListStore = require('../../thread-list/lib/thread-list-store').default;
+
+  return {
+    isDemoMode: defaultIsDemoMode,
+    accountIds: () => AccountStore.accountIds(),
+    currentPerspective: () => FocusedPerspectiveStore.current(),
+    selectedThreads: () => {
+      const dataSource = ThreadListStore.dataSource && ThreadListStore.dataSource();
+      return (dataSource?.selection?.items() || []) as Array<{
+        id: string;
+        accountId: string;
+        subject?: string;
+      }>;
+    },
+    focusedThread: () => FocusedContentStore.focused('thread'),
+    findAllMessages: () => DatabaseStore.findAll(Message),
+    findAllThreads: () => DatabaseStore.findAll(Thread),
+    findMessage: (id: string) => DatabaseStore.find(Message, id),
+    findThread: (id: string) => DatabaseStore.find(Thread, id),
+    getSyncState: () => FolderSyncProgressStore.getSyncState(),
+    setFocus: (args) => Actions.setFocus(args),
+    Message,
+    Thread,
+  };
+}
+
 export class MailspringAdapter implements MailAdapter {
-  /**
-   * Resolves the current UI state into a concrete scope.
-   * Falls back to demo mode when no accounts are configured.
-   * IMPORTANT: This uses actual multi-selection, not just focused thread.
-   */
+  private _stores: MailAdapterStores | null;
+
+  constructor(stores?: MailAdapterStores) {
+    this._stores = stores || null;
+  }
+
+  private stores(): MailAdapterStores {
+    if (!this._stores) {
+      this._stores = loadProductionStores();
+    }
+    return this._stores;
+  }
+
   async resolveScope(mode: ScopeMode): Promise<ResolvedScope> {
-    // Demo mode: return synthetic scope when no accounts configured
-    if (isDemoMode()) {
+    const s = this.stores();
+    if (s.isDemoMode()) {
       return getDemoScope(mode);
     }
 
-    const perspective = FocusedPerspectiveStore.current();
-    const accountIds = perspective.accountIds || AccountStore.accountIds();
+    const perspective = s.currentPerspective();
+    const accountIds = perspective.accountIds || s.accountIds();
 
     switch (mode) {
       case 'selected-messages': {
-        // Check for multi-selection first
-        const dataSource = ThreadListStore.dataSource();
-        const selection = dataSource?.selection;
-        const selectedThreads = (selection?.items() || []) as Thread[];
-
-        // Fall back to focused thread only if no multi-selection
-        const focusedThread = FocusedContentStore.focused('thread') as Thread | null;
+        const selectedThreads = s.selectedThreads();
+        const focusedThread = s.focusedThread();
 
         if (selectedThreads.length > 0) {
-          // Multi-selection: get messages from all selected threads
           const threadIds = selectedThreads.map((t) => t.id);
-          const messages = await DatabaseStore.findAll<Message>(Message)
-            .where(Message.attributes.threadId.in(threadIds))
-            .where(Message.attributes.draft.equal(false));
+          const messages = (await s
+            .findAllMessages()
+            .where(s.Message.attributes.threadId.in(threadIds))
+            .where(s.Message.attributes.draft.equal(false))) as any[];
 
           return {
             mode,
@@ -94,10 +178,10 @@ export class MailspringAdapter implements MailAdapter {
             isEmpty: messages.length === 0,
           };
         } else if (focusedThread) {
-          // Single focused thread
-          const messages = await DatabaseStore.findAll<Message>(Message)
-            .where(Message.attributes.threadId.equal(focusedThread.id))
-            .where(Message.attributes.draft.equal(false));
+          const messages = (await s
+            .findAllMessages()
+            .where(s.Message.attributes.threadId.equal(focusedThread.id))
+            .where(s.Message.attributes.draft.equal(false))) as any[];
 
           return {
             mode,
@@ -107,17 +191,15 @@ export class MailspringAdapter implements MailAdapter {
             description: `שרשור: "${focusedThread.subject}"`,
             isEmpty: messages.length === 0,
           };
-        } else {
-          // Nothing selected
-          return {
-            mode,
-            threadIds: [],
-            messageIds: [],
-            accountIds,
-            description: 'לא נבחרו הודעות',
-            isEmpty: true,
-          };
         }
+        return {
+          mode,
+          threadIds: [],
+          messageIds: [],
+          accountIds,
+          description: 'לא נבחרו הודעות',
+          isEmpty: true,
+        };
       }
 
       case 'current-folder': {
@@ -130,7 +212,6 @@ export class MailspringAdapter implements MailAdapter {
             isEmpty: true,
           };
         }
-
         const folder = folderToRef(categories[0]);
         return {
           mode,
@@ -152,11 +233,6 @@ export class MailspringAdapter implements MailAdapter {
     }
   }
 
-  /**
-   * Search messages within the resolved scope.
-   * Respects pagination and retrieval mode.
-   * Falls back to synthetic demo data when no accounts configured.
-   */
   async searchMessages(
     scope: ResolvedScope,
     query: string,
@@ -165,8 +241,8 @@ export class MailspringAdapter implements MailAdapter {
     offset: number,
     signal?: AbortSignal
   ): Promise<SearchResult> {
-    // Demo mode: return synthetic messages
-    if (isDemoMode()) {
+    const s = this.stores();
+    if (s.isDemoMode()) {
       return searchDemoMessages(scope, query, limit, offset);
     }
 
@@ -188,56 +264,64 @@ export class MailspringAdapter implements MailAdapter {
       };
     }
 
-    let messages: Message[] = [];
+    let messages: any[] = [];
 
     if (scope.mode === 'selected-messages' && scope.messageIds?.length) {
-      // Direct message ID query for selected messages
-      const dbQuery = DatabaseStore.findAll<Message>(Message)
-        .where(Message.attributes.id.in(scope.messageIds))
-        .where(Message.attributes.draft.equal(false))
-        .order(Message.attributes.date.descending());
-      messages = await dbQuery;
+      const dbQuery = s
+        .findAllMessages()
+        .where(s.Message.attributes.id.in(scope.messageIds))
+        .where(s.Message.attributes.draft.equal(false));
+      if (dbQuery.order) {
+        dbQuery.order(s.Message.attributes.date.descending());
+      }
+      messages = (await dbQuery) as any[];
     } else if (scope.mode === 'current-folder' && scope.folder) {
-      // For folder scope, first get threads in the folder, then their messages
-      const threadQuery = DatabaseStore.findAll<Thread>(Thread)
-        .where(Thread.attributes.accountId.in(scope.accountIds))
-        .where(Thread.attributes.categories.contains(scope.folder.id))
-        .order(Thread.attributes.lastMessageReceivedTimestamp.descending())
-        .limit(mode === 'ranked' ? limit : 1000);
-
-      const threads = await threadQuery;
+      let threadQuery = s
+        .findAllThreads()
+        .where(s.Thread.attributes.accountId.in(scope.accountIds))
+        .where(s.Thread.attributes.categories.contains(scope.folder.id));
+      if (threadQuery.order) {
+        threadQuery = threadQuery.order(
+          s.Thread.attributes.lastMessageReceivedTimestamp.descending()
+        );
+      }
+      if (threadQuery.limit) {
+        threadQuery = threadQuery.limit(mode === 'ranked' ? limit : 1000);
+      }
+      const threads = (await threadQuery) as any[];
 
       if (threads.length > 0) {
         const threadIds = threads.map((t) => t.id);
-        let msgQuery = DatabaseStore.findAll<Message>(Message)
-          .where(Message.attributes.threadId.in(threadIds))
-          .where(Message.attributes.draft.equal(false))
-          .order(Message.attributes.date.descending());
-
-        if (query.trim()) {
+        let msgQuery = s
+          .findAllMessages()
+          .where(s.Message.attributes.threadId.in(threadIds))
+          .where(s.Message.attributes.draft.equal(false));
+        if (msgQuery.order) {
+          msgQuery = msgQuery.order(s.Message.attributes.date.descending());
+        }
+        if (query.trim() && msgQuery.search) {
           msgQuery = msgQuery.search(query);
         }
-
-        messages = await msgQuery;
+        messages = (await msgQuery) as any[];
       }
     } else {
-      // All mail - direct query with search
-      let dbQuery = DatabaseStore.findAll<Message>(Message)
-        .where(Message.attributes.accountId.in(scope.accountIds))
-        .where(Message.attributes.draft.equal(false))
-        .order(Message.attributes.date.descending());
-
-      if (query.trim()) {
+      let dbQuery = s
+        .findAllMessages()
+        .where(s.Message.attributes.accountId.in(scope.accountIds))
+        .where(s.Message.attributes.draft.equal(false));
+      if (dbQuery.order) {
+        dbQuery = dbQuery.order(s.Message.attributes.date.descending());
+      }
+      if (query.trim() && dbQuery.search) {
         dbQuery = dbQuery.search(query);
       }
-
       if (mode === 'ranked') {
-        dbQuery = dbQuery.limit(limit).offset(offset);
-      } else {
-        dbQuery = dbQuery.limit(1000); // Safety cap for exhaustive
+        if (dbQuery.limit) dbQuery = dbQuery.limit(limit);
+        if (dbQuery.offset) dbQuery = dbQuery.offset(offset);
+      } else if (dbQuery.limit) {
+        dbQuery = dbQuery.limit(1000);
       }
-
-      messages = await dbQuery;
+      messages = (await dbQuery) as any[];
     }
 
     if (signal?.aborted) {
@@ -248,7 +332,6 @@ export class MailspringAdapter implements MailAdapter {
       };
     }
 
-    // Count messages with/without bodies
     let withBodies = 0;
     let missingBodies = 0;
     for (const msg of messages) {
@@ -260,8 +343,6 @@ export class MailspringAdapter implements MailAdapter {
     }
 
     const messageRefs = messages.map(messageToRef);
-
-    // For exhaustive mode, return subset but report full count
     const resultMessages =
       mode === 'exhaustive' ? messageRefs.slice(offset, offset + limit) : messageRefs;
 
@@ -280,56 +361,43 @@ export class MailspringAdapter implements MailAdapter {
     };
   }
 
-  /**
-   * Get full message body by ID.
-   */
   async getMessageBody(messageId: string): Promise<string | null> {
-    const msg = await DatabaseStore.find<Message>(Message, messageId).include(
-      Message.attributes.body
-    );
+    const s = this.stores();
+    if (s.isDemoMode()) {
+      return getDemoMessageBody(messageId);
+    }
+    const found = s.findMessage(messageId);
+    const msg = (await (typeof (found as QueryLike<any>).include === 'function'
+      ? (found as QueryLike<any>).include(s.Message.attributes.body)
+      : found)) as any;
     return msg?.body || null;
   }
 
-  /**
-   * Navigate to a message.
-   * NOTE: Standard navigation marks messages as read. This is a known limitation.
-   * For read-only preview, a future enhancement could show a popover instead.
-   * In demo mode, navigation is a no-op since there's no real message list.
-   */
   async navigateToMessage(messageId: string, preserveReadState: boolean): Promise<boolean> {
-    // Demo mode: no real messages to navigate to
-    if (isDemoMode()) {
+    const s = this.stores();
+    if (s.isDemoMode()) {
       console.log(`[AI Sidebar Demo] Would navigate to message: ${messageId}`);
       return false;
     }
 
-    const msg = await DatabaseStore.find<Message>(Message, messageId);
+    const msg = (await s.findMessage(messageId)) as any;
     if (!msg) return false;
 
-    const thread = await DatabaseStore.find<Thread>(Thread, msg.threadId);
+    const thread = (await s.findThread(msg.threadId)) as any;
     if (!thread) return false;
 
-    // WARNING: This will mark the thread as read after markAsReadDelay.
-    // We cannot prevent this without deeper changes to MessageStore.
-    // For this prototype, we document this limitation.
-    Actions.setFocus({ collection: 'thread', item: thread });
-
-    // Return false to indicate read-state may change
+    s.setFocus({ collection: 'thread', item: thread });
     return !preserveReadState;
   }
 
-  /**
-   * Get sync progress for accounts.
-   * Returns 100% in demo mode.
-   */
   async getSyncProgress(accountIds: string[]): Promise<{ [accountId: string]: number }> {
-    // Demo mode: return synthetic progress
-    if (isDemoMode()) {
+    const s = this.stores();
+    if (s.isDemoMode()) {
       return getDemoSyncProgress();
     }
 
     const result: { [accountId: string]: number } = {};
-    const syncState = FolderSyncProgressStore.getSyncState();
+    const syncState = s.getSyncState();
 
     for (const accountId of accountIds) {
       const accountState = syncState[accountId];
@@ -340,12 +408,10 @@ export class MailspringAdapter implements MailAdapter {
 
       let totalProgress = 0;
       let folderCount = 0;
-
       for (const folderState of Object.values(accountState)) {
         totalProgress += folderState.scanProgress * 0.4 + folderState.bodyProgress * 0.6;
         folderCount++;
       }
-
       result[accountId] = folderCount > 0 ? (totalProgress / folderCount) * 100 : 0;
     }
 

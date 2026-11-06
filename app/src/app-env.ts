@@ -132,8 +132,26 @@ export default class AppEnvConstructor {
     const ActionBridge = require('./flux/action-bridge').default;
     this.actionBridge = new ActionBridge(ipcRenderer);
 
-    const MailsyncBridge = require('./flux/mailsync-bridge').default;
-    this.mailsyncBridge = new MailsyncBridge();
+    // In demo mode, we skip MailsyncBridge entirely to avoid:
+    // 1. Keychain access prompts for stored credentials
+    // 2. Any interaction with real account data
+    // 3. Mailsync process spawning
+    const windowProps = loadSettings.windowProps || {};
+    if (windowProps.demoMode || process.env.MAILSPRING_DEMO === '1') {
+      console.log('[Demo Mode] Skipping MailsyncBridge - using synthetic data only');
+      // Create a minimal stub that won't access credentials or spawn processes
+      this.mailsyncBridge = {
+        clients: () => ({}),
+        ensureClients: () => {},
+        openLogs: () => {},
+        sendSyncMailNow: () => {},
+        sendSyncCalendarNow: () => {},
+        resetCacheForAccount: () => Promise.resolve(),
+      } as any;
+    } else {
+      const MailsyncBridge = require('./flux/mailsync-bridge').default;
+      this.mailsyncBridge = new MailsyncBridge();
+    }
 
     process.title = `Mailspring ${this.getWindowType()}`;
     this.onWindowPropsReceived(() => {

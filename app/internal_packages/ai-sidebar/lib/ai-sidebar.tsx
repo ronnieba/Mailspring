@@ -131,7 +131,7 @@ class AISidebarInner extends React.Component<Record<string, never>, AISidebarSta
             <>
               🧪 מצב DEMO - נתונים סינתטיים
               <br />
-              <small>Synthetic data - no real account</small>
+              <small>MOCK AI · synthetic fixtures · no account · no Keychain</small>
             </>
           ) : this.state.isMockProvider ? (
             <>

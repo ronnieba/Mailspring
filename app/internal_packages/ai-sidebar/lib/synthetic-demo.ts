@@ -4,20 +4,16 @@
  * All data is clearly marked as synthetic/demo.
  */
 import { MessageRef, ResolvedScope, FolderRef, SearchResult } from './core/types';
+import { isDemoMode as isExplicitDemoMode } from '../../../src/demo-mode';
 
 export const DEMO_ACCOUNT_ID = 'demo-synthetic-account';
 export const DEMO_FOLDER_ID = 'demo-synthetic-inbox';
 
 /**
- * Check if we're in demo mode (no real accounts configured).
+ * Explicit --demo route only. Empty AccountStore is onboarding, not demo.
  */
 export function isDemoMode(): boolean {
-  try {
-    const { AccountStore } = require('mailspring-exports');
-    return !AccountStore.accounts || AccountStore.accounts().length === 0;
-  } catch {
-    return true;
-  }
+  return isExplicitDemoMode();
 }
 
 /**
@@ -135,8 +131,12 @@ export function searchDemoMessages(
   let messages = [...SYNTHETIC_MESSAGES];
 
   // Filter by scope
-  if (scope.mode === 'selected-messages' && scope.messageIds?.length) {
-    messages = messages.filter((m) => scope.messageIds!.includes(m.id));
+  if (scope.mode === 'selected-messages' && scope.messageIds && scope.messageIds.length) {
+    const allowed = new Set(scope.messageIds);
+    messages = messages.filter((m) => allowed.has(m.id));
+  } else if (scope.mode === 'current-folder') {
+    // All synthetic fixtures live in the demo inbox.
+    messages = [...SYNTHETIC_MESSAGES];
   }
 
   // Filter by query
@@ -174,4 +174,12 @@ export function searchDemoMessages(
  */
 export function getDemoSyncProgress(): { [accountId: string]: number } {
   return { [DEMO_ACCOUNT_ID]: 100 };
+}
+
+export function getDemoMessageBody(messageId: string): string | null {
+  const msg = SYNTHETIC_MESSAGES.find((m) => m.id === messageId);
+  if (!msg) {
+    return null;
+  }
+  return `${msg.snippet}\n\n[DEMO] Synthetic fixture body. No remote content.`;
 }

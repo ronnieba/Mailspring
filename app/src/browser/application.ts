@@ -98,9 +98,20 @@ export default class Application extends EventEmitter {
   _initialized = false;
   _pendingLaunchOptions: any[] = [];
   _pendingUrls: string[] = [];
+  demoMode: boolean;
+  demoCapturePath: string | null;
 
   async start(options) {
-    const { resourcePath, configDirPath, version, devMode, specMode, safeMode } = options;
+    const {
+      resourcePath,
+      configDirPath,
+      version,
+      devMode,
+      specMode,
+      safeMode,
+      demoMode,
+      demoCapturePath,
+    } = options;
 
     initializeLocalization({ configDirPath });
 
@@ -111,6 +122,9 @@ export default class Application extends EventEmitter {
     this.devMode = devMode;
     this.specMode = specMode;
     this.safeMode = safeMode;
+    // Demo is developer-build only (parsed in main.js). Never on packaged production.
+    this.demoMode = !!demoMode;
+    this.demoCapturePath = demoCapturePath || null;
 
     this.fileListCache = new FileListCache();
     this.mailspringProtocolHandler = new MailspringProtocolHandler({
@@ -120,8 +134,12 @@ export default class Application extends EventEmitter {
     });
 
     try {
-      const mailsync = new MailsyncProcess(options);
-      await mailsync.migrate();
+      if (this.demoMode) {
+        console.log('[Demo Mode] Skipping mailsync migrate — no real mailbox database');
+      } else {
+        const mailsync = new MailsyncProcess(options);
+        await mailsync.migrate();
+      }
     } catch (err) {
       let message = null;
       let buttons = [localized('Quit')];
@@ -176,11 +194,13 @@ export default class Application extends EventEmitter {
       initializeInBackground = false;
     }
 
-    await this.oneTimeMoveToApplications();
-    await this.oneTimeAddToDock();
+    if (!this.demoMode) {
+      await this.oneTimeMoveToApplications();
+      await this.oneTimeAddToDock();
+    }
 
     guardAuxiliaryWindowNavigation();
-    this.autoUpdateManager = new AutoUpdateManager(version, config, specMode);
+    this.autoUpdateManager = new AutoUpdateManager(version, config, specMode || this.demoMode);
     this.applicationMenu = new ApplicationMenu(version);
     this.windowManager = new WindowManager({
       resourcePath: this.resourcePath,
@@ -311,6 +331,9 @@ export default class Application extends EventEmitter {
     if (process.platform !== 'darwin') {
       return;
     }
+    if (this.devMode || this.specMode || this.demoMode) {
+      return;
+    }
     const addedToDock = this.config.get('addedToDock');
     const appPath = process.argv[0];
     if (!addedToDock && appPath.includes('/Applications/') && appPath.includes('.app/')) {
@@ -358,12 +381,57 @@ export default class Application extends EventEmitter {
     const accounts = this.config.get('accounts');
     const hasAccount = accounts && accounts.length > 0;
 
-    if (hasAccount) {
+    // Demo mode (dev only): Skip onboarding and open main window with synthetic data.
+    // Does not create or impersonate a real account. Production onboarding is unchanged.
+    if (this.demoMode) {
+      console.log('[Demo Mode] Opening main window with synthetic data');
+      this.config.set('core.workspace.mode', 'split');
+      this.config.set('core.messageListSidebar.panel', 'ai-sidebar');
+      this.windowManager.ensureWindow(
+        WindowManager.MAIN_WINDOW,
+        {
+          windowProps: { demoMode: true },
+          title: 'Mailspring Demo (synthetic — no account)',
+        },
+        behavior
+      );
+      this._scheduleDemoWindowCapture();
+    } else if (hasAccount) {
       this.windowManager.ensureWindow(WindowManager.MAIN_WINDOW, {}, behavior);
     } else {
       const title = localized('Welcome to Mailspring');
       this.windowManager.ensureWindow(WindowManager.ONBOARDING_WINDOW, { title }, behavior);
     }
+  }
+
+  /**
+   * Demo-only: capture THIS BrowserWindow via Electron's capturePage.
+   * Does not use macOS screencapture, Screen Recording permission, or a
+   * persistent remote-debug endpoint. Writes only the path passed as --demo-capture.
+   */
+  _scheduleDemoWindowCapture() {
+    if (!this.demoMode || !this.demoCapturePath) {
+      return;
+    }
+    const dest = path.resolve(this.demoCapturePath);
+    const win = this.windowManager.get(WindowManager.MAIN_WINDOW);
+    if (!win) {
+      console.error('[Demo Mode] capture skipped: main window missing');
+      return;
+    }
+    win.waitForLoad(() => {
+      setTimeout(async () => {
+        try {
+          const image = await win.browserWindow.capturePage();
+          const png = image.toPNG();
+          fs.mkdirSync(path.dirname(dest), { recursive: true });
+          fs.writeFileSync(dest, png);
+          console.log(`[Demo Mode] Wrote own-window capture (${png.length} bytes) to ${dest}`);
+        } catch (err) {
+          console.error('[Demo Mode] capturePage failed:', (err as Error).message);
+        }
+      }, 2000);
+    });
   }
 
   _resetDatabaseAndRelaunch = ({ errorMessage }: { errorMessage?: string } = {}) => {

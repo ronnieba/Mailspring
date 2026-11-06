@@ -36,35 +36,44 @@ console.inspect = function consoleInspect(val) {
 const { app, session, protocol } = require('electron');
 const path = require('path');
 const { developerToolsAvailable } = require('../developer-tools');
+const {
+  isolationIdentity,
+  isolatedPaths,
+} = require('./dev-isolation');
 
 if (typeof process.setFdLimit === 'function') {
   process.setFdLimit(1024);
 }
 
-const setupConfigDir = args => {
-  let dirname = 'Mailspring';
-  if (args.devMode) {
-    dirname = 'Mailspring-dev';
-  }
-  if (args.specMode) {
-    dirname = 'Mailspring-spec';
-  }
+const setupConfigDir = (args, identity) => {
+  const appData = app.getPath('appData');
+  let override = args.configDirPath;
 
-  // Check if a custom config dir was provided via --config-dir-path
-  let configDirPath = args.configDirPath || path.join(app.getPath('appData'), dirname);
-
-  if (process.platform === 'linux' && process.env.SNAP) {
+  if (process.platform === 'linux' && process.env.SNAP && !override) {
     // for linux snap, use the sandbox directory that is persisted between snap revisions
-    configDirPath = args.configDirPath || process.env.SNAP_USER_COMMON;
+    override = process.env.SNAP_USER_COMMON;
   }
 
-  // crete the directory
-  fs.mkdirSync(configDirPath, { recursive: true });
+  const paths = isolatedPaths(appData, identity, override);
 
-  // tell Electron to use this folder for local storage, etc. as well
-  app.setPath('userData', configDirPath);
+  fs.mkdirSync(paths.configDirPath, { recursive: true });
+  fs.mkdirSync(paths.crashDumps, { recursive: true });
+  fs.mkdirSync(paths.logs, { recursive: true });
 
-  return configDirPath;
+  // Must run before app 'ready'. Default crashDumps otherwise stays at
+  // Application Support/Mailspring/Crashpad (production productName).
+  app.setPath('userData', paths.userData);
+  app.setPath('sessionData', paths.sessionData);
+  app.setPath('crashDumps', paths.crashDumps);
+  try {
+    app.setPath('logs', paths.logs);
+  } catch (err) {
+    // logs path is not writable on every Electron version
+  }
+
+  app.commandLine.appendSwitch('crash-dumps-dir', paths.crashDumps);
+
+  return paths.configDirPath;
 };
 
 const setupCompileCache = (configDirPath, devMode) => {
@@ -144,6 +153,18 @@ const declareOptions = argv => {
     .alias('b', 'background')
     .boolean('b')
     .describe('b', 'Start Mailspring in the background');
+  options
+    .boolean('demo')
+    .describe(
+      'demo',
+      'Start in demo mode with synthetic data (dev only). Skips onboarding and shows main window with mock data.'
+    );
+  options
+    .string('demo-capture')
+    .describe(
+      'demo-capture',
+      'Demo only: capture this instance\'s own BrowserWindow to a PNG path via Electron capturePage, then keep running.'
+    );
   return options;
 };
 
@@ -172,6 +193,10 @@ const parseCommandLine = argv => {
   const safeMode = args['safe'];
   const background = args['background'];
   const configDirPath = args['config-dir-path'];
+  // Demo is developer-build only. --demo implies isolated synthetic mode and
+  // does not enable --dev by itself on a packaged release.
+  const demoMode = developerBuild && !!args['demo'];
+  const demoCapturePath = demoMode && args['demo-capture'] ? args['demo-capture'] : null;
   const specDirectory = args['spec-directory'] && path.resolve(args['spec-directory']);
   if (specDirectory && !fs.existsSync(specDirectory)) {
     process.stderr.write(`--spec-directory does not exist: ${specDirectory}\n`);
@@ -213,7 +238,9 @@ const parseCommandLine = argv => {
 
   return {
     version,
-    devMode,
+    devMode: devMode || demoMode,
+    demoMode,
+    demoCapturePath,
     background,
     logFile,
     specMode,
@@ -280,7 +307,23 @@ const handleStartupEventWithSquirrel = () => {
 };
 
 const start = () => {
-  if (process.platform === 'win32') {
+  // Parse argv before any identity APIs. Chromium OSCrypt/Crashpad pick a
+  // Keychain item and dump dir from the app name; production is "Mailspring".
+  const options = parseCommandLine(process.argv);
+  const identity = isolationIdentity({
+    devMode: options.devMode,
+    specMode: options.specMode,
+    demoMode: options.demoMode,
+  });
+  options.isolation = identity;
+
+  if (options.demoMode) {
+    // Inherited by renderer processes. IdentityStore/KeyManager skip keychain
+    // even in hot empty windows that never received windowProps.demoMode.
+    process.env.MAILSPRING_DEMO = '1';
+  }
+
+  if (process.platform === 'win32' && !identity.skipDefaultClient) {
     // Must be set before setAppUserModelId so RegisterActivator writes it
     // into the Start Menu shortcut. Without this, action/reply notification
     // events are silently dropped (COM server is never registered).
@@ -288,14 +331,34 @@ const start = () => {
     app.setAppUserModelId('com.squirrel.mailspring.mailspring');
   }
 
-  // Set the app name explicitly for Linux to ensure the system tray icon
-  // gets a unique ID. Without this, all Electron apps share the same
-  // StatusNotifierItem ID on Linux, causing their tray visibility settings
-  // to be synchronized. See: https://github.com/electron/electron/issues/40936
-  if (process.platform === 'linux') {
-    app.setName('Mailspring');
+  // Distinct name so macOS Keychain "… Safe Storage" is not the production item.
+  // Production keeps "Mailspring". Dev/demo/spec never share that name.
+  app.setName(identity.appName);
+
+  if (identity.useMockKeychain) {
+    // Chromium test switch: do not touch the login keychain or prompt.
+    app.commandLine.appendSwitch('use-mock-keychain');
   }
 
+  // Paths immediately after setName, before Crashpad / @electron/remote init.
+  const configDirPath = setupConfigDir(options, identity);
+  options.configDirPath = configDirPath;
+
+  if (options.demoMode) {
+    // Renderer DatabaseStore opens edgehill.db at boot. Demo skips mailsync
+    // migrate, so create an empty SQLite file so the window can load.
+    const dbPath = path.join(configDirPath, 'edgehill.db');
+    if (!fs.existsSync(dbPath)) {
+      try {
+        const Database = require('better-sqlite3');
+        const db = new Database(dbPath);
+        db.close();
+      } catch (err) {
+        fs.closeSync(fs.openSync(dbPath, 'a'));
+        console.warn('[Demo Mode] stub edgehill.db:', err.message);
+      }
+    }
+  }
 
   protocol.registerSchemesAsPrivileged([
     {
@@ -328,8 +391,8 @@ const start = () => {
   // mailto: links (this doesn't make it the default, just registers it as an option).
   // This handles existing installations and ensures registration completes even if
   // the Squirrel install hook's detached processes didn't finish in time.
-  // Skip in dev mode to avoid affecting production registration.
-  if (process.platform === 'win32' && !options.devMode) {
+  // Skip in dev/demo/spec so this process never writes production registry identity.
+  if (process.platform === 'win32' && !identity.skipDefaultClient) {
     const WindowsUpdater = require('./windows-updater');
     if (WindowsUpdater.existsSync()) {
       WindowsUpdater.registerAppUserModelId();
@@ -349,21 +412,19 @@ const start = () => {
   app.commandLine.appendSwitch('autoplay-policy', 'no-user-gesture-required');
   app.commandLine.appendSwitch('js-flags', '--harmony');
 
-  const options = parseCommandLine(process.argv);
   global.errorLogger = setupErrorLogger(options);
-  const configDirPath = setupConfigDir(options);
-  options.configDirPath = configDirPath;
 
   // On macOS, setLoginItemSettings doesn't support passing custom args, so we
   // detect login-item launches via wasOpenedAtLogin and start in background.
-  if (process.platform === 'darwin' && !options.background) {
+  // Skip in demo so we never touch login-item / production launch settings.
+  if (process.platform === 'darwin' && !options.background && !options.demoMode) {
     const settings = app.getLoginItemSettings();
     if (settings.wasOpenedAtLogin) {
       options.background = true;
     }
   }
 
-  if (!options.devMode) {
+  if (!identity.skipSingleInstanceLock) {
     const gotTheLock = app.requestSingleInstanceLock();
 
     if (!gotTheLock) {

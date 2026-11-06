@@ -1,5 +1,6 @@
 import { localized } from './intl';
 import { Account } from 'mailspring-exports';
+import { isDemoMode } from './demo-mode';
 
 interface KeySet {
   [key: string]: string;
@@ -10,19 +11,44 @@ interface DecryptResult {
   shouldReEncrypt: boolean;
 }
 
-const { safeStorage } = require('@electron/remote');
-
 const configCredentialsKey = 'credentials';
+
+function nativeSafeStorage() {
+  // Lazy: requiring @electron/remote / safeStorage at module load is enough
+  // on some macOS builds to touch "Mailspring Safe Storage". Demo never calls this.
+  const { safeStorage } = require('@electron/remote');
+  return safeStorage;
+}
 
 // The real keychain varies by platform and may be locked or absent, so specs replace this.
 export const secureStorage = {
-  isAvailable: (): Promise<boolean> => safeStorage.isAsyncEncryptionAvailable(),
-  encrypt: (plaintext: string): Promise<Buffer> => safeStorage.encryptStringAsync(plaintext),
-  decrypt: (encrypted: Buffer): Promise<DecryptResult> => safeStorage.decryptStringAsync(encrypted),
+  isAvailable: (): Promise<boolean> => {
+    if (isDemoMode()) {
+      return Promise.resolve(false);
+    }
+    return nativeSafeStorage().isAsyncEncryptionAvailable();
+  },
+  encrypt: (plaintext: string): Promise<Buffer> => {
+    if (isDemoMode()) {
+      return Promise.reject(new Error('[Demo Mode] secureStorage.encrypt is disabled'));
+    }
+    return nativeSafeStorage().encryptStringAsync(plaintext);
+  },
+  decrypt: (encrypted: Buffer): Promise<DecryptResult> => {
+    if (isDemoMode()) {
+      return Promise.reject(new Error('[Demo Mode] secureStorage.decrypt is disabled'));
+    }
+    return nativeSafeStorage().decryptStringAsync(encrypted);
+  },
   // The synchronous API is kept only to read blobs written by 1.23 and earlier. On KWallet the
   // two APIs key off different wallet entries (sync: "Chromium Keys", async: "Mailspring Keys"),
   // so a 1.23 blob is unreadable through decryptStringAsync even though both are tagged "v11".
-  decryptLegacy: (encrypted: Buffer): string => safeStorage.decryptString(encrypted),
+  decryptLegacy: (encrypted: Buffer): string => {
+    if (isDemoMode()) {
+      throw new Error('[Demo Mode] secureStorage.decryptLegacy is disabled');
+    }
+    return nativeSafeStorage().decryptString(encrypted);
+  },
 };
 
 // On Linux, Chromium's async keyring always has a last-resort provider whose key is a hardcoded
@@ -45,6 +71,11 @@ class KeyManager {
   private _reEncryptAttempted = false;
 
   async deleteAccountSecrets(account: Account) {
+    // Demo mode: No keychain access
+    if (isDemoMode()) {
+      console.log('[Demo Mode] KeyManager: Skipping deleteAccountSecrets');
+      return;
+    }
     try {
       const keys = await this._getKeyHash();
       delete keys[`${account.emailAddress}-imap`];
@@ -57,6 +88,15 @@ class KeyManager {
   }
 
   async extractAndStoreAccountSecrets(account: Account) {
+    // Demo mode: Return account without storing secrets
+    if (isDemoMode()) {
+      console.log('[Demo Mode] KeyManager: Skipping extractAndStoreAccountSecrets');
+      const next = account.clone();
+      delete next.settings.imap_password;
+      delete next.settings.smtp_password;
+      delete next.settings.refresh_token;
+      return next;
+    }
     try {
       const keys = await this._getKeyHash();
       keys[`${account.emailAddress}-imap`] = account.settings.imap_password;
@@ -74,6 +114,11 @@ class KeyManager {
   }
 
   async insertAccountSecrets(account: Account, keys: KeySet = null) {
+    // Demo mode: Return account without secrets
+    if (isDemoMode()) {
+      console.log('[Demo Mode] KeyManager: Skipping insertAccountSecrets');
+      return account.clone();
+    }
     const next = account.clone();
     if (!keys) keys = await this._getKeyHash();
     next.settings.imap_password = keys[`${account.emailAddress}-imap`];
@@ -83,6 +128,11 @@ class KeyManager {
   }
 
   async replacePassword(keyName: string, newVal: string) {
+    // Demo mode: No keychain access
+    if (isDemoMode()) {
+      console.log('[Demo Mode] KeyManager: Skipping replacePassword');
+      return;
+    }
     try {
       const keys = await this._getKeyHash();
       keys[keyName] = newVal;
@@ -93,6 +143,11 @@ class KeyManager {
   }
 
   async deletePassword(keyName: string) {
+    // Demo mode: No keychain access
+    if (isDemoMode()) {
+      console.log('[Demo Mode] KeyManager: Skipping deletePassword');
+      return;
+    }
     try {
       const keys = await this._getKeyHash();
       delete keys[keyName];
@@ -103,6 +158,11 @@ class KeyManager {
   }
 
   async deletePasswordsWithPrefix(prefix: string) {
+    // Demo mode: No keychain access
+    if (isDemoMode()) {
+      console.log('[Demo Mode] KeyManager: Skipping deletePasswordsWithPrefix');
+      return;
+    }
     // An empty prefix matches every key, including every account's passwords.
     if (typeof prefix !== 'string' || !prefix) {
       throw new Error('deletePasswordsWithPrefix requires a non-empty prefix.');
@@ -119,6 +179,11 @@ class KeyManager {
   }
 
   async getPassword(keyName: string) {
+    // Demo mode: No keychain access
+    if (isDemoMode()) {
+      console.log('[Demo Mode] KeyManager: Skipping getPassword');
+      return undefined;
+    }
     try {
       const keys = await this._getKeyHash();
       return keys[keyName];
@@ -128,6 +193,10 @@ class KeyManager {
   }
 
   async _getKeyHash(): Promise<KeySet> {
+    // Demo mode: Return empty keyset without accessing keychain
+    if (isDemoMode()) {
+      return {} as KeySet;
+    }
     const encryptedCredentials = AppEnv.config.get(configCredentialsKey);
     // Check for different null values to prevent issues if a migration from keytar has failed
     if (
