@@ -165,6 +165,12 @@ const declareOptions = argv => {
       'demo-capture',
       'Demo only: capture this instance\'s own BrowserWindow to a PNG path via Electron capturePage, then keep running.'
     );
+  options
+    .number('demo-delay-ms')
+    .describe(
+      'demo-delay-ms',
+      'Demo+dev only: delay mock responses by N ms so Cancel can be inspected. Ignored without --demo. Capped at 30000. Not a debug or network endpoint.'
+    );
   return options;
 };
 
@@ -197,6 +203,13 @@ const parseCommandLine = argv => {
   // does not enable --dev by itself on a packaged release.
   const demoMode = developerBuild && !!args['demo'];
   const demoCapturePath = demoMode && args['demo-capture'] ? args['demo-capture'] : null;
+  let demoDelayMs = 0;
+  if (demoMode && args['demo-delay-ms'] != null && args['demo-delay-ms'] !== '') {
+    const n = parseInt(args['demo-delay-ms'], 10);
+    if (Number.isFinite(n) && n > 0) {
+      demoDelayMs = Math.min(n, 30000);
+    }
+  }
   const specDirectory = args['spec-directory'] && path.resolve(args['spec-directory']);
   if (specDirectory && !fs.existsSync(specDirectory)) {
     process.stderr.write(`--spec-directory does not exist: ${specDirectory}\n`);
@@ -241,6 +254,7 @@ const parseCommandLine = argv => {
     devMode: devMode || demoMode,
     demoMode,
     demoCapturePath,
+    demoDelayMs,
     background,
     logFile,
     specMode,
@@ -321,6 +335,9 @@ const start = () => {
     // Inherited by renderer processes. IdentityStore/KeyManager skip keychain
     // even in hot empty windows that never received windowProps.demoMode.
     process.env.MAILSPRING_DEMO = '1';
+    if (options.demoDelayMs > 0) {
+      process.env.MAILSPRING_DEMO_DELAY_MS = String(options.demoDelayMs);
+    }
   }
 
   if (process.platform === 'win32' && !identity.skipDefaultClient) {

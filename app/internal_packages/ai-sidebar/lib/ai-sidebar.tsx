@@ -7,7 +7,7 @@ import { localized, Rx } from 'mailspring-exports';
 import { FluxContainer, Spinner } from 'mailspring-component-kit';
 import AISidebarStore from './ai-sidebar-store';
 import { ScopeMode, RetrievalMode, ConversationMessage, Citation } from './core/types';
-import { isDemoMode } from './synthetic-demo';
+import { DemoMessagePreview, isDemoMode } from './synthetic-demo';
 import classNames from 'classnames';
 
 interface AISidebarState {
@@ -21,6 +21,7 @@ interface AISidebarState {
   inputValue: string;
   providerName: string;
   isMockProvider: boolean;
+  demoPreview: DemoMessagePreview | null;
 }
 
 class AISidebarInner extends React.Component<Record<string, never>, AISidebarState> {
@@ -41,6 +42,7 @@ class AISidebarInner extends React.Component<Record<string, never>, AISidebarSta
     inputValue: '',
     providerName: AISidebarStore.getProvider().name,
     isMockProvider: AISidebarStore.getProvider().isMock,
+    demoPreview: null,
   };
 
   componentDidMount() {
@@ -57,6 +59,7 @@ class AISidebarInner extends React.Component<Record<string, never>, AISidebarSta
         error: storeState.error,
         providerName: provider.name,
         isMockProvider: provider.isMock,
+        demoPreview: storeState.demoPreview,
       });
     });
 
@@ -169,13 +172,17 @@ class AISidebarInner extends React.Component<Record<string, never>, AISidebarSta
             className={classNames('scope-btn', { active: scopeMode === 'selected-messages' })}
             onClick={() => this._onScopeModeChange('selected-messages')}
             title="הודעות נבחרות"
+            aria-label="הודעות נבחרות"
+            data-scope-mode="selected-messages"
           >
             📧 נבחרות
           </button>
           <button
             className={classNames('scope-btn', { active: scopeMode === 'current-folder' })}
             onClick={() => this._onScopeModeChange('current-folder')}
-            title="תיקייה נוכחית"
+            title="תיקייה נוכחית (תיבת דואר נכנס בדמו)"
+            aria-label="תיקייה"
+            data-scope-mode="current-folder"
           >
             📁 תיקייה
           </button>
@@ -183,6 +190,8 @@ class AISidebarInner extends React.Component<Record<string, never>, AISidebarSta
             className={classNames('scope-btn', { active: scopeMode === 'all-mail' })}
             onClick={() => this._onScopeModeChange('all-mail')}
             title="כל הדואר"
+            aria-label="כל הדואר"
+            data-scope-mode="all-mail"
           >
             📬 הכל
           </button>
@@ -202,13 +211,14 @@ class AISidebarInner extends React.Component<Record<string, never>, AISidebarSta
           </div>
         )}
 
-        <div className="retrieval-mode">
+        <div className="retrieval-mode" data-retrieval-mode={this.state.retrievalMode}>
           <label>
             <input
               type="radio"
               name="retrieval"
               checked={this.state.retrievalMode === 'ranked'}
               onChange={() => this._onRetrievalModeChange('ranked')}
+              aria-label="דירוג (מהיר)"
             />
             <span>דירוג (מהיר)</span>
           </label>
@@ -218,6 +228,7 @@ class AISidebarInner extends React.Component<Record<string, never>, AISidebarSta
               name="retrieval"
               checked={this.state.retrievalMode === 'exhaustive'}
               onChange={() => this._onRetrievalModeChange('exhaustive')}
+              aria-label="סריקה מלאה"
             />
             <span>סריקה מלאה</span>
           </label>
@@ -242,6 +253,7 @@ class AISidebarInner extends React.Component<Record<string, never>, AISidebarSta
             <strong>דוגמאות:</strong>
             <ul>
               <li>חפש חשבוניות מהחודש האחרון</li>
+              <li>חפש הודעת ארכיון</li>
               <li>Find invoices from last month</li>
               <li>סכם את השרשור הזה</li>
             </ul>
@@ -282,10 +294,13 @@ class AISidebarInner extends React.Component<Record<string, never>, AISidebarSta
                 key={`${citation.messageId}-${i}`}
                 className="citation-btn"
                 onClick={() => this._onCitationClick(citation)}
-                title={`מ: ${citation.from}\n${citation.snippet}`}
+                title={`DEMO ${citation.messageId}\nמ: ${citation.from}\n${citation.snippet}`}
+                aria-label={`מקור DEMO ${citation.messageId}: ${citation.subject}`}
+                data-message-id={citation.messageId}
               >
                 <span className="citation-index">[{i + 1}]</span>
                 <span className="citation-subject">{citation.subject}</span>
+                <span className="citation-id">{citation.messageId}</span>
               </button>
             ))}
           </div>
@@ -310,17 +325,54 @@ class AISidebarInner extends React.Component<Record<string, never>, AISidebarSta
 
   _renderProgress() {
     const { progress, isProcessing } = this.state;
-    if (!isProcessing || !progress) return null;
+    if (!isProcessing) return null;
 
     return (
       <div className="ai-sidebar-progress">
         <Spinner visible />
         <span className="progress-text">
-          מעבד {progress.processed || 0}
-          {progress.totalEligible ? ` מתוך ${progress.totalEligible}` : ''} הודעות...
+          {progress
+            ? `מעבד ${progress.processed || 0}${
+                progress.totalEligible ? ` מתוך ${progress.totalEligible}` : ''
+              } הודעות...`
+            : 'מעבד...'}
         </span>
-        <button className="cancel-btn" onClick={this._onCancel}>
+        <button className="cancel-btn" onClick={this._onCancel} aria-label="ביטול">
           ביטול
+        </button>
+      </div>
+    );
+  }
+
+  _renderDemoPreview() {
+    const preview = this.state.demoPreview;
+    if (!preview) return null;
+
+    return (
+      <div
+        className="ai-sidebar-demo-preview"
+        role="region"
+        aria-label="DEMO source preview"
+        data-demo-preview={preview.messageId}
+      >
+        <div className="demo-preview-banner">🧪 DEMO מקור סינתטי — לא תיבת דואר אמיתית</div>
+        <dl className="demo-preview-meta">
+          <dt>מזהה</dt>
+          <dd>{preview.messageId}</dd>
+          <dt>נושא</dt>
+          <dd>{preview.subject}</dd>
+          <dt>מאת</dt>
+          <dd>{preview.from}</dd>
+          <dt>תיקייה</dt>
+          <dd>{preview.folderName}</dd>
+        </dl>
+        <pre className="demo-preview-body">{preview.body}</pre>
+        <button
+          className="demo-preview-close"
+          onClick={() => AISidebarStore.closeDemoPreview()}
+          aria-label="סגור תצוגת מקור DEMO"
+        >
+          סגור תצוגת מקור
         </button>
       </div>
     );
@@ -349,11 +401,12 @@ class AISidebarInner extends React.Component<Record<string, never>, AISidebarSta
             className="submit-btn"
             onClick={this._onSubmit}
             disabled={isDisabled || !this.state.inputValue.trim()}
+            aria-label="שלח"
           >
             שלח
           </button>
           {this.state.conversation.length > 0 && (
-            <button className="clear-btn" onClick={this._onClear}>
+            <button className="clear-btn" onClick={this._onClear} aria-label="נקה">
               נקה
             </button>
           )}
@@ -382,6 +435,7 @@ class AISidebarInner extends React.Component<Record<string, never>, AISidebarSta
         {this._renderError()}
 
         <div className="ai-sidebar-body">
+          {this._renderDemoPreview()}
           {this._renderConversation()}
           {this._renderProgress()}
         </div>

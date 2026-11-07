@@ -86,6 +86,9 @@ async function runTests() {
       assertContains(msg.from, 'synthetic.test');
       assertContains(msg.id, 'demo-');
     }
+    const archive = SYNTHETIC_MESSAGES.find((m) => m.id === 'demo-msg-6');
+    assertTrue(!!archive, 'outside-Inbox archive fixture must exist');
+    assertContains(archive!.subject, 'ארכיון');
   });
   await test('getDemoScope labels all three modes', () => {
     assertContains(getDemoScope('selected-messages').description, 'DEMO');
@@ -157,6 +160,13 @@ async function runTests() {
   await test('main.js does not create a stub edgehill.db', () => {
     assertFalse(/stub edgehill\.db/.test(mainJs));
     assertFalse(/edgehill\.db/.test(mainJs));
+  });
+  await test('main.js demo delay is gated on demoMode and is not a network endpoint', () => {
+    assertContains(mainJs, 'demo-delay-ms');
+    assertContains(mainJs, 'MAILSPRING_DEMO_DELAY_MS');
+    assertContains(mainJs, 'if (options.demoMode)');
+    assertFalse(/http\.createServer/.test(mainJs));
+    assertFalse(/chrome-devtools/.test(mainJs));
   });
   await test('default-client notification is skipped in demo', () => {
     const notif = fs.readFileSync(

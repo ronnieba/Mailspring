@@ -11,6 +11,8 @@ import {
   SearchProgress,
   Citation,
 } from './types';
+import { filterMessagesByQuery } from './query-filter';
+import { abortableDelay, demoQueryDelayFromEnv } from './query-generation';
 
 const MOCK_PROVIDER_NAME = 'Mock AI (No External Connection)';
 
@@ -58,16 +60,19 @@ function generateMockResponse(
     snippet: msg.snippet.slice(0, 100),
   });
 
-  // Search-related query
+  // Search-related query. Citations come from query matches, not scan order,
+  // so exhaustive (all in-scope messages) still cites the invoice fixture.
   if (queryLower.includes('find') || queryLower.includes('search') || queryLower.includes('חפש')) {
-    const matchingMsgs = messages.slice(0, Math.min(3, messages.length));
+    const matchingMsgs = filterMessagesByQuery(messages, query).slice(0, 3);
     matchingMsgs.forEach((m) => citations.push(createCitation(m)));
 
     return {
       response:
         `🔍 **תוצאות חיפוש (Mock)**\n\n` +
-        `נמצאו ${messages.length} הודעות בטווח: ${scope.description}\n\n` +
-        `Found ${messages.length} messages in scope. ` +
+        `נסרקו ${messages.length} הודעות בטווח: ${scope.description}\n` +
+        `נמצאו ${matchingMsgs.length} התאמות לשאילתה\n\n` +
+        `Scanned ${messages.length} messages in scope. ` +
+        `Matched ${matchingMsgs.length}. ` +
         `Showing ${citations.length} most relevant.\n\n` +
         citations
           .map(
@@ -118,7 +123,8 @@ function generateMockResponse(
   }
 
   // Default response with citations
-  const sampleMsgs = messages.slice(0, Math.min(2, messages.length));
+  const matchedDefault = filterMessagesByQuery(messages, query);
+  const sampleMsgs = (matchedDefault.length ? matchedDefault : messages).slice(0, 2);
   sampleMsgs.forEach((m) => citations.push(createCitation(m)));
 
   return {
@@ -141,6 +147,11 @@ export class MockAIProvider implements AIProvider {
   readonly name = MOCK_PROVIDER_NAME;
   readonly isMock = true;
   readonly isConfigured = true;
+  private _testDelayMs: number;
+
+  constructor(testDelayMs = 0) {
+    this._testDelayMs = testDelayMs;
+  }
 
   async processQuery(
     query: string,
@@ -150,8 +161,11 @@ export class MockAIProvider implements AIProvider {
     onProgress?: (progress: SearchProgress) => void,
     signal?: AbortSignal
   ): Promise<{ response: string; citations: Citation[]; tokensUsed: number }> {
+    const extraDelay = this._testDelayMs > 0 ? this._testDelayMs : demoQueryDelayFromEnv();
+    await abortableDelay(extraDelay, signal);
+
     // Simulate processing delay for realism
-    const delay = Math.min(messages.length * 10, 500);
+    const delay = Math.min(Math.max(messages.length, 1) * 10, 500);
 
     // Report initial progress
     if (onProgress) {

@@ -314,6 +314,14 @@
           overflow: hidden;
           text-overflow: ellipsis;
         }
+
+        .citation-id {
+          display: block;
+          font-size: 10px;
+          color: var(--text-color-subtle);
+          direction: ltr;
+          text-align: left;
+        }
       }
     }
     
@@ -326,6 +334,61 @@
     }
   }
   
+  .ai-sidebar-demo-preview {
+    margin-bottom: 12px;
+    padding: 10px 12px;
+    border: 1px dashed #ffc107;
+    border-radius: 8px;
+    background: #fff8e1;
+
+    @media (prefers-color-scheme: dark) {
+      background: #3d3200;
+      border-color: #ffc107;
+    }
+
+    .demo-preview-banner {
+      font-size: 12px;
+      font-weight: 600;
+      margin-bottom: 8px;
+      color: #856404;
+
+      @media (prefers-color-scheme: dark) {
+        color: #ffc107;
+      }
+    }
+
+    .demo-preview-meta {
+      margin: 0 0 8px;
+      font-size: 12px;
+
+      dt {
+        font-weight: 600;
+        margin-top: 4px;
+      }
+
+      dd {
+        margin: 0;
+        direction: auto;
+      }
+    }
+
+    .demo-preview-body {
+      white-space: pre-wrap;
+      font-size: 12px;
+      margin: 0 0 8px;
+      direction: auto;
+    }
+
+    .demo-preview-close {
+      padding: 4px 8px;
+      font-size: 11px;
+      background: transparent;
+      border: 1px solid var(--border-color-divider);
+      border-radius: 4px;
+      cursor: pointer;
+    }
+  }
+
   // Progress indicator
   .ai-sidebar-progress {
     display: flex;

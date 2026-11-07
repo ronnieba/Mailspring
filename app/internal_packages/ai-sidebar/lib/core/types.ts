@@ -12,6 +12,8 @@ export interface MessageRef {
   from: string;
   date: Date;
   snippet: string;
+  /** Demo fixture folder. Production mail omits this. */
+  folderId?: string;
 }
 
 /** Thread identity */

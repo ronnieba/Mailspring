@@ -186,6 +186,7 @@ function run() {
   const mainTs = fs.readFileSync(path.join(__dirname, 'lib/main.ts'), 'utf8');
   const storeTs = fs.readFileSync(path.join(__dirname, 'lib/ai-sidebar-store.ts'), 'utf8');
   const sidebarTs = fs.readFileSync(path.join(__dirname, 'lib/ai-sidebar.tsx'), 'utf8');
+  const mainJs = fs.readFileSync(path.join(APP_SRC_ROOT, 'browser', 'main.js'), 'utf8');
 
   test('ai-sidebar package is syncInit so it loads with Calendar, not 800ms later', () => {
     assertTrue(pkg.syncInit === true);
@@ -205,6 +206,40 @@ function run() {
     assertContains(sidebarTs, "isDemoMode() ? 'all-mail'");
     assertContains(sidebarTs, 'data-demo-ready');
     assertContains(sidebarTs, '__mailspringDemoSidebar');
+  });
+  test('Full Scan radio has a stable AX name and stores retrievalMode', () => {
+    assertContains(sidebarTs, 'aria-label="סריקה מלאה"');
+    assertContains(sidebarTs, 'aria-label="דירוג (מהיר)"');
+    assertContains(sidebarTs, 'data-retrieval-mode');
+    assertContains(storeTs, 'this._state.retrievalMode');
+  });
+  test('adapter passes retrievalMode into searchDemoMessages (native full-scan bug)', () => {
+    const adapterTs = fs.readFileSync(path.join(__dirname, 'lib/mailspring-adapter.ts'), 'utf8');
+    assertContains(adapterTs, 'searchDemoMessages(scope, query, limit, offset, mode)');
+  });
+  test('coverage comes from searchResult.retrievalMode, not the radio alone', () => {
+    assertContains(storeTs, 'buildCoverageDisclosure(searchResult');
+    const coverageTs = fs.readFileSync(
+      path.join(__dirname, 'lib/core/coverage-disclosure.ts'),
+      'utf8'
+    );
+    assertContains(coverageTs, "retrievalMode === 'ranked'");
+    assertContains(coverageTs, 'סריקה מלאה (exhaustive)');
+    assertContains(coverageTs, 'לא כל ההודעות נסרקו');
+  });
+  test('citation click opens a DEMO fixture preview and keeps the navigate log', () => {
+    assertContains(storeTs, 'Would navigate to message:');
+    assertContains(storeTs, 'Opened DEMO fixture preview');
+    assertContains(storeTs, 'getDemoMessagePreview');
+    assertContains(sidebarTs, 'DEMO source preview');
+    assertContains(sidebarTs, 'data-demo-preview');
+    assertContains(sidebarTs, 'data-message-id');
+  });
+  test('Cancel is visible while processing and late responses are generation-gated', () => {
+    assertContains(sidebarTs, 'aria-label="ביטול"');
+    assertContains(storeTs, 'shouldAcceptAssistantResponse');
+    assertContains(storeTs, 'nextQueryGeneration');
+    assertContains(mainJs, 'demo-delay-ms');
   });
 
   console.log('\n' + '='.repeat(40));

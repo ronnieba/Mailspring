@@ -12,8 +12,10 @@ import {
   AIProvider,
 } from './core/types';
 import { mockProvider } from './core/mock-provider';
+import { buildCoverageDisclosure } from './core/coverage-disclosure';
+import { nextQueryGeneration, shouldAcceptAssistantResponse } from './core/query-generation';
 import { mailspringAdapter } from './mailspring-adapter';
-import { isDemoMode } from './synthetic-demo';
+import { DemoMessagePreview, getDemoMessagePreview, isDemoMode } from './synthetic-demo';
 
 const DEFAULT_BUDGET: ProcessingBudget = {
   maxMessages: 100,
@@ -32,6 +34,7 @@ interface AISidebarState {
   progress: SearchProgress | null;
   error: string | null;
   abortController: AbortController | null;
+  demoPreview: DemoMessagePreview | null;
 }
 
 class AISidebarStore extends MailspringStore {
@@ -45,9 +48,11 @@ class AISidebarStore extends MailspringStore {
     progress: null,
     error: null,
     abortController: null,
+    demoPreview: null,
   };
 
   private _provider: AIProvider = mockProvider;
+  private _queryGeneration = 0;
 
   getState(): Readonly<AISidebarState> {
     return this._state;
@@ -133,14 +138,30 @@ class AISidebarStore extends MailspringStore {
     };
     this._state.conversation.push(userMessage);
 
-    // Start processing
+    const startedGeneration = nextQueryGeneration(this._queryGeneration);
+    this._queryGeneration = startedGeneration;
     this._state.isProcessing = true;
     this._state.error = null;
     this._state.abortController = new AbortController();
+    this._state.progress = {
+      totalEligible: null,
+      processed: 0,
+      withBodies: 0,
+      missingBodies: 0,
+      syncCoverage: null,
+      isComplete: false,
+      isCancelled: false,
+    };
     this.trigger();
 
+    const stillCurrent = () =>
+      shouldAcceptAssistantResponse({
+        startedGeneration,
+        currentGeneration: this._queryGeneration,
+        aborted: !!this._state.abortController?.signal.aborted,
+      });
+
     try {
-      // Search for messages in scope
       const searchResult = await mailspringAdapter.searchMessages(
         scope,
         query,
@@ -150,44 +171,50 @@ class AISidebarStore extends MailspringStore {
         this._state.abortController.signal
       );
 
-      if (this._state.abortController.signal.aborted) {
-        throw new Error('Operation cancelled');
+      if (!stillCurrent()) {
+        return;
       }
 
-      // Get sync progress
       const syncProgress = await mailspringAdapter.getSyncProgress(scope.accountIds);
       const avgSync =
         Object.values(syncProgress).reduce((a, b) => a + b, 0) /
         Math.max(Object.keys(syncProgress).length, 1);
 
-      // Update progress with sync info
       this._state.progress = {
         ...searchResult.progress,
         syncCoverage: avgSync,
       };
       this.trigger();
 
-      // Process with AI provider
       const result = await this._provider.processQuery(
         query,
         searchResult.messages,
         scope,
         DEFAULT_BUDGET,
         (progress) => {
-          this._state.progress = progress;
+          if (!stillCurrent()) {
+            return;
+          }
+          this._state.progress = {
+            ...progress,
+            totalEligible: searchResult.progress.totalEligible,
+            processed:
+              searchResult.retrievalMode === 'exhaustive'
+                ? searchResult.progress.processed
+                : progress.processed,
+          };
           this.trigger();
         },
         this._state.abortController.signal
       );
 
-      // Build assistant response with coverage disclosure
-      let responseContent = result.response;
+      if (!stillCurrent()) {
+        return;
+      }
 
-      // Add coverage disclosure
-      const coverage = this._buildCoverageDisclosure(searchResult, avgSync);
-      responseContent += `\n\n---\n${coverage}`;
+      const coverage = buildCoverageDisclosure(searchResult, avgSync);
+      const responseContent = `${result.response}\n\n---\n${coverage}`;
 
-      // Add assistant message
       const assistantMessage: ConversationMessage = {
         id: `assistant-${Date.now()}`,
         role: 'assistant',
@@ -198,11 +225,12 @@ class AISidebarStore extends MailspringStore {
       };
       this._state.conversation.push(assistantMessage);
     } catch (err) {
+      if (!stillCurrent()) {
+        return;
+      }
       const errorMsg = (err as Error).message;
       if (errorMsg !== 'Operation cancelled') {
         this._state.error = errorMsg;
-
-        // Add error message to conversation
         const errorMessage: ConversationMessage = {
           id: `error-${Date.now()}`,
           role: 'system',
@@ -212,72 +240,64 @@ class AISidebarStore extends MailspringStore {
         this._state.conversation.push(errorMessage);
       }
     } finally {
-      this._state.isProcessing = false;
-      this._state.abortController = null;
-      this.trigger();
-    }
-  }
-
-  private _buildCoverageDisclosure(searchResult: any, syncCoverage: number): string {
-    const { progress, retrievalMode } = searchResult;
-    const lines: string[] = [];
-
-    lines.push('**📊 כיסוי ומצב:**');
-
-    if (retrievalMode === 'ranked') {
-      lines.push(`• מצב: דירוג (top-k) - לא סריקה מלאה`);
-      if (progress.processed !== null) {
-        lines.push(`• הודעות שעובדו: ${progress.processed}`);
-      }
-      lines.push(`⚠️ לא כל ההודעות נסרקו - תוצאות מדורגות בלבד`);
-    } else {
-      if (progress.totalEligible !== null) {
-        lines.push(`• סה"כ בטווח: ${progress.totalEligible}`);
-      } else {
-        lines.push(`• סה"כ בטווח: לא ידוע`);
-      }
-      lines.push(`• עובדו: ${progress.processed}`);
-
-      if (!progress.isComplete) {
-        lines.push(`⚠️ סריקה לא הושלמה`);
+      if (startedGeneration === this._queryGeneration) {
+        this._state.isProcessing = false;
+        this._state.abortController = null;
+        this.trigger();
       }
     }
-
-    if (progress.missingBodies > 0) {
-      lines.push(`⚠️ ${progress.missingBodies} הודעות ללא גוף (לא סונכרנו)`);
-    }
-
-    if (syncCoverage < 100) {
-      lines.push(`• סנכרון: ${syncCoverage.toFixed(0)}%`);
-    }
-
-    return lines.join('\n');
   }
 
   /**
-   * Cancel ongoing operation.
+   * Cancel ongoing operation. Increments generation so a late mock response
+   * cannot attach after Cancel.
    */
   cancel() {
+    this._queryGeneration = nextQueryGeneration(this._queryGeneration);
     if (this._state.abortController) {
       this._state.abortController.abort();
     }
+    this._state.isProcessing = false;
+    this._state.abortController = null;
+    this._state.progress = this._state.progress
+      ? { ...this._state.progress, isCancelled: true, isComplete: false }
+      : null;
+    this.trigger();
   }
 
   /**
    * Clear conversation history.
    */
   clearConversation() {
+    this.cancel();
     this._state.conversation = [];
     this._state.error = null;
     this._state.progress = null;
+    this._state.demoPreview = null;
+    this.trigger();
+  }
+
+  closeDemoPreview() {
+    this._state.demoPreview = null;
     this.trigger();
   }
 
   /**
-   * Navigate to a cited message.
-   * Returns whether navigation preserves read state.
+   * Navigate to a cited message. Demo opens a fixture-only preview in the
+   * sidebar — never a production mailbox or account.
    */
   async navigateToCitation(messageId: string): Promise<boolean> {
+    if (isDemoMode()) {
+      console.log(`[AI Sidebar Demo] Would navigate to message: ${messageId}`);
+      const preview = getDemoMessagePreview(messageId);
+      this._state.demoPreview = preview;
+      this.trigger();
+      if (preview) {
+        console.log(`[AI Sidebar Demo] Opened DEMO fixture preview: ${messageId}`);
+        return true;
+      }
+      return false;
+    }
     return mailspringAdapter.navigateToMessage(messageId, true);
   }
 }

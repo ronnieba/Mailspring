@@ -201,6 +201,18 @@ async function run() {
     const result = await adapter.searchMessages(scope, '', 'ranked', 10, 0);
     assertTrue(result.messages.length > 0);
     assertTrue(result.messages[0].subject.includes('[DEMO]'));
+    assertEqual(result.retrievalMode, 'ranked');
+  });
+
+  await test('explicit demo exhaustive search reports exhaustive in-scope count', async () => {
+    reset();
+    data.demo = true;
+    const scope = await adapter.resolveScope('all-mail');
+    const result = await adapter.searchMessages(scope, 'חשבונית', 'exhaustive', 10, 0);
+    assertEqual(result.retrievalMode, 'exhaustive');
+    assertTrue(result.progress.processed > 1);
+    assertEqual(result.progress.processed, result.progress.totalEligible);
+    assertTrue(result.progress.isComplete);
   });
 
   await test('explicit demo does not call setFocus on navigate', async () => {

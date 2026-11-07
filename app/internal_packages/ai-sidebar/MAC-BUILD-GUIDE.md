@@ -28,6 +28,7 @@ npx ts-node --project app/tsconfig.json app/internal_packages/ai-sidebar/test-is
 npx ts-node --project app/tsconfig.json app/internal_packages/ai-sidebar/test-integration.ts
 npx ts-node --project app/tsconfig.json app/internal_packages/ai-sidebar/test-mail-database.ts
 npx ts-node --project app/tsconfig.json app/internal_packages/ai-sidebar/test-demo-sidebar.ts
+npx ts-node --project app/tsconfig.json app/internal_packages/ai-sidebar/test-demo-query.ts
 
 # From any other cwd — pass ABSOLUTE paths and --prefix so npx uses the repo
 # ts-node. Do not use a local tsconfig.json (that was a tester command error,
@@ -36,10 +37,58 @@ npx ts-node --project app/tsconfig.json app/internal_packages/ai-sidebar/test-de
 # cd /tmp
 # npx --prefix "$REPO" ts-node --project "$REPO/app/tsconfig.json" \
 #   "$REPO/app/internal_packages/ai-sidebar/test-mail-database.ts"
+# npx --prefix "$REPO" ts-node --project "$REPO/app/tsconfig.json" \
+#   "$REPO/app/internal_packages/ai-sidebar/test-demo-query.ts"
 
 # Accountless synthetic demo (NOT npm start — that is onboarding)
 npm run start:demo
+
+# AX UI retest (same as native 2026-11-07 method)
+electron ./app --enable-logging --dev --demo --force-renderer-accessibility
+
+# Cancel inspect (demo+dev only; ignored without --demo; max 30000ms)
+electron ./app --enable-logging --dev --demo --force-renderer-accessibility --demo-delay-ms=8000
+# or: npm run start:demo -- --force-renderer-accessibility --demo-delay-ms=8000
 ```
+
+`--demo-delay-ms` is not a debug port or network endpoint. It only delays the mock provider so **ביטול** can be clicked. Leave it off for normal fixture checks.
+
+## Accessible control names (AX)
+
+| Control | AX name / visible |
+|---------|-------------------|
+| All | `כל הדואר` / `📬 הכל` |
+| Inbox (demo folder) | `תיקייה` / `📁 תיקייה` |
+| Selected | `הודעות נבחרות` / `📧 נבחרות` |
+| Ranked | radio `דירוג (מהיר)` |
+| Full Scan | radio `סריקה מלאה` |
+| Send | `שלח` |
+| Clear | `נקה` |
+| Cancel | `ביטול` |
+| Invoice citation | includes `demo-msg-3` and `חשבונית` |
+| Meeting citation | includes `demo-msg-1` |
+| DEMO preview | region `DEMO source preview` |
+| Close preview | `סגור תצוגת מקור DEMO` |
+
+## Fixture queries
+
+| Query | All | Inbox (`תיקייה`) | Selected (`נבחרות`) |
+|-------|-----|------------------|---------------------|
+| `חפש חשבוניות` | invoice `demo-msg-3` | invoice `demo-msg-3` | no match |
+| `חפש הודעת ארכיון` | archive `demo-msg-6` | no match | no match |
+| `סכם` | mock summary of in-scope fixtures | inbox only | meeting thread (2) |
+
+Full Scan (`סריקה מלאה`) must echo **סריקה מלאה (exhaustive)** and the in-scope scan count (All=6, Inbox=5, Selected=2). It must **not** say ranked/top-k or `לא כל ההודעות נסרקו`. Ranked must still show that warning.
+
+Citation click must open the yellow **DEMO מקור סינתטי** preview for `demo-msg-3` / `demo-msg-1` (same log line `Would navigate to message:`). Never a production mailbox.
+
+## Screenshots parent should collect
+
+1. Full Scan selected (ranked=0/full=1) + invoice answer showing exhaustive coverage, not top-k.
+2. Same query after Clear **before** selecting Full Scan (mode must still stick).
+3. Citation click → visible DEMO preview with source id (`demo-msg-3` or `demo-msg-1`).
+4. `--demo-delay-ms=8000` → **ביטול** visible; after Cancel, no late mock answer.
+5. `חפש הודעת ארכיון` in All (hit) vs Inbox and Selected (empty).
 
 `--demo` does **not** open, migrate, rebuild, or relaunch over `edgehill.db`. A leftover empty stub in `Mailspring-demo/` from an older checkout is ignored; do not delete it. Production `application:reset-database` (Okay → rebuild → relaunch) is unchanged.
 

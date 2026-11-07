@@ -145,6 +145,11 @@ export default class Application extends EventEmitter {
     try {
       if (this.demoMode) {
         console.log('[Demo Mode] Skipping mailsync migrate — no real mailbox database');
+        if (process.env.MAILSPRING_DEMO_DELAY_MS) {
+          console.log(
+            `[Demo Mode] Mock query delay ${process.env.MAILSPRING_DEMO_DELAY_MS}ms (Cancel testing only)`
+          );
+        }
       } else {
         const mailsync = new MailsyncProcess(options);
         await mailsync.migrate();

@@ -243,7 +243,22 @@ export class MailspringAdapter implements MailAdapter {
   ): Promise<SearchResult> {
     const s = this.stores();
     if (s.isDemoMode()) {
-      return searchDemoMessages(scope, query, limit, offset);
+      if (signal?.aborted) {
+        return {
+          messages: [],
+          progress: {
+            totalEligible: 0,
+            processed: 0,
+            withBodies: 0,
+            missingBodies: 0,
+            syncCoverage: 100,
+            isComplete: false,
+            isCancelled: true,
+          },
+          retrievalMode: mode,
+        };
+      }
+      return searchDemoMessages(scope, query, limit, offset, mode);
     }
 
     const progress: SearchProgress = {
