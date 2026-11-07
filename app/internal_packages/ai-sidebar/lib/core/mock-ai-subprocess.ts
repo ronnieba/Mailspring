@@ -9,6 +9,10 @@ import { AIBoundaryResult, validateProviderPayload, AIValidateContext } from './
 
 export const MOCK_AI_WORKER_PATH = path.join(__dirname, 'mock-ai-worker.js');
 
+function isWorkerRecord(v: unknown): v is { payload?: unknown } {
+  return typeof v === 'object' && v !== null && !Array.isArray(v);
+}
+
 export type MockAiOp =
   | 'ok'
   | 'delay'
@@ -159,7 +163,7 @@ export async function runMockAiSubprocess(
         });
         return;
       }
-      const payload = parsed && typeof parsed === 'object' ? (parsed as any).payload : undefined;
+      const payload = isWorkerRecord(parsed) ? parsed.payload : undefined;
       void finish(validateProviderPayload(payload, ctxBase()));
     });
 
@@ -176,12 +180,13 @@ export async function runMockAiSubprocess(
     try {
       proc.stdin?.write(Buffer.from(body, 'utf8'));
       proc.stdin?.end();
-    } catch (err: any) {
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err);
       void finish({
         ok: false,
         origin: 'local',
         reason: 'invalid-schema',
-        message: `stdin write failed: ${err && err.message}`,
+        message: `stdin write failed: ${message}`,
       });
     }
   });

@@ -14,9 +14,14 @@
 import * as fs from 'fs';
 import * as path from 'path';
 import {
+  AIBoundaryFailure,
+  AIBoundaryOk,
+  AIBoundaryResult,
   LIVE_AI_DISABLED_REASON,
   LIVE_AI_PROVIDERS_ENABLED,
   hostCoverageFooter,
+  isAIBoundaryFailure,
+  isAIBoundaryOk,
   mockOnlyProviderGuard,
   validateProviderPayload,
 } from './lib/core/ai-boundary';
@@ -68,6 +73,23 @@ function assertContains(haystack: string, needle: string, msg?: string) {
   }
 }
 
+function requireFailure(r: AIBoundaryResult): AIBoundaryFailure {
+  if (!isAIBoundaryFailure(r)) {
+    throw new Error('expected fail-closed result');
+  }
+  return r;
+}
+
+function requireOk(r: AIBoundaryResult): AIBoundaryOk {
+  if (isAIBoundaryOk(r)) {
+    return r;
+  }
+  if (isAIBoundaryFailure(r)) {
+    throw new Error(r.message);
+  }
+  throw new Error('expected mock success');
+}
+
 function exhaustive(mode: 'selected-messages' | 'current-folder' | 'all-mail'): SearchResult {
   return searchDemoMessages(getDemoScope(mode), 'חשבונית', 10, 0, 'exhaustive');
 }
@@ -99,8 +121,11 @@ async function run() {
     assertEqual(LIVE_AI_PROVIDERS_ENABLED, false);
     assertTrue(mockOnlyProviderGuard(true) === null);
     const blocked = mockOnlyProviderGuard(false);
-    assertTrue(!!blocked && blocked.ok === false);
-    assertEqual(blocked!.reason, 'not-mock');
+    if (!blocked) {
+      throw new Error('expected non-mock guard failure');
+    }
+    assertEqual(blocked.ok, false);
+    assertEqual(blocked.reason, 'not-mock');
     assertContains(LIVE_AI_DISABLED_REASON, 'Live AI providers are disabled');
   });
 
@@ -138,13 +163,11 @@ async function run() {
       currentGeneration: 1,
       aborted: false,
     });
-    assertTrue(out.ok);
-    if (out.ok) {
-      assertEqual(out.origin, 'mock');
-      assertEqual(out.result.isMock, true);
-      assertEqual(out.result.citations[0].messageId, id);
-      assertContains(out.result.mockLabel, 'Mock');
-    }
+    const ok = requireOk(out);
+    assertEqual(ok.origin, 'mock');
+    assertEqual(ok.result.isMock, true);
+    assertEqual(ok.result.citations[0].messageId, id);
+    assertContains(ok.result.mockLabel, 'Mock');
   });
 
   await test('unknown source id fails closed and does not substitute demo output', () => {
@@ -154,11 +177,9 @@ async function run() {
       currentGeneration: 1,
       aborted: false,
     });
-    assertFalse(out.ok);
-    if (!out.ok) {
-      assertEqual(out.reason, 'unknown-source-id');
-      assertEqual(out.origin, 'local');
-    }
+    const fail = requireFailure(out);
+    assertEqual(fail.reason, 'unknown-source-id');
+    assertEqual(fail.origin, 'local');
   });
 
   await test('invalid schema fails closed', () => {
@@ -171,10 +192,7 @@ async function run() {
         aborted: false,
       }
     );
-    assertFalse(out.ok);
-    if (!out.ok) {
-      assertEqual(out.reason, 'invalid-schema');
-    }
+    assertEqual(requireFailure(out).reason, 'invalid-schema');
   });
 
   await test('isMock false is rejected as live-disabled/not-mock', () => {
@@ -187,10 +205,8 @@ async function run() {
         aborted: false,
       }
     );
-    assertFalse(out.ok);
-    if (!out.ok) {
-      assertTrue(out.reason === 'live-disabled' || out.reason === 'not-mock');
-    }
+    const fail = requireFailure(out);
+    assertTrue(fail.reason === 'live-disabled' || fail.reason === 'not-mock');
   });
 
   await test('bidi spoof citation id does not match a real source id', () => {
@@ -200,10 +216,7 @@ async function run() {
       currentGeneration: 1,
       aborted: false,
     });
-    assertFalse(out.ok);
-    if (!out.ok) {
-      assertEqual(out.reason, 'unknown-source-id');
-    }
+    assertEqual(requireFailure(out).reason, 'unknown-source-id');
   });
 
   await test('local abort and stale generation are not remote completion', () => {
@@ -213,22 +226,18 @@ async function run() {
       currentGeneration: 1,
       aborted: true,
     });
-    assertFalse(cancelled.ok);
-    if (!cancelled.ok) {
-      assertEqual(cancelled.origin, 'local');
-      assertEqual(cancelled.reason, 'cancelled');
-    }
+    const cancelledFail = requireFailure(cancelled);
+    assertEqual(cancelledFail.origin, 'local');
+    assertEqual(cancelledFail.reason, 'cancelled');
     const stale = validateProviderPayload(validPayload('demo-msg-1'), {
       allowedSourceIds: new Set(['demo-msg-1']),
       startedGeneration: 1,
       currentGeneration: 2,
       aborted: false,
     });
-    assertFalse(stale.ok);
-    if (!stale.ok) {
-      assertEqual(stale.origin, 'local');
-      assertEqual(stale.reason, 'stale-generation');
-    }
+    const staleFail = requireFailure(stale);
+    assertEqual(staleFail.origin, 'local');
+    assertEqual(staleFail.reason, 'stale-generation');
   });
 
   console.log('\nCategory: mock subprocess argv / UTF-8 / lifecycle');
@@ -260,14 +269,12 @@ async function run() {
       },
       { timeoutMs: 4000, currentGeneration: () => 1 }
     );
-    assertTrue(out.ok, out.ok ? '' : out.message);
-    if (out.ok) {
-      assertEqual(out.origin, 'mock');
-      assertEqual(out.result.isMock, true);
-      assertContains(out.result.response, 'MOCK');
-      assertContains(out.result.response, 'חפש חשבוניות');
-      assertEqual(out.result.citations[0].messageId, 'demo-msg-3');
-    }
+    const ok = requireOk(out);
+    assertEqual(ok.origin, 'mock');
+    assertEqual(ok.result.isMock, true);
+    assertContains(ok.result.response, 'MOCK');
+    assertContains(ok.result.response, 'חפש חשבוניות');
+    assertEqual(ok.result.citations[0].messageId, 'demo-msg-3');
   });
 
   await test('subprocess unknown citation is fail-closed', async () => {
@@ -281,10 +288,7 @@ async function run() {
       },
       { timeoutMs: 4000, currentGeneration: () => 1 }
     );
-    assertFalse(out.ok);
-    if (!out.ok) {
-      assertEqual(out.reason, 'unknown-source-id');
-    }
+    assertEqual(requireFailure(out).reason, 'unknown-source-id');
   });
 
   await test('subprocess bidi citation is fail-closed', async () => {
@@ -297,10 +301,7 @@ async function run() {
       },
       { timeoutMs: 4000, currentGeneration: () => 1 }
     );
-    assertFalse(out.ok);
-    if (!out.ok) {
-      assertEqual(out.reason, 'unknown-source-id');
-    }
+    assertEqual(requireFailure(out).reason, 'unknown-source-id');
   });
 
   await test('subprocess cancel is local and yields no answer', async () => {
@@ -317,11 +318,9 @@ async function run() {
       },
       { timeoutMs: 4000, signal: controller.signal, currentGeneration: () => 1 }
     );
-    assertFalse(out.ok);
-    if (!out.ok) {
-      assertEqual(out.origin, 'local');
-      assertEqual(out.reason, 'cancelled');
-    }
+    const fail = requireFailure(out);
+    assertEqual(fail.origin, 'local');
+    assertEqual(fail.reason, 'cancelled');
     assertTrue(Date.now() - started < 600, 'local cancel must not wait out the worker delay');
   });
 
@@ -335,11 +334,9 @@ async function run() {
       },
       { timeoutMs: 80, currentGeneration: () => 1 }
     );
-    assertFalse(out.ok);
-    if (!out.ok) {
-      assertEqual(out.origin, 'local');
-      assertEqual(out.reason, 'timeout');
-    }
+    const fail = requireFailure(out);
+    assertEqual(fail.origin, 'local');
+    assertEqual(fail.reason, 'timeout');
   });
 
   await test('subprocess stale generation is rejected after a newer query', async () => {
@@ -356,11 +353,9 @@ async function run() {
     );
     gen = 2;
     const out = await pending;
-    assertFalse(out.ok);
-    if (!out.ok) {
-      assertEqual(out.origin, 'local');
-      assertEqual(out.reason, 'stale-generation');
-    }
+    const fail = requireFailure(out);
+    assertEqual(fail.origin, 'local');
+    assertEqual(fail.reason, 'stale-generation');
   });
 
   await test('worker and store keep fail-closed source paths', () => {
@@ -368,6 +363,7 @@ async function run() {
     assertContains(store, 'validateProviderPayload');
     assertContains(store, 'hostCoverageFooter');
     assertContains(store, 'mockOnlyProviderGuard');
+    assertContains(store, 'isAIBoundaryFailure');
     const worker = fs.readFileSync(MOCK_AI_WORKER_PATH, 'utf8');
     assertContains(worker, 'MOCK subprocess');
   });

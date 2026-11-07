@@ -40,9 +40,29 @@ export interface ValidatedAIResult {
   mockLabel: string;
 }
 
-export type AIBoundaryResult =
-  | { ok: true; origin: 'mock'; result: ValidatedAIResult }
-  | { ok: false; origin: AITerminationOrigin; reason: AIBoundaryReason; message: string };
+export interface AIBoundaryOk {
+  ok: true;
+  origin: 'mock';
+  result: ValidatedAIResult;
+}
+
+export interface AIBoundaryFailure {
+  ok: false;
+  origin: AITerminationOrigin;
+  reason: AIBoundaryReason;
+  message: string;
+}
+
+export type AIBoundaryResult = AIBoundaryOk | AIBoundaryFailure;
+
+/** Boolean `ok` does not narrow this union unless strictNullChecks is on. */
+export function isAIBoundaryFailure(r: AIBoundaryResult): r is AIBoundaryFailure {
+  return r.ok === false;
+}
+
+export function isAIBoundaryOk(r: AIBoundaryResult): r is AIBoundaryOk {
+  return r.ok === true;
+}
 
 export function hostCoverageFooter(searchResult: SearchResult, syncCoverage: number): string {
   return buildCoverageDisclosure(searchResult, syncCoverage);
@@ -50,6 +70,10 @@ export function hostCoverageFooter(searchResult: SearchResult, syncCoverage: num
 
 function isNonEmptyString(v: unknown): v is string {
   return typeof v === 'string' && v.length > 0;
+}
+
+function isRecord(v: unknown): v is Record<string, unknown> {
+  return typeof v === 'object' && v !== null && !Array.isArray(v);
 }
 
 function parseDate(v: unknown): Date | null {
@@ -65,11 +89,15 @@ function parseDate(v: unknown): Date | null {
   return null;
 }
 
-function parseCitation(raw: unknown, allowed: ReadonlySet<string>): Citation | AIBoundaryResult {
-  if (!raw || typeof raw !== 'object') {
+function isCitationRejection(v: Citation | AIBoundaryFailure): v is AIBoundaryFailure {
+  return 'reason' in v;
+}
+
+function parseCitation(raw: unknown, allowed: ReadonlySet<string>): Citation | AIBoundaryFailure {
+  if (!isRecord(raw)) {
     return fail('local', 'invalid-schema', 'citation is not an object');
   }
-  const c = raw as Record<string, unknown>;
+  const c = raw;
   if (!isNonEmptyString(c.messageId)) {
     return fail('local', 'invalid-schema', 'citation.messageId required');
   }
@@ -102,7 +130,7 @@ function fail(
   origin: AITerminationOrigin,
   reason: AIBoundaryReason,
   message: string
-): { ok: false; origin: AITerminationOrigin; reason: AIBoundaryReason; message: string } {
+): AIBoundaryFailure {
   return { ok: false, origin, reason, message };
 }
 
@@ -121,18 +149,13 @@ export function validateProviderPayload(raw: unknown, ctx: AIValidateContext): A
       'Stale result rejected after a newer query generation'
     );
   }
-  if (
-    !LIVE_AI_PROVIDERS_ENABLED &&
-    raw &&
-    typeof raw === 'object' &&
-    (raw as any).isMock === false
-  ) {
-    return fail('local', 'live-disabled', LIVE_AI_DISABLED_REASON);
-  }
-  if (!raw || typeof raw !== 'object') {
+  if (!isRecord(raw)) {
     return fail('local', 'invalid-schema', 'provider payload is not an object');
   }
-  const p = raw as Record<string, unknown>;
+  const p = raw;
+  if (!LIVE_AI_PROVIDERS_ENABLED && p.isMock === false) {
+    return fail('local', 'live-disabled', LIVE_AI_DISABLED_REASON);
+  }
   if (p.isMock !== true) {
     return fail(
       'local',
@@ -149,10 +172,10 @@ export function validateProviderPayload(raw: unknown, ctx: AIValidateContext): A
   const citations: Citation[] = [];
   for (const item of p.citations) {
     const parsed = parseCitation(item, ctx.allowedSourceIds);
-    if ('ok' in parsed && parsed.ok === false) {
+    if (isCitationRejection(parsed)) {
       return parsed;
     }
-    citations.push(parsed as Citation);
+    citations.push(parsed);
   }
   const mockLabel =
     typeof p.mockLabel === 'string' && p.mockLabel.trim()
@@ -173,7 +196,7 @@ export function validateProviderPayload(raw: unknown, ctx: AIValidateContext): A
   };
 }
 
-export function mockOnlyProviderGuard(isMock: boolean): AIBoundaryResult | null {
+export function mockOnlyProviderGuard(isMock: boolean): AIBoundaryFailure | null {
   if (!LIVE_AI_PROVIDERS_ENABLED && !isMock) {
     return fail('local', 'not-mock', LIVE_AI_DISABLED_REASON);
   }

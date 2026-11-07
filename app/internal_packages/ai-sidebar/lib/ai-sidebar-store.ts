@@ -14,6 +14,8 @@ import {
 import { mockProvider } from './core/mock-provider';
 import {
   hostCoverageFooter,
+  isAIBoundaryFailure,
+  isAIBoundaryOk,
   mockOnlyProviderGuard,
   validateProviderPayload,
 } from './core/ai-boundary';
@@ -236,14 +238,16 @@ class AISidebarStore extends MailspringStore {
           aborted: !!this._state.abortController?.signal.aborted,
         }
       );
-      if (!validated.ok) {
-        this._state.error = validated.message;
-        this._state.conversation.push({
-          id: `error-${Date.now()}`,
-          role: 'system',
-          content: `❌ שגיאה: תשובה נדחתה (fail-closed, origin=${validated.origin}). ${validated.message}`,
-          timestamp: new Date(),
-        });
+      if (!isAIBoundaryOk(validated)) {
+        if (isAIBoundaryFailure(validated)) {
+          this._state.error = validated.message;
+          this._state.conversation.push({
+            id: `error-${Date.now()}`,
+            role: 'system',
+            content: `❌ שגיאה: תשובה נדחתה (fail-closed, origin=${validated.origin}). ${validated.message}`,
+            timestamp: new Date(),
+          });
+        }
         return;
       }
 

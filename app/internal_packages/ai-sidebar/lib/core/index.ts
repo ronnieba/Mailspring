@@ -8,6 +8,8 @@ export {
   LIVE_AI_DISABLED_REASON,
   LIVE_AI_PROVIDERS_ENABLED,
   hostCoverageFooter,
+  isAIBoundaryFailure,
+  isAIBoundaryOk,
   mockOnlyProviderGuard,
   validateProviderPayload,
 } from './ai-boundary';
