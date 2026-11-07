@@ -178,6 +178,8 @@ async function run() {
     assertContains(engineSrc, 'LOAD_TIMEOUT_MS');
     assertContains(engineSrc, 'terminateProcess');
     assertContains(engineSrc, 'proc.unref');
+    assertContains(engineSrc, 'unrefStdioPipe');
+    assertContains(engineSrc, 'instanceof Socket');
     assertContains(engineSrc, 'await terminateProcess');
     const workerSrc = fs.readFileSync(
       path.join(__dirname, '../../src/spellcheck/offline-prototype/hunspell-worker.js'),

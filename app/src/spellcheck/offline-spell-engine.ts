@@ -8,6 +8,7 @@
  */
 import { ChildProcess, fork } from 'child_process';
 import * as fs from 'fs';
+import { Socket } from 'net';
 import * as path from 'path';
 import { Token, stripNiqqud, tokenize } from './spell-core';
 import { FIXTURE_TYPOS } from './word-lists';
@@ -187,20 +188,23 @@ function rejectAll(err: Error) {
   pending.clear();
 }
 
+/**
+ * fork() stdio pipes are net.Sockets. @types/node types ChildProcess.stderr as
+ * stream.Readable (no unref), which is TS2339 on 0b8dc4ae. Call unref only on
+ * Socket, which is the actual handle that can pin the parent event loop.
+ */
+function unrefStdioPipe(stream: object | null | undefined) {
+  if (stream instanceof Socket) {
+    stream.unref();
+  }
+}
+
 function detachStdio(proc: ChildProcess) {
   for (const stream of [proc.stdin, proc.stdout, proc.stderr]) {
     if (!stream) continue;
     stream.removeAllListeners();
-    try {
-      stream.unref();
-    } catch {
-      // ignore
-    }
-    try {
-      stream.destroy();
-    } catch {
-      // ignore
-    }
+    unrefStdioPipe(stream);
+    stream.destroy();
   }
 }
 
@@ -265,7 +269,7 @@ function spawnWorker(): ChildProcess {
   proc.stderr?.on('data', (buf: Buffer) => {
     lastStderr = (lastStderr + buf.toString('utf8')).slice(-4000);
   });
-  proc.stderr?.unref();
+  unrefStdioPipe(proc.stderr);
   proc.on('message', (msg: RpcResponse) => {
     if (!msg || msg.id == null) {
       return;
