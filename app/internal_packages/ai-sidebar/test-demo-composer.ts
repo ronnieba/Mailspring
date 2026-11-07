@@ -194,13 +194,24 @@ function run() {
     const less = fs.readFileSync(path.join(PKG_ROOT, 'styles/ai-sidebar.less'), 'utf8');
     assertContains(less, '.demo-composer');
     assertContains(less, '.demo-composer-workspace');
+    assertContains(less, '.demo-composer-backend-slot');
     assertContains(less, 'overflow-y: auto');
     assertContains(less, 'overflow: hidden');
     assertContains(less, '-webkit-appearance: none');
     assertFalse(less.includes('min-height: 240px'));
+    assertContains(
+      less,
+      'grid-template-rows: auto minmax(min-content, 14rem) auto minmax(8em, 1fr) auto auto'
+    );
+    assertContains(less, 'max-height: 14rem');
+    assertContains(less, 'min-height: 8em');
+    assertContains(less, 'min-height: 2.5em');
     assertContains(demoTsx, 'demo-composer-workspace');
+    assertContains(demoTsx, 'demo-composer-backend-slot');
     const editorIdx = demoTsx.indexOf('<ComposerEditor');
     const dictIdx = demoTsx.indexOf('aria-label="מילון אישי"');
+    const statusIdx = demoTsx.indexOf('aria-label="מצב בודק איות"');
+    assertTrue(statusIdx >= 0 && editorIdx > statusIdx, 'status disclosure stays above the editor');
     assertTrue(editorIdx >= 0 && dictIdx > editorIdx, 'dictionary must follow the editor in DOM');
     const sidebar = fs.readFileSync(path.join(PKG_ROOT, 'lib/ai-sidebar.tsx'), 'utf8');
     assertContains(sidebar, 'contact cards (maxWidth 300)');

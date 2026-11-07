@@ -158,21 +158,23 @@ export default class DemoComposer extends React.Component<
         <div className="demo-composer-banner">
           עורך DEMO · אותו ComposerEditor · אין שליחה · אין שמירת טיוטה
         </div>
-        <details
-          className="demo-composer-backend"
-          role="status"
-          aria-label="מצב בודק איות"
-          data-hebrew-native={backendStatus.hebrew.listedInSession ? 'listed' : 'absent'}
-          data-hebrew-detection={backendStatus.hebrewNativeDetection}
-          data-hebrew-suggestions={backendStatus.hebrewNativeSuggestions}
-          data-hebrew-bundled={backendStatus.hebrewBundledDictionary}
-        >
-          <summary>{formatHebrewNativeSummary(backendStatus)}</summary>
-          <p>
-            {backendNote ||
-              'Listing is not detection · suggestions unproven · UI-test overlay only · bundled Hspell not shipped · no silent auto-correct'}
-          </p>
-        </details>
+        <div className="demo-composer-backend-slot">
+          <details
+            className="demo-composer-backend"
+            role="status"
+            aria-label="מצב בודק איות"
+            data-hebrew-native={backendStatus.hebrew.listedInSession ? 'listed' : 'absent'}
+            data-hebrew-detection={backendStatus.hebrewNativeDetection}
+            data-hebrew-suggestions={backendStatus.hebrewNativeSuggestions}
+            data-hebrew-bundled={backendStatus.hebrewBundledDictionary}
+          >
+            <summary>{formatHebrewNativeSummary(backendStatus)}</summary>
+            <p>
+              {backendNote ||
+                'Listing is not detection · suggestions unproven · UI-test overlay only · bundled Hspell not shipped · no silent auto-correct'}
+            </p>
+          </details>
+        </div>
         <div className="demo-composer-actions">
           <button
             type="button"
