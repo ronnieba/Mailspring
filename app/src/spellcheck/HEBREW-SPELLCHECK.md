@@ -1,72 +1,89 @@
-# Hebrew spellchecking — native listed vs bundled dictionary
+# Native spellcheck vs bundled dictionaries
 
-The DEMO overlay’s two authored typos (`misspelledd`, `איותת`) exist only to exercise suggestion / personal-dictionary UI. They are **not** a Hebrew dictionary and must not be described as fulfilling general Hebrew spelling.
+The DEMO overlay’s two authored typos (`misspelledd`, `איותת`) exist only to exercise suggestion / personal-dictionary UI. They are **not** a Hebrew or English dictionary and must not be described as general spellcheck.
 
-This Mac session may list **`he`** in `availableSpellCheckerLanguages`. That means native `NSSpellChecker` Hebrew is **listed**. Listing is not underlines and not guesses, and it is not a bundled Hspell dictionary.
+**Listing ≠ detection ≠ suggestions.** Source reports listing from `availableSpellCheckerLanguages` only.
 
-**Listing ≠ detection ≠ suggestions.** Source reports listing from `availableSpellCheckerLanguages` only; it cannot see Chromium underlines. 733ff115 on one Mac recorded red underlines on non-fixture `recieve` / `אבטיחחח` (correct `watermelon` / `אבטיח` not underlined) with empty `dictionarySuggestions` (**No Guesses Found**). That is **detection observed, suggestions not proven**. Do not label native Hebrew universally BLOCKED, and do not claim full spell completion from a language list or underlines.
+## 34a90265 native evidence (this Mac)
+
+Isolated demo composer, Electron 44.9.1, real right-click (not AXShowMenu). Overlay silent on all eleven probes. Session listed `en-US` and `he`.
+
+| Word | lang | Native underline | Context menu |
+|------|------|------------------|--------------|
+| `watermelon` | en | no | no spelling section |
+| `invoice` | en | no | no spelling section |
+| `teh` | en | **no** | no spelling section — do not claim complete English detection |
+| `recieve` | en | yes | **לא נמצאו ניחושים** / No Guesses Found |
+| `seperate` | en | yes | No Guesses Found |
+| `mispell` | en | yes | No Guesses Found |
+| `אבטיח` | he | no | no spelling section |
+| `שלום` | he | no | no spelling section |
+| `אבטיחחח` | he | yes | No Guesses Found |
+| `חשבנוית` | he | yes | No Guesses Found |
+| `שלומ` | he | yes | No Guesses Found |
+
+That is **detection observed, suggestions not proven** for both languages. `replaceMisspelling` was not exercised because Electron delivered no guesses. Fixture overlay replacements are not this path.
+
+Exported probe HTML had `lang="en"` on the English words and `lang="he"` on the Hebrew words. English probe paragraphs also had `dir="rtl"` (Select-All overwrite of the RTL fixture). That is recorded, not treated as the proven cause of empty guesses: the same empty-`dictionarySuggestions` result is documented for English-only Electron apps.
+
+## Why `dictionarySuggestions` is empty (OS / Electron, not a missing menu)
+
+The custom context menu **did** run: `misspelledWord` was set (Learn Spelling / No Guesses Found appeared) and `dictionarySuggestions` was `[]`. Wiring:
+
+- `webPreferences.spellcheck: true`
+- `nativeSpellCheck={true}` + `session.setSpellCheckerEnabled(true)`
+- `event.preventDefault()` then `nativeContextSpellItems(params)` → `replaceMisspelling` only for real guesses
+- Empty guesses → disabled localized No Guesses Found (never invented)
+
+Electron has **no API** to fetch extra guesses when `params.dictionarySuggestions` is empty. `session.setSpellCheckerLanguages` is a **no-op on macOS** ([#35514](https://github.com/electron/electron/pull/35514)). Official docs: [SpellChecker](https://www.electronjs.org/docs/latest/tutorial/spellchecker) — macOS uses native APIs and automatically detects language; Hunspell is not used.
+
+Matching upstream:
+
+- [electron#24455](https://github.com/electron/electron/issues/24455): on macOS, `dictionarySuggestions` is an empty array while underlines still appear when System Settings → Spelling is **Automatic by Language** (the default). Reporters saw guesses only after setting an **explicit** language (e.g. U.S. English) and restarting. Chrome (the browser) could still suggest in both modes; Electron did not. Closed stale; not fixed in a later Electron API.
+- [electron#29685](https://github.com/electron/electron/issues/29685): empty suggestions on **Windows** due to `WinRetrieveSuggestionsOnlyOnDemand`. That flag is not this Mac failure.
+
+This app cannot set the user’s Spelling language, write `~/Library/Spelling`, or call `NSSpellChecker setLanguage:` without a new native bridge. Changing System Settings is **not** a product patch and is **not** done here.
+
+**Conclusion:** empty guesses on 34a90265 for both English and Hebrew are an **actual OS/Electron limitation**, not an integration hole in the context-menu handler. Keep `hebrewNativeSuggestions: 'unproven'`. Do not invent replacements.
+
+Optional parent experiment (not required, not a source fix): if this Mac’s Spelling is Automatic by Language, set it to U.S. English, relaunch **only** the isolated demo, retry `recieve`. Report guesses or still-empty. Revert the OS setting afterward. Do not treat that as shipping a product capability.
 
 ## What this SHA does deliver
 
-- Per-paragraph RTL/LTR on the real Slate `ComposerEditor` (not app-wide `dir`). Homogeneous Hebrew paragraphs get `lang="he"`, homogeneous English `lang="en"`, mixed paragraphs omit `lang` so the OS can auto-detect.
-- Native Chromium/OS spellcheck **on** (`nativeSpellCheck={true}` plus `session.setSpellCheckerEnabled(true)`). Languages listed this session, including `he` when present, are passed to `setSpellCheckerLanguages` (no-op on macOS; still required on Win/Linux).
+- Per-paragraph RTL/LTR on the real Slate `ComposerEditor`. Homogeneous Hebrew paragraphs get `lang="he"`, homogeneous English `lang="en"`, mixed paragraphs omit `lang`.
+- Native Chromium/OS spellcheck **on**. `setSpellCheckerLanguages` still called with listed codes (required on Win/Linux; no-op on macOS).
 - User-invoked overlay suggestions and add/remove for **UI-test fixture typos only**.
 - Personal dictionary JSON under the isolated config dir. DEMO never writes `~/Library/Spelling`.
-- Status region `מצב בודק איות`: `data-hebrew-native="listed|absent"`, `data-hebrew-detection="unproven"`, `data-hebrew-suggestions="unproven"`, `data-hebrew-bundled="not-shipped"`. Detection/suggestions stay `unproven` in source because the session list cannot observe underlines or guesses.
+- Status region `מצב בודק איות`: `data-hebrew-native="listed|absent"`, `data-hebrew-detection="unproven"`, `data-hebrew-suggestions="unproven"`, `data-hebrew-bundled="not-shipped"`.
 
-## Platform (Electron / macOS)
+Hunspell unused on macOS (Electron uses `NSSpellChecker` only). Default Hunspell downloads use a Google CDN; this change does not enable that path.
 
-Official: https://www.electronjs.org/docs/latest/tutorial/spellchecker
+## Bundled-engine options (user decision required)
 
-| Platform | Engine | `setSpellCheckerLanguages` | Hebrew |
-|----------|--------|----------------------------|--------|
-| macOS | `NSSpellChecker` (not Hunspell) | **No-op** (Electron [#35514](https://github.com/electron/electron/pull/35514)). OS auto-detects language. | If `he` is listed this session, enable native detection. Parent must still verify underlines and context-menu suggestions on **non-fixture** words. Do not treat a missing `he` as proof that macOS Hebrew is universally unavailable. |
-| Windows / Linux | Hunspell | Required; unknown codes can throw | Chromium ships `he_IL` Hunspell files (see below). Unused on macOS. |
+None of these are implemented. They need an explicit product decision. No network dictionary service, LanguageTool, paid API, or OS-global dictionary writes.
 
-Hunspell unused on macOS (Electron uses `NSSpellChecker` only).
+GPL-3 (Mailspring) **can** combine with AGPL-3 (GPL-3 §13). The **combined distribution** must then honor AGPL-3 §13 (network source offer). That is an extra obligation vs today’s GPL-3-only shipping — a license-policy decision, not “AGPL is illegal to combine.”
 
-`session.addWordToSpellCheckerDictionary` on macOS writes `~/Library/Spelling`. DEMO `learnWord` uses `Mailspring-demo/spell-personal-dictionary.json` instead.
+| Option | Languages | Engine | License | Tradeoff | Decision needed |
+|--------|-----------|--------|---------|----------|-----------------|
+| **A. Keep native-only** (current) | Whatever NSSpellChecker detects | Electron/macOS | n/a | Underlines observed; guesses empty under Automatic-by-Language; `teh` not flagged | None. Honest detection ≠ completion. |
+| **B. In-process English Hunspell/nspell** | English | `nspell` (MIT) + `dictionary-en` / SCOWL (permissive, attribution) | MIT + SCOWL/BSD-style; GPL-3 compatible | Real English suggestions without OS Spelling. Hebrew unchanged. New dependency + `webFrame.setSpellCheckProvider`. nspell is not full Hunspell morphology. | Approve English-only local engine + vendor the word list with notices. |
+| **C. WASM Hunspell (hunspell-asm)** | Any Hunspell `.aff/.dic` we ship | Hunspell in WASM | Wrapper MIT; Hunspell MPL-1.1 / GPL-2+ / LGPL-2.1+ (can be used under GPL-3) | Closer to Chromium Win/Linux. Still need a **Hebrew dictionary license**. ~engine size. | Approve WASM Hunspell **and** pick a Hebrew dictionary from D/E/F. |
+| **D. Hspell 1.4 / `dictionary-he` / LibreOffice he_IL** | Modern morphological Hebrew | Needs C or C | **AGPL-3+ on programs and dictionary files** ([Hspell](http://hspell.ivrix.org.il/download.html), [dictionary-he](https://github.com/wooorm/dictionaries/blob/main/dictionaries/he/license)) | Best Hebrew vocab. Combined app must meet AGPL-3 §13. | **Explicit license-policy yes** (AGPL network clause on the combined work). Not done here. |
+| **E. Chromium `he_IL` from Hspell 1.0 (2000–2006)** | Older general Hebrew | Needs C | Chromium `README_he_IL.txt`: **GPL, version not specified**. If GPL-2-**only**, it cannot mix with GPL-3; if GPL-2-or-later, it can. | Incomplete vs modern Hebrew. Electron still will not load Hunspell on macOS without C. | License review of that dump **before** shipping. |
+| **F. Authored fixture list** | `misspelledd` / `איותת` only | Overlay | GPL-3.0-or-later | UI-test only. **Not** general spellcheck. | Already shipped. Do not relabel. |
 
-Default Hunspell dictionary downloads use a **Google CDN**. This change does not enable that path.
+Rejected without a separate decision: LanguageTool / grammar cloud, Google Hunspell CDN downloads, writing `~/Library/Spelling`, changing the user’s Spelling language from the app.
 
-## Offline Hebrew dictionaries investigated (bundled path)
-
-| Source | Vocab | Size (order) | License | Why not bundled here |
-|--------|-------|--------------|---------|----------------------|
-| **Hspell 1.4** (current; LibreOffice `he_IL`, Mozilla) | Full morphological Hebrew | `.aff` tens of KB + generated word lists large | **AGPL-3+** on programs **and** dictionary files | Shipping it would AGPL the combined work. Mailspring is GPL-3.0. **Not shipped.** This is the bundled-dictionary gap, not a native-unavailable claim. |
-| **Hspell 1.0 → Chromium `he_IL.dic`** | Older general Hebrew (2000–2006) | ~3.2 MB | GPL (Hspell 1.0) | Electron **does not run Hunspell on macOS**. Not shipped. |
-| Authored fixture list in `word-lists.ts` | Two UI-test typos + tiny demo sentences | few KB | GPL-3.0-or-later | **UI-test only.** |
-
-## Parent native acceptance (do not skip)
+## Parent native acceptance
 
 Use the isolated demo composer. Do **not** infer results from the two overlay fixtures.
 
-### Overlay vs native
-
 | Mechanism | Words | How to accept |
 |-----------|-------|----------------|
-| UI-test overlay | only `misspelledd`, `איותת` | Caret in the word → region `הצעות איות` → `החלף ב-misspelled` / `החלף ב-איות`. AX Press, Space, and Enter must replace. |
-| Native OS/Chromium | everything else | Red native underline + **real right-click / Control-click** context menu (`misspelledWord` / `dictionarySuggestions`). `AXShowMenu` is **not** sufficient (it may show Cut/Copy/Paste only). |
+| UI-test overlay | only `misspelledd`, `איותת` | `החלף ב-misspelled` / `החלף ב-איות`. AX Press, Space, Enter. |
+| Native OS/Chromium | everything else | Red underline + **real right-click**. Guesses → `replaceMisspelling` (only that word). Empty guesses with underline → platform result, **suggestions not proven**. |
 
-### Non-fixture examples (type these; overlay must stay silent)
+If a later SHA ships option B/C, targeted acceptance is: reload, type `recieve` / `seperate` / `mispell` (and Hebrew pairs only if a licensed Hebrew dictionary was approved). Overlay silent. Right-click must list a guess; choosing it changes only that word. `watermelon` / `אבטיח` must not be flagged. Still no silent auto-correct.
 
-Reload the demo draft, replace the body with four paragraphs (or append). Overlay must stay silent on all of these.
-
-| Role | English | Hebrew |
-|------|---------|--------|
-| Correct (no underline expected) | `watermelon` · `invoice` | `אבטיח` · `שלום` |
-| Typo that English checkers often guess | `teh` → the · `recieve` → receive · `seperate` → separate · `mispell` → misspell | — |
-| Typo that may underline with **no** guesses | `recieve` (if macOS Spelling is Automatic) · `qqqqxxxx` | `אבטיחחח` · `חשבנוית` · `שלומ` |
-
-1. Overlay (`data-spell-error`) must **not** wrap these words.
-2. Wait ~1s after typing (`spellcheck` re-enables).
-3. **Real right-click / Control-click** (not AXShowMenu).
-4. Menu wiring: misspelled word → either suggestion items (`replaceMisspelling`) **or** disabled `לא נמצאו ניחושים` / `No Guesses Found`, then Learn Spelling / Cut / Copy. Empty guesses with a red underline is a **platform result** ([electron#24455](https://github.com/electron/electron/issues/24455), macOS Spelling = Automatic by Language), not a missing menu. Do not treat that as full spell completion, and do not invent replacements.
-5. If a suggestion **is** listed, choose it; only that word must change. Never silent auto-correct.
-6. Learn Spelling in DEMO writes `Mailspring-demo/spell-personal-dictionary.json` only — never `~/Library/Spelling`. Do not click it unless that is the case under test.
-
-733ff115 on one Mac: `recieve` and `אבטיחחח` were red-underlined; `watermelon` / `אבטיח` were not; both typo menus showed **No Guesses Found**. That is **detection observed, suggestions not proven**.
-
-Optional OS check (not a product patch): System Settings → Keyboard → Text Input → Spelling. If it is Automatic by Language, try U.S. English, relaunch demo, and retry `teh` / `recieve`. Report either **suggestions observed** or **native listed, guesses empty**.
-
-If `he` is listed and Hebrew suggestions appear, report listed+guesses. If listed, underlined, empty guesses: **native Hebrew listed, suggestions not proven**. General/bundled Hebrew remains not complete.
+Until then, native full correction is **not** delivered. Bundled Hspell is **not shipped**.

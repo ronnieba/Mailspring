@@ -12,11 +12,11 @@
  *
  * Do not claim macOS Hebrew is unavailable from source alone. If this session
  * lists `he` / `he-IL`, that is listing only — not underlines and not guesses.
- * Source cannot observe Chromium underlines; 733ff115 on one Mac recorded
- * red underlines on recieve / אבטיחחח with empty dictionarySuggestions
- * (No Guesses Found). Listing ≠ detection ≠ suggestions. Suggestions stay
- * unproven until a real context-menu guess is chosen. Bundled Hspell is not
- * shipped (AGPL-3) — that is separate from native listing.
+ * 34a90265 on one Mac: recieve/seperate/mispell and אבטיחחח/חשבנוית/שלומ
+ * underlined; dictionarySuggestions empty (No Guesses Found); teh not flagged.
+ * That matches electron#24455 (macOS Automatic by Language) plus #35514
+ * (setSpellCheckerLanguages is a no-op). Not a missing context-menu handler.
+ * Listing ≠ detection ≠ suggestions. Bundled Hspell is not shipped (AGPL-3).
  * See ./HEBREW-SPELLCHECK.md.
  */
 

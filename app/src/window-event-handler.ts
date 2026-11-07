@@ -187,9 +187,10 @@ export default class WindowEventHandler {
       const menu = new Menu();
       const spell = nativeContextSpellItems(params);
 
-      // Suggestions come only from Electron/NSSpellChecker. Empty guesses is a
-      // real platform result (electron#24455), not a missing menu. Never invent
-      // or auto-apply replacements.
+      // Suggestions come only from Electron/NSSpellChecker. 34a90265: English
+      // and Hebrew misspelledWord with empty dictionarySuggestions — electron
+      // #24455 / macOS Automatic by Language, not a missing handler. Never
+      // invent or auto-apply replacements.
       if (spell.misspelledWord) {
         if (spell.suggestions.length > 0) {
           for (const suggestion of spell.suggestions) {
