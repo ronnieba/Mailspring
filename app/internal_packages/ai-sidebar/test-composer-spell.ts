@@ -24,6 +24,9 @@ import {
   tokenize,
 } from '../../src/spellcheck/spell-core';
 import {
+  ensurePersonalDictionary,
+  getActivePersonalDictionary,
+  installPersonalDictionary,
   isUnsafeDictionaryPath,
   PersonalDictionary,
   personalDictionaryPath,
@@ -145,6 +148,32 @@ function run() {
     assertEqual(findMisspellings(DEMO_EN_MISS, defaultSpellCheckContext(dict.list())).length, 1);
     const saved = JSON.parse(fs.readFileSync(file, 'utf8'));
     assertFalse(saved.words.includes(DEMO_EN_MISS_WORD));
+  });
+
+  test('module dictionary holder is let-mutable; add/remove use the isolated file', () => {
+    const src = fs.readFileSync(
+      path.join(APP_SRC_ROOT, 'spellcheck/personal-dictionary.ts'),
+      'utf8'
+    );
+    assertContains(src, 'let active:');
+    assertFalse(/\bconst active\b/.test(src), 'active must be let so install/ensure can rebind');
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'ms-spell-active-'));
+    installPersonalDictionary(null);
+    try {
+      const a = ensurePersonalDictionary(dir);
+      assertEqual(getActivePersonalDictionary(), a);
+      a.add(DEMO_HE_MISS_WORD);
+      assertTrue(a.has(DEMO_HE_MISS_WORD));
+      assertEqual(ensurePersonalDictionary(dir), a);
+      a.remove(DEMO_HE_MISS_WORD);
+      assertFalse(a.has(DEMO_HE_MISS_WORD));
+      const saved = JSON.parse(fs.readFileSync(personalDictionaryPath(dir), 'utf8'));
+      assertFalse(saved.words.includes(DEMO_HE_MISS_WORD));
+      assertFalse(dir.includes('Library/Spelling'));
+      assertFalse(dir.includes(`${path.sep}Mailspring${path.sep}`));
+    } finally {
+      installPersonalDictionary(null);
+    }
   });
 
   test('refuses OS spelling dir and production Mailspring profile', () => {

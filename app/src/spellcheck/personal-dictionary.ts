@@ -22,8 +22,6 @@ export function isUnsafeDictionaryPath(filePath: string): boolean {
   return false;
 }
 
-const active: PersonalDictionary | null = null;
-
 export class PersonalDictionary {
   private words = new Set<string>();
   private listeners = new Set<() => void>();
@@ -95,6 +93,9 @@ export class PersonalDictionary {
     this.io.writeFileSync(this.filePath, JSON.stringify({ words: this.list() }, null, 2), 'utf8');
   }
 }
+
+// Module holder for the demo/renderer dictionary. Must be `let`: install/ensure rebind it.
+let active: PersonalDictionary | null = null;
 
 export function installPersonalDictionary(dict: PersonalDictionary | null) {
   active = dict;
