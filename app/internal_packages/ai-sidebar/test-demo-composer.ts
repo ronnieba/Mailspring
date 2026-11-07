@@ -102,6 +102,8 @@ function run() {
     assertFalse(demoTsx.includes('data-hebrew-general="blocked"'));
     assertContains(demoTsx, 'formatBackendStatusText');
     assertContains(demoTsx, 'formatHebrewNativeSummary');
+    assertContains(demoTsx, 'data-offline-spell=');
+    assertContains(demoTsx, 'loadOfflineSpellEngine');
     assertContains(demoTsx, 'extraPlugins={SpellPlugins}');
     assertContains(editorTsx, 'extraPlugins');
   });

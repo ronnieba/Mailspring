@@ -19,7 +19,10 @@ If a Keychain dialog names **Mailspring Safe Storage**, deny it — that is the 
 ```bash
 cd /path/to/Mailspring   # e.g. /Users/d623300/Developer/Mailspring-AI-Dev/src
 git checkout cursor/ai-sidebar-prototype-842c
-npm install
+# Do NOT run repo-root npm install if it would rewrite the existing
+# app/package-lock.json local diff — leave that file BYTE IDENTICAL.
+# Private nspell dictionaries (AGPL-3.0 he aff/dic, not committed):
+bash app/src/spellcheck/offline-prototype/install.sh
 npm run typecheck
 npx ts-node --project app/tsconfig.json app/internal_packages/ai-sidebar/test-core.ts
 npx ts-node --project app/tsconfig.json app/internal_packages/ai-sidebar/test-adapter.ts
@@ -33,6 +36,9 @@ npx ts-node --project app/tsconfig.json app/internal_packages/ai-sidebar/test-de
 npx ts-node --project app/tsconfig.json app/internal_packages/ai-sidebar/test-composer-direction.ts
 npx ts-node --project app/tsconfig.json app/internal_packages/ai-sidebar/test-composer-spell.ts
 npx ts-node --project app/tsconfig.json app/internal_packages/ai-sidebar/test-demo-composer.ts
+# After sidecar install (does NOT touch app/package-lock.json):
+# bash app/src/spellcheck/offline-prototype/install.sh
+npx ts-node --project app/tsconfig.json app/internal_packages/ai-sidebar/test-nspell-engine.ts
 
 # From any other cwd — pass ABSOLUTE paths and --prefix so npx uses the repo
 # ts-node. Do not use a local tsconfig.json (that was a tester command error,
@@ -51,6 +57,8 @@ npx ts-node --project app/tsconfig.json app/internal_packages/ai-sidebar/test-de
 #   "$REPO/app/internal_packages/ai-sidebar/test-composer-spell.ts"
 # npx --prefix "$REPO" ts-node --project "$REPO/app/tsconfig.json" \
 #   "$REPO/app/internal_packages/ai-sidebar/test-demo-composer.ts"
+# npx --prefix "$REPO" ts-node --project "$REPO/app/tsconfig.json" \
+#   "$REPO/app/internal_packages/ai-sidebar/test-nspell-engine.ts"
 
 # Accountless synthetic demo (NOT npm start — that is onboarding)
 npm run start:demo
@@ -170,19 +178,21 @@ Keyboard: click the typo, then Tab/Shift+Tab to the replace button, then Space o
 5. **Dictionary remove:** `הסר מהמילון האישי: misspelledd`. Overlay for **that word** must reappear immediately (Hebrew mark stays). No reload/edit workaround.
 6. **Layout at the real sidebar width (~300pt, not declared minWidth):** after add/remove, with the overlay popover open, paragraphs 4/5 must remain fully readable. `מילון אישי` / `אין מילים שמורות` / the footer must **not** paint over editor text. Scroll the editor workspace if needed; dictionary/status/actions stay in flow (opaque, not covering). Measured column width may stay ~299pt because the MessageListSidebar also hosts contact cards (`maxWidth: 300`).
 7. **Expanded spelling status must not collapse the editor or dictionary:** click `מצב בודק איות` so the disclosure is **open**. At ~299pt, workspace and `מילון אישי` must keep a usable height (not ~1pt). Wheel inside the workspace still reveals all 5 paragraphs; wheel inside the yellow status slot scrolls the diagnostic text. Do **not** collapse the disclosure as a workaround. Collapsed status must still work as in (6).
-8. **Native non-fixture suggestions:** 34a90265 already recorded underlines on `recieve`/`seperate`/`mispell` and `אבטיחחח`/`חשבנוית`/`שלומ` with **No Guesses Found**; `teh` was not flagged. That is the Electron/macOS empty-`dictionarySuggestions` limitation ([#24455](https://github.com/electron/electron/issues/24455)), not a missing menu. Do not rebuild layout to chase guesses. Optional OS Spelling experiment is documented in `HEBREW-SPELLCHECK.md` and is **not** a product patch. Bundled-engine options need an explicit user decision (same file). If a later SHA actually lists a guess, choose it — only that word changes (`replaceMisspelling`). Overlay fixtures remain two typos only.
+8. **Native OS suggestions:** 34a90265 recorded underlines on `recieve`/`seperate`/`mispell` and `אבטיחחח`/`חשבנוית`/`שלומ` with **No Guesses Found**; `teh` was not flagged. OS/Electron limitation, not a missing menu. Do not rebuild layout. Do not change the user’s Spelling language.
+9. **Offline nspell (after sidecar install):** status `data-offline-spell="ready"`. Type `recieve` / `אבטיחחח` (overlay silent). Caret → `הצעות איות` → `החלף ב-receive` / a Hebrew guess. AX Press/Space/Enter/mouse. Only that word changes; paragraph `dir` and neighbors stay. `watermelon` / `אבטיח` must not be flagged. Add/remove personal JSON under `Mailspring-demo` only. Fixtures remain two typos. If `הבית` is unknown while `בית` is known, or Hebrew suggest is multi-second, record **nspell blocked → Hunspell WASM** (dictionary license still AGPL-3.0).
 
 There is no Send button on this surface. Production composer send/draft saving is unchanged. Overlay spell plugins are **not** in the default conversion plugin list.
 
 ### Spell backend provenance
 
-**Bundled Hspell is not shipped (AGPL-3). Native listing is not detection; suggestions remain unproven.** Details: `app/src/spellcheck/HEBREW-SPELLCHECK.md`.
+**Hspell aff/dic are not in git (AGPL-3.0). Native listing is not detection.** Private nspell sidecar: `bash app/src/spellcheck/offline-prototype/install.sh` — does not touch `app/package-lock.json`. Details: `app/src/spellcheck/HEBREW-SPELLCHECK.md` and `offline-prototype/NOTICE.md`.
 
 | Backend | When | License / notes |
 |---------|------|-----------------|
 | Chromium/macOS `NSSpellChecker` | Production + DEMO `nativeSpellCheck={true}` | Official Electron docs: Hunspell is **not** used on macOS; `setSpellCheckerLanguages` is a **no-op**. Language auto-detect. Parent records `availableSpellCheckerLanguages` on the target Mac. |
 | Chromium Hunspell `he_IL` | Win/Linux only | Chromium `he_IL.dic` is Hspell **1.0 / GPL** (~3.2 MB). Not loaded on macOS. Not vendored here (would need a JS Hunspell engine). |
-| Hspell 1.4 / LibreOffice `he_IL` | Not shipped | **AGPL-3+** on dictionary files and generated word lists. GPL-3 **can** combine with AGPL-3 (GPL-3 §13); the combined distribution then owes AGPL-3 §13. That policy decision is not taken here. |
+| Hspell 1.4 / `dictionary-he` 2.0.0 | Sidecar local only, **not in git** | **AGPL-3.0** aff/dic (no “or later” grant verified). Packaging MIT. Install via `offline-prototype/install.sh`. Do not publish. |
+| nspell 2.1.5 + dictionary-en 4.0.0 | Sidecar local only | nspell MIT; dictionary-en (MIT AND BSD). Separate instances from Hebrew. |
 | UI-test overlay (`FIXTURE_TYPOS`) | DEMO extraPlugins only | Two typos: `misspelledd`, `איותת`. GPL-3.0-or-later authored. **Not** a Hebrew dictionary. |
 | Personal dictionary JSON | DEMO / `learnWord` while `MAILSPRING_DEMO=1` | `spell-personal-dictionary.json` under the isolated config dir. Demo never calls `session.addWordToSpellCheckerDictionary`. |
 | LanguageTool / paid grammar / Google Hunspell CDN / cloud AI | **Not used** | Existing grammar-check package is unchanged and is not this backend. |
@@ -206,10 +216,11 @@ Parent runs these on Mac from repo root (and once from another cwd with `--prefi
 | `test-composer-direction.ts` | 14 |
 | `test-composer-spell.ts` | 20 |
 | `test-demo-composer.ts` | 13 |
-| **new portable subtotal** | **47** |
-| **portable total** | **207** |
+| **composer subtotal (no sidecar)** | **47** |
+| `test-nspell-engine.ts` | **13** (requires sidecar install) |
+| **portable total after sidecar** | **220** |
 
-Typecheck + lint locally. Do not run these in cloud CI. Cancellation was **not** rerun on 733ff115 — do not reuse old delayed-cancel UI.
+Without sidecar install: prior **207** + alt-cwd **47** still apply. After `install.sh`: **220** portable (207+13) and alt-cwd **60** (47+13). Do not run these in cloud CI. Preserve 34a90265 layout/AI/isolation. Do not rewrite `app/package-lock.json`.
 
 `--demo` does **not** open, migrate, rebuild, or relaunch over `edgehill.db`. A leftover empty stub in `Mailspring-demo/` from an older checkout is ignored; do not delete it. Production `application:reset-database` (Okay → rebuild → relaunch) is unchanged.
 

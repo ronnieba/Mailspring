@@ -81,3 +81,7 @@ client_secret.json
 /test-results
 /playwright-report
 /playwright/test-results/
+
+# Private nspell evaluation: AGPL-3.0 aff/dic must not be committed
+app/src/spellcheck/offline-prototype/node_modules/
+app/src/spellcheck/offline-prototype/package-lock.json

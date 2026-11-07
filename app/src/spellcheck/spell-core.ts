@@ -9,16 +9,44 @@ export interface Token {
   script: WordScript;
 }
 
-const EN_RE = /[A-Za-z']+/g;
-const HE_RE = /[\u0590-\u05FF]+/g;
+const EN_RE = /[A-Za-z]+(?:['’][A-Za-z]+)*/g;
+const HE_RE =
+  /[\u05D0-\u05EA\u0591-\u05BD\u05BF\u05C1-\u05C2\u05C4-\u05C5\u05C7]+(?:[\u05F3\u05F4'’"][\u05D0-\u05EA\u0591-\u05BD\u05BF\u05C1-\u05C2\u05C4-\u05C5\u05C7]+)*/g;
+
+const NIQQUD_RE = /[\u0591-\u05BD\u05BF\u05C1-\u05C2\u05C4-\u05C5\u05C7]/g;
+const URL_RE = /https?:\/\/[^\s]+|[\w.+-]+@[\w.-]+\.[A-Za-z]{2,}/g;
+
+export function stripNiqqud(word: string): string {
+  return word.replace(NIQQUD_RE, '');
+}
+
+export function urlOrEmailRanges(text: string): Array<{ start: number; end: number }> {
+  const out: Array<{ start: number; end: number }> = [];
+  URL_RE.lastIndex = 0;
+  let m: RegExpExecArray | null;
+  while ((m = URL_RE.exec(text))) {
+    out.push({ start: m.index, end: m.index + m[0].length });
+  }
+  return out;
+}
+
+function overlapsUrl(start: number, end: number, ranges: Array<{ start: number; end: number }>) {
+  return ranges.some((r) => start < r.end && end > r.start);
+}
 
 export function tokenize(text: string): Token[] {
   const tokens: Token[] = [];
+  const skip = urlOrEmailRanges(text);
   const collect = (re: RegExp, script: WordScript) => {
     re.lastIndex = 0;
     let m: RegExpExecArray | null;
     while ((m = re.exec(text))) {
-      tokens.push({ word: m[0], start: m.index, end: m.index + m[0].length, script });
+      const start = m.index;
+      const end = start + m[0].length;
+      if (overlapsUrl(start, end, skip)) continue;
+      const word = m[0];
+      if (script === 'he' && !stripNiqqud(word).replace(/[\u05F3\u05F4'’"]/g, '')) continue;
+      tokens.push({ word, start, end, script });
     }
   };
   collect(EN_RE, 'en');

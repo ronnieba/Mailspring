@@ -19,6 +19,7 @@ import {
   installPersonalDictionary,
   PersonalDictionary,
 } from '../../../src/spellcheck/personal-dictionary';
+import { loadOfflineSpellEngine, OfflineSpellStatus } from '../../../src/spellcheck/nspell-engine';
 import { isDemoMode } from './synthetic-demo';
 
 const { convertFromHTML, convertToHTML } = ComposerSupport.Conversion;
@@ -29,6 +30,7 @@ interface DemoComposerState {
   backendNote: string;
   dictWords: string[];
   backendStatus: SpellBackendStatus;
+  offlineSpell: OfflineSpellStatus | null;
 }
 
 function currentSession(): {
@@ -58,6 +60,7 @@ export default class DemoComposer extends React.Component<
     backendNote: '',
     dictWords: [],
     backendStatus: describeSpellBackends([]),
+    offlineSpell: null,
   };
 
   componentDidMount() {
@@ -78,9 +81,11 @@ export default class DemoComposer extends React.Component<
     const langs = session ? session.availableSpellCheckerLanguages || [] : [];
     enableNativeSpellSession(session, null);
     const status: SpellBackendStatus = describeSpellBackends(langs);
+    const offlineSpell = loadOfflineSpellEngine();
     this.setState({
       backendNote: formatBackendStatusText(status),
       backendStatus: status,
+      offlineSpell,
     });
     (window as any).__mailspringDemoComposer = {
       serializeAndReopen: () => this._onSerializeReopen(),
@@ -147,7 +152,7 @@ export default class DemoComposer extends React.Component<
   };
 
   render() {
-    const { backendNote, lastHtml, value, backendStatus } = this.state;
+    const { backendNote, lastHtml, value, backendStatus, offlineSpell } = this.state;
     return (
       <div
         className="demo-composer"
@@ -167,6 +172,9 @@ export default class DemoComposer extends React.Component<
             data-hebrew-detection={backendStatus.hebrewNativeDetection}
             data-hebrew-suggestions={backendStatus.hebrewNativeSuggestions}
             data-hebrew-bundled={backendStatus.hebrewBundledDictionary}
+            data-offline-spell={offlineSpell && offlineSpell.available ? 'ready' : 'not-installed'}
+            data-offline-spell-en={offlineSpell && offlineSpell.english ? 'ready' : 'not-installed'}
+            data-offline-spell-he={offlineSpell && offlineSpell.hebrew ? 'ready' : 'not-installed'}
           >
             <summary>{formatHebrewNativeSummary(backendStatus)}</summary>
             <p>

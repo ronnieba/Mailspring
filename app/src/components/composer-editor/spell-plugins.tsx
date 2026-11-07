@@ -3,6 +3,11 @@ import { Decoration, Editor, Mark, Point, Value } from 'slate';
 import { ComposerEditorPlugin, ComposerEditorPluginTopLevelComponentProps } from './types';
 import { findFixtureTypos } from '../../spellcheck/spell-core';
 import {
+  findOfflineTypos,
+  loadOfflineSpellEngine,
+  offlineSuggest,
+} from '../../spellcheck/nspell-engine';
+import {
   PersonalDictionary,
   getActivePersonalDictionary,
   installPersonalDictionary,
@@ -83,8 +88,9 @@ export function refreshSpellDecorations(editor: Editor) {
     });
   }
 
+  const personalList = personal ? personal.list() : [];
   editor.value.document.getTexts().forEach((textNode) => {
-    for (const miss of findFixtureTypos(textNode.text, personal ? personal.list() : [])) {
+    for (const miss of findFixtureTypos(textNode.text, personalList)) {
       decorations.push(
         Decoration.create({
           anchor: Point.create({ key: textNode.key, offset: miss.start }),
@@ -94,11 +100,33 @@ export function refreshSpellDecorations(editor: Editor) {
             data: {
               word: miss.word,
               script: miss.script,
+              backend: 'fixture',
               suggestions: [miss.suggestion],
             },
           }),
         })
       );
+    }
+    if (loadOfflineSpellEngine().available) {
+      for (const miss of findOfflineTypos(textNode.text, personalList, {
+        includeSuggestions: false,
+      })) {
+        decorations.push(
+          Decoration.create({
+            anchor: Point.create({ key: textNode.key, offset: miss.start }),
+            focus: Point.create({ key: textNode.key, offset: miss.end }),
+            mark: Mark.create({
+              type: SPELL_ERROR_MARK,
+              data: {
+                word: miss.word,
+                script: miss.script,
+                backend: 'nspell',
+                suggestions: [],
+              },
+            }),
+          })
+        );
+      }
     }
   });
 
@@ -144,6 +172,7 @@ function renderMark({ mark, children }: any, _ed?: Editor, next?: () => any) {
     <span
       className="spell-error"
       data-spell-error="true"
+      data-spell-backend={mark.data.get('backend') || 'fixture'}
       title={mark.data.get('word')}
       lang={lang}
       spellCheck={false}
@@ -191,15 +220,25 @@ function SpellSuggestionPopover({ editor, value }: ComposerEditorPluginTopLevelC
   if (!mark) return null;
 
   const word = mark.data.get('word');
-  const suggestions: string[] = mark.data.get('suggestions') || [];
+  const script = mark.data.get('script');
+  const backend = mark.data.get('backend') || 'fixture';
+  let suggestions: string[] = mark.data.get('suggestions') || [];
+  if (backend === 'nspell' && suggestions.length === 0) {
+    suggestions = offlineSuggest(word, script === 'he' ? 'he' : 'en');
+  }
   const personal = getActivePersonalDictionary();
   const inDict = personal ? personal.has(word) : false;
+  const caption =
+    backend === 'nspell'
+      ? 'nspell local prototype · no auto-correct'
+      : 'UI-test overlay · not a Hebrew dictionary · no auto-correct';
 
   return (
     <div
       className="spell-suggestion-popover"
       role="region"
       aria-label="הצעות איות"
+      data-spell-backend={backend}
       onMouseDown={(e) => {
         if ((e.target as HTMLElement).closest('button')) {
           e.preventDefault();
@@ -207,7 +246,7 @@ function SpellSuggestionPopover({ editor, value }: ComposerEditorPluginTopLevelC
       }}
     >
       <div className="spell-word">
-        {word} <small>(UI-test overlay · not a Hebrew dictionary · no auto-correct)</small>
+        {word} <small>({caption})</small>
       </div>
       {suggestions.length === 0 ? (
         <div className="spell-empty">אין הצעות</div>
