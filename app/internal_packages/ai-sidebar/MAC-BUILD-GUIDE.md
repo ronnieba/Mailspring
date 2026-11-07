@@ -190,10 +190,10 @@ Parent runs these on Mac from repo root (and once from another cwd with `--prefi
 | `test-demo-cli.ts` | 12 |
 | **prior portable subtotal** | **160** |
 | `test-composer-direction.ts` | 13 |
-| `test-composer-spell.ts` | 16 |
+| `test-composer-spell.ts` | 17 |
 | `test-demo-composer.ts` | 12 |
-| **new portable subtotal** | **41** |
-| **portable total** | **201** |
+| **new portable subtotal** | **42** |
+| **portable total** | **202** |
 
 Plus prior native: CLI 12 / query 18 alternate-cwd, 29 native UI assertions. Typecheck + lint locally. Do not run these in cloud CI.
 

@@ -18,7 +18,6 @@ import {
   defaultSpellCheckContext,
   findFixtureTypos,
   findMisspellings,
-  isKnownWord,
   replaceRange,
   suggestionsFor,
   tokenize,
@@ -102,18 +101,40 @@ function run() {
 
   test('English misspelledd is visible and does not mutate the string', () => {
     const original = DEMO_EN_MISS;
-    const misses = findMisspellings(original, ctx);
+    const misses = findFixtureTypos(original);
     assertEqual(misses.length, 1);
     assertEqual(misses[0].word, DEMO_EN_MISS_WORD);
+    assertEqual(misses[0].suggestion, DEMO_EN_CORRECT_WORD);
+    const flagged = new Set(misses.map((m) => m.word));
+    for (const w of ['This', 'is', 'a', 'word', 'in', 'English']) {
+      assertFalse(flagged.has(w), `overlay must not flag surrounding "${w}"`);
+    }
     assertEqual(original, DEMO_EN_MISS);
   });
 
   test('Hebrew איותת is visible and does not mutate the string', () => {
     const original = DEMO_HE_MISS;
-    const misses = findMisspellings(original, ctx);
+    const misses = findFixtureTypos(original);
     assertEqual(misses.length, 1);
     assertEqual(misses[0].word, DEMO_HE_MISS_WORD);
+    assertEqual(misses[0].suggestion, DEMO_HE_CORRECT_WORD);
+    const flagged = new Set(misses.map((m) => m.word));
+    for (const w of ['זו', 'שגיאת', 'בפסקה', 'העברית']) {
+      assertFalse(flagged.has(w), `overlay must not flag surrounding "${w}"`);
+    }
     assertEqual(original, DEMO_HE_MISS);
+  });
+
+  test('tiny-list scan is not the overlay (surrounding words are not typos)', () => {
+    const en = findMisspellings(DEMO_EN_MISS, ctx).map((t) => t.word);
+    assertTrue(en.includes(DEMO_EN_MISS_WORD));
+    assertTrue(en.includes('in'), 'closed-world list lacks "in"; overlay must not use this scan');
+    assertTrue(en.length > 1);
+    const he = findMisspellings(DEMO_HE_MISS, ctx).map((t) => t.word);
+    assertTrue(he.includes(DEMO_HE_MISS_WORD));
+    assertTrue(he.includes('בפסקה'));
+    assertTrue(he.includes('העברית'));
+    assertEqual(he.length, 3);
   });
 
   test('suggestionsFor is user-invoked only (text unchanged until replaceRange)', () => {
@@ -140,14 +161,23 @@ function run() {
     const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'ms-spell-'));
     const file = personalDictionaryPath(dir);
     const dict = new PersonalDictionary(file);
-    assertFalse(isKnownWord(DEMO_EN_MISS_WORD, 'en', defaultSpellCheckContext(dict.list())));
+    assertEqual(findFixtureTypos(DEMO_EN_MISS, dict.list()).length, 1);
     dict.add(DEMO_EN_MISS_WORD);
-    assertTrue(isKnownWord(DEMO_EN_MISS_WORD, 'en', defaultSpellCheckContext(dict.list())));
-    assertEqual(findMisspellings(DEMO_EN_MISS, defaultSpellCheckContext(dict.list())).length, 0);
+    assertEqual(findFixtureTypos(DEMO_EN_MISS, dict.list()).length, 0);
+    assertEqual(findFixtureTypos(DEMO_HE_MISS, dict.list()).length, 1);
+    dict.add(DEMO_HE_MISS_WORD);
+    assertEqual(findFixtureTypos(DEMO_HE_MISS, dict.list()).length, 0);
     dict.remove(DEMO_EN_MISS_WORD);
-    assertEqual(findMisspellings(DEMO_EN_MISS, defaultSpellCheckContext(dict.list())).length, 1);
+    const enAfter = findFixtureTypos(DEMO_EN_MISS, dict.list());
+    assertEqual(enAfter.length, 1);
+    assertEqual(enAfter[0].word, DEMO_EN_MISS_WORD);
+    dict.remove(DEMO_HE_MISS_WORD);
+    const heAfter = findFixtureTypos(DEMO_HE_MISS, dict.list());
+    assertEqual(heAfter.length, 1);
+    assertEqual(heAfter[0].word, DEMO_HE_MISS_WORD);
     const saved = JSON.parse(fs.readFileSync(file, 'utf8'));
     assertFalse(saved.words.includes(DEMO_EN_MISS_WORD));
+    assertFalse(saved.words.includes(DEMO_HE_MISS_WORD));
   });
 
   test('module dictionary holder is let-mutable; add/remove use the isolated file', () => {

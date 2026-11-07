@@ -73,9 +73,9 @@ export function isKnownWord(word: string, script: WordScript, ctx: SpellCheckCon
 }
 
 /**
- * Fixture-vocabulary scan for unit tests of tokenize/replace only.
- * The DEMO overlay must NOT use this: it would underline every real Hebrew
- * word missing from the tiny list and look like a fake dictionary.
+ * Closed-world scan against the tiny authored lists. Not the DEMO overlay.
+ * DEMO_EN_MISS flags `in`; DEMO_HE_MISS flags `בפסקה`/`העברית`. Overlay
+ * uses findFixtureTypos so those surrounding tokens stay unflagged.
  */
 export function findMisspellings(text: string, ctx: SpellCheckContext): Token[] {
   return tokenize(text).filter((t) => !isKnownWord(t.word, t.script, ctx));
