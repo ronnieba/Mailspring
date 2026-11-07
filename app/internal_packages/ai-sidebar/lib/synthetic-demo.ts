@@ -17,6 +17,13 @@ export const DEMO_INVOICE_QUERY = 'חפש חשבוניות';
 export const DEMO_INVOICE_MESSAGE_ID = 'demo-msg-3';
 export const DEMO_MEETING_MESSAGE_ID = 'demo-msg-1';
 
+/** Host-calculated exhaustive inventory. Selected 2 / Inbox 5 / All 6. */
+export const DEMO_EXHAUSTIVE_COUNTS: { [K in ResolvedScope['mode']]: number } = {
+  'selected-messages': 2,
+  'current-folder': 5,
+  'all-mail': 6,
+};
+
 /**
  * Explicit --demo route only. Empty AccountStore is onboarding, not demo.
  */

@@ -107,8 +107,9 @@ async function run() {
     const result = exhaustiveOf('all-mail');
     const inScope = filterDemoMessagesByScope(SYNTHETIC_MESSAGES, getDemoScope('all-mail'));
     assertEqual(result.retrievalMode, 'exhaustive');
-    assertEqual(result.progress.totalEligible, inScope.length);
-    assertEqual(result.progress.processed, inScope.length);
+    assertEqual(inScope.length, 6);
+    assertEqual(result.progress.totalEligible, 6);
+    assertEqual(result.progress.processed, 6);
     assertTrue(inScope.length > 1, 'all-mail must scan more than the invoice hit');
     assertTrue(result.progress.isComplete);
     const text = coverageFor(result);
@@ -122,8 +123,9 @@ async function run() {
   await test('exhaustive Inbox scan excludes the archive fixture', () => {
     const result = exhaustiveOf('current-folder');
     const inbox = SYNTHETIC_MESSAGES.filter((m) => m.folderId === DEMO_FOLDER_ID);
-    assertEqual(result.progress.processed, inbox.length);
-    assertEqual(result.progress.totalEligible, inbox.length);
+    assertEqual(inbox.length, 5);
+    assertEqual(result.progress.processed, 5);
+    assertEqual(result.progress.totalEligible, 5);
     assertFalse(result.messages.some((m) => m.id === DEMO_OUTSIDE_INBOX_MESSAGE_ID));
     assertTrue(result.progress.processed < SYNTHETIC_MESSAGES.length);
   });

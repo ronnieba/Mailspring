@@ -1,9 +1,11 @@
 import { SearchResult } from './types';
 
 /**
- * Truthful coverage footer. Ranked must keep the top-k warning.
+ * Host-calculated coverage footer. Ranked must keep the top-k warning.
  * Exhaustive must not claim ranked, and reports how many in-scope messages
  * were actually scanned (not only how many matched the query).
+ * Provider-claimed processed/total counts are ignored; pass SearchResult from
+ * the mail adapter, not from an AI payload.
  */
 export function buildCoverageDisclosure(searchResult: SearchResult, syncCoverage: number): string {
   const { progress, retrievalMode } = searchResult;

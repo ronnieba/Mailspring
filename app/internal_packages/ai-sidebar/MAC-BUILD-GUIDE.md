@@ -34,6 +34,7 @@ npx ts-node --project app/tsconfig.json app/internal_packages/ai-sidebar/test-in
 npx ts-node --project app/tsconfig.json app/internal_packages/ai-sidebar/test-mail-database.ts
 npx ts-node --project app/tsconfig.json app/internal_packages/ai-sidebar/test-demo-sidebar.ts
 npx ts-node --project app/tsconfig.json app/internal_packages/ai-sidebar/test-demo-query.ts
+npx ts-node --project app/tsconfig.json app/internal_packages/ai-sidebar/test-ai-boundary.ts
 npx ts-node --project app/tsconfig.json app/internal_packages/ai-sidebar/test-demo-cli.ts
 npx ts-node --project app/tsconfig.json app/internal_packages/ai-sidebar/test-composer-direction.ts
 npx ts-node --project app/tsconfig.json app/internal_packages/ai-sidebar/test-composer-spell.ts
@@ -53,6 +54,8 @@ npx ts-node --project app/tsconfig.json app/internal_packages/ai-sidebar/test-ns
 #   "$REPO/app/internal_packages/ai-sidebar/test-mail-database.ts"
 # npx --prefix "$REPO" ts-node --project "$REPO/app/tsconfig.json" \
 #   "$REPO/app/internal_packages/ai-sidebar/test-demo-query.ts"
+# npx --prefix "$REPO" ts-node --project "$REPO/app/tsconfig.json" \
+#   "$REPO/app/internal_packages/ai-sidebar/test-ai-boundary.ts"
 # npx --prefix "$REPO" ts-node --project "$REPO/app/tsconfig.json" \
 #   "$REPO/app/internal_packages/ai-sidebar/test-demo-cli.ts"
 # npx --prefix "$REPO" ts-node --project "$REPO/app/tsconfig.json" \
@@ -75,7 +78,7 @@ electron ./app --enable-logging --dev --demo --force-renderer-accessibility --de
 # or: npm run start:demo -- --force-renderer-accessibility --demo-delay-ms=8000
 ```
 
-`--demo-delay-ms` is not a debug port or network endpoint. It only delays the mock provider so **ביטול** can be clicked. Leave it off for normal fixture checks. Optimist 0.4 has no `.number()` — the flag is a `.string()` like `--demo-capture`. Isolation (`setName` / `userData` / mock keychain) is applied from raw argv **before** Optimist parse so a CLI throw cannot leave helpers on `.../Mailspring`.
+`--demo-delay-ms` is not a debug port or network endpoint. It only delays the mock provider so **ביטול** can be clicked. Leave it off for normal fixture checks. **ביטול** / AbortSignal / worker SIGTERM are **local cancellation**. They do not complete remote generation and must not be billed. Live providers are disabled. Optimist 0.4 has no `.number()` — the flag is a `.string()` like `--demo-capture`. Isolation (`setName` / `userData` / mock keychain) is applied from raw argv **before** Optimist parse so a CLI throw cannot leave helpers on `.../Mailspring`.
 
 After launch, GPU/network `--user-data-dir` must contain `Mailspring-demo`, never `.../Application Support/Mailspring` without `-demo`.
 
@@ -216,16 +219,28 @@ Parent runs these on Mac from repo root (and once from another cwd with `--prefi
 | `test-mail-database.ts` | 21 |
 | `test-demo-sidebar.ts` | 21 |
 | `test-demo-query.ts` | 18 |
+| `test-ai-boundary.ts` | **17** |
 | `test-demo-cli.ts` | 12 |
-| **prior portable subtotal** | **160** |
+| **prior portable subtotal** | **177** |
 | `test-composer-direction.ts` | 14 |
 | `test-composer-spell.ts` | 21 |
 | `test-demo-composer.ts` | 13 |
 | **composer subtotal (no sidecar)** | **48** |
 | `test-nspell-engine.ts` | **13** (requires sidecar install) |
-| **portable total after sidecar** | **221** |
+| **portable total after sidecar** | **238** |
 
-Without sidecar install: prior **208** + alt-cwd **48** still apply. After `install.sh`: **221** portable (208+13) and alt-cwd **61** (48+13). Do not run these in cloud CI. Preserve 34a90265 layout/AI/isolation. Do not rewrite `app/package-lock.json`.
+Without sidecar install: prior **225** + alt-cwd **48** still apply. After `install.sh`: **238** portable (225+13). Composer+engine alt-cwd remains **61** (48+13) unless `test-ai-boundary.ts` is included (**+17**). Do not run these in cloud CI. Preserve 34a90265 layout/AI/isolation. Do not rewrite `app/package-lock.json`.
+
+**This SHA targeted Mac commands (do not claim f89b4e4b 221+61 / 81 UI):**
+
+```bash
+npx ts-node --project app/tsconfig.json app/internal_packages/ai-sidebar/test-ai-boundary.ts
+# expected 17 passed, natural exit
+npx ts-node --project app/tsconfig.json app/internal_packages/ai-sidebar/test-demo-query.ts
+# expected 18 passed (explicit exhaustive 2/5/6)
+npx ts-node --project app/tsconfig.json app/internal_packages/ai-sidebar/test-demo-sidebar.ts
+# expected 21 passed (store fail-closed + hostCoverageFooter)
+```
 
 `--demo` does **not** open, migrate, rebuild, or relaunch over `edgehill.db`. A leftover empty stub in `Mailspring-demo/` from an older checkout is ignored; do not delete it. Production `application:reset-database` (Okay → rebuild → relaunch) is unchanged.
 

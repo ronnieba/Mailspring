@@ -12,7 +12,11 @@ import {
   AIProvider,
 } from './core/types';
 import { mockProvider } from './core/mock-provider';
-import { buildCoverageDisclosure } from './core/coverage-disclosure';
+import {
+  hostCoverageFooter,
+  mockOnlyProviderGuard,
+  validateProviderPayload,
+} from './core/ai-boundary';
 import { nextQueryGeneration, shouldAcceptAssistantResponse } from './core/query-generation';
 import { mailspringAdapter } from './mailspring-adapter';
 import { DemoMessagePreview, getDemoMessagePreview, isDemoMode } from './synthetic-demo';
@@ -63,9 +67,13 @@ class AISidebarStore extends MailspringStore {
   }
 
   /**
-   * Set provider. In this prototype, only mock is available.
+   * Set provider. Live generation is disabled; only a marked mock is accepted.
    */
   setProvider(provider: AIProvider) {
+    const blocked = mockOnlyProviderGuard(provider.isMock);
+    if (blocked) {
+      throw new Error(blocked.message);
+    }
     if (!provider.isConfigured) {
       throw new Error('Provider is not configured');
     }
@@ -212,16 +220,43 @@ class AISidebarStore extends MailspringStore {
         return;
       }
 
-      const coverage = buildCoverageDisclosure(searchResult, avgSync);
-      const responseContent = `${result.response}\n\n---\n${coverage}`;
+      const allowedSourceIds = new Set(searchResult.messages.map((m) => m.id));
+      const validated = validateProviderPayload(
+        {
+          response: result.response,
+          citations: result.citations,
+          tokensUsed: result.tokensUsed,
+          isMock: this._provider.isMock,
+          mockLabel: this._provider.name,
+        },
+        {
+          allowedSourceIds,
+          startedGeneration,
+          currentGeneration: this._queryGeneration,
+          aborted: !!this._state.abortController?.signal.aborted,
+        }
+      );
+      if (!validated.ok) {
+        this._state.error = validated.message;
+        this._state.conversation.push({
+          id: `error-${Date.now()}`,
+          role: 'system',
+          content: `❌ שגיאה: תשובה נדחתה (fail-closed, origin=${validated.origin}). ${validated.message}`,
+          timestamp: new Date(),
+        });
+        return;
+      }
+
+      const coverage = hostCoverageFooter(searchResult, avgSync);
+      const responseContent = `${validated.result.response}\n\n---\n${coverage}`;
 
       const assistantMessage: ConversationMessage = {
         id: `assistant-${Date.now()}`,
         role: 'assistant',
         content: responseContent,
-        citations: result.citations,
+        citations: validated.result.citations,
         timestamp: new Date(),
-        isMock: this._provider.isMock,
+        isMock: true,
       };
       this._state.conversation.push(assistantMessage);
     } catch (err) {

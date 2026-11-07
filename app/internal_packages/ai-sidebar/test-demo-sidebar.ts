@@ -218,7 +218,8 @@ function run() {
     assertContains(adapterTs, 'searchDemoMessages(scope, query, limit, offset, mode)');
   });
   test('coverage comes from searchResult.retrievalMode, not the radio alone', () => {
-    assertContains(storeTs, 'buildCoverageDisclosure(searchResult');
+    assertContains(storeTs, 'hostCoverageFooter(searchResult');
+    assertContains(storeTs, 'validateProviderPayload');
     const coverageTs = fs.readFileSync(
       path.join(__dirname, 'lib/core/coverage-disclosure.ts'),
       'utf8'
