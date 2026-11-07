@@ -197,6 +197,8 @@ function run() {
     assertContains(less, '.demo-composer');
     assertContains(less, '.demo-composer-workspace');
     assertContains(less, '.demo-composer-backend-slot');
+    assertContains(less, '.demo-composer-spell-host');
+    assertContains(less, 'grid-area: status / 1 / dict / 2');
     assertContains(less, 'overflow-y: auto');
     assertContains(less, 'overflow: hidden');
     assertContains(less, '-webkit-appearance: none');
@@ -210,6 +212,8 @@ function run() {
     assertContains(less, 'min-height: 2.5em');
     assertContains(demoTsx, 'demo-composer-workspace');
     assertContains(demoTsx, 'demo-composer-backend-slot');
+    assertContains(demoTsx, 'data-spell-popover-host');
+    assertContains(demoTsx, 'setSpellPopoverHost');
     const editorIdx = demoTsx.indexOf('<ComposerEditor');
     const dictIdx = demoTsx.indexOf('aria-label="מילון אישי"');
     const statusIdx = demoTsx.indexOf('aria-label="מצב בודק איות"');

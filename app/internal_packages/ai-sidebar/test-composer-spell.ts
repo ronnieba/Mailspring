@@ -401,6 +401,8 @@ function run() {
     assertContains(plugin, 'data-spell-action="replace"');
     assertContains(plugin, 'refreshSpellDecorations');
     assertContains(plugin, 'if (!peekOfflineSpellStatus().available)');
+    assertContains(plugin, 'createPortal');
+    assertContains(plugin, 'setSpellPopoverHost');
     assertContains(plugin, 'הוסף למילון האישי');
     assertContains(plugin, 'הסר מהמילון האישי');
     assertContains(plugin, 'הצעות איות');

@@ -523,6 +523,13 @@
     // tracks (flex + uncapped auto basis collapsed both to ~1pt at ~299pt).
     display: grid;
     grid-template-columns: minmax(0, 1fr);
+    grid-template-areas:
+      'banner'
+      'status'
+      'actions'
+      'workspace'
+      'dict'
+      'html';
     grid-template-rows: auto minmax(min-content, 14rem) auto minmax(8em, 1fr) auto auto;
     flex: 1 1 auto;
     min-height: 0;
@@ -534,6 +541,7 @@
     text-align: left;
 
     .demo-composer-banner {
+      grid-area: banner;
       font-size: 12px;
       line-height: 1.35;
       color: #5c4804;
@@ -544,6 +552,7 @@
     }
 
     .demo-composer-backend-slot {
+      grid-area: status;
       min-width: 0;
       min-height: 0;
       max-height: 14rem;
@@ -573,6 +582,7 @@
     }
 
     .demo-composer-actions {
+      grid-area: actions;
       display: flex;
       flex-wrap: wrap;
       gap: 8px;
@@ -594,12 +604,37 @@
     }
 
     .demo-composer-workspace {
+      grid-area: workspace;
       min-height: 8em;
       min-width: 0;
       overflow-x: hidden;
       overflow-y: auto;
       border: 1px solid var(--border-color-divider);
       background: var(--background-primary);
+    }
+
+    // 103d29bf: in-flow popover sat under the sticky toolbar in a 113pt
+    // workspace, so suggestion buttons painted at h=2. Host is a sibling
+    // overlay (not inside the editor scrollport) aligned above the dictionary.
+    .demo-composer-spell-host {
+      grid-area: status / 1 / dict / 2;
+      align-self: end;
+      z-index: 8;
+      min-width: 0;
+      max-height: 0;
+      overflow: hidden;
+      pointer-events: none;
+    }
+
+    .demo-composer-spell-host:not(:empty) {
+      max-height: 12rem;
+      overflow-x: hidden;
+      overflow-y: auto;
+      pointer-events: auto;
+      background: var(--background-secondary);
+      border: 1px solid var(--border-color-divider);
+      border-radius: 4px;
+      box-shadow: 0 -2px 10px rgba(0, 0, 0, 0.18);
     }
 
     .demo-composer-editor {
@@ -646,29 +681,35 @@
         border: 1px solid var(--border-color-divider);
         background: var(--background-secondary);
         color: var(--text-color);
+      }
+    }
 
-        .spell-suggestion,
-        .spell-dict-add,
-        .spell-dict-remove {
-          display: block;
-          width: 100%;
-          min-height: 32px;
-          margin-top: 6px;
-          padding: 6px 10px;
-          text-align: start;
-          font-weight: 600;
-          color: var(--text-color);
-          background: var(--background-primary);
-          border: 1px solid var(--border-color-divider);
-          border-radius: 4px;
-          -webkit-appearance: none;
-          appearance: none;
-          cursor: pointer;
-        }
+    .demo-composer-editor .spell-suggestion-popover,
+    .demo-composer-spell-host .spell-suggestion-popover {
+      .spell-suggestion,
+      .spell-dict-add,
+      .spell-dict-remove {
+        display: block;
+        flex-shrink: 0;
+        width: 100%;
+        min-height: 32px;
+        height: auto;
+        margin-top: 6px;
+        padding: 6px 10px;
+        text-align: start;
+        font-weight: 600;
+        color: var(--text-color);
+        background: var(--background-primary);
+        border: 1px solid var(--border-color-divider);
+        border-radius: 4px;
+        -webkit-appearance: none;
+        appearance: none;
+        cursor: pointer;
       }
     }
 
     .demo-composer-dict {
+      grid-area: dict;
       min-height: 2.5em;
       position: relative;
       z-index: 2;
@@ -695,6 +736,7 @@
     }
 
     .demo-composer-html {
+      grid-area: html;
       margin-top: 0;
       font-size: 11px;
       white-space: pre-wrap;

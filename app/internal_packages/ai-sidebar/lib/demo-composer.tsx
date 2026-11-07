@@ -4,6 +4,7 @@ import { Editor } from 'slate';
 import SpellPlugins, {
   refreshSpellDecorations,
   setSpellPersonalDictionary,
+  setSpellPopoverHost,
 } from '../../../src/components/composer-editor/spell-plugins';
 import { createDemoComposerValue } from '../../../src/components/composer-editor/demo-composer-fixtures';
 import { paragraphSnapshots } from '../../../src/components/composer-editor/paragraph-direction';
@@ -123,6 +124,7 @@ export default class DemoComposer extends React.Component<
       this.unsubDict();
     }
     installPersonalDictionary(null);
+    setSpellPopoverHost(null);
     void disposeOfflineSpellEngine();
     if ((window as any).__mailspringDemoComposer) {
       delete (window as any).__mailspringDemoComposer;
@@ -229,6 +231,11 @@ export default class DemoComposer extends React.Component<
             onUpdatedSlateEditor={this._onEditor}
           />
         </div>
+        <div
+          className="demo-composer-spell-host"
+          data-spell-popover-host="true"
+          ref={(el) => setSpellPopoverHost(el)}
+        />
         <div className="demo-composer-dict" role="region" aria-label="מילון אישי">
           <div className="demo-composer-dict-label">מילון אישי (פרופיל DEMO בלבד)</div>
           {this.state.dictWords.length === 0 ? (

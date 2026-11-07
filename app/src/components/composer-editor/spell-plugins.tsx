@@ -1,4 +1,5 @@
 import React from 'react';
+import ReactDOM from 'react-dom';
 import { Decoration, Editor, Mark, Point, Value } from 'slate';
 import { ComposerEditorPlugin, ComposerEditorPluginTopLevelComponentProps } from './types';
 import { findFixtureTypos } from '../../spellcheck/spell-core';
@@ -16,6 +17,13 @@ import {
 } from '../../spellcheck/personal-dictionary';
 
 export const SPELL_ERROR_MARK = 'spell-error';
+
+let spellPopoverHost: HTMLElement | null = null;
+
+/** Demo composer overlay host. Production composer leaves this null. */
+export function setSpellPopoverHost(el: HTMLElement | null) {
+  spellPopoverHost = el;
+}
 
 export function setSpellPersonalDictionary(dict: PersonalDictionary | null) {
   installPersonalDictionary(dict);
@@ -318,7 +326,7 @@ function SpellSuggestionPopover({ editor, value }: ComposerEditorPluginTopLevelC
           ? 'שגיאה בטעינת הצעות'
           : 'אין הצעות';
 
-  return (
+  const popover = (
     <div
       className="spell-suggestion-popover"
       role="region"
@@ -394,6 +402,10 @@ function SpellSuggestionPopover({ editor, value }: ComposerEditorPluginTopLevelC
       )}
     </div>
   );
+  if (spellPopoverHost && spellPopoverHost.isConnected) {
+    return ReactDOM.createPortal(popover, spellPopoverHost);
+  }
+  return popover;
 }
 
 const plugins: ComposerEditorPlugin[] = [
