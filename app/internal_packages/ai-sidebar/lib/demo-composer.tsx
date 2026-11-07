@@ -19,7 +19,11 @@ import {
   installPersonalDictionary,
   PersonalDictionary,
 } from '../../../src/spellcheck/personal-dictionary';
-import { loadOfflineSpellEngine, OfflineSpellStatus } from '../../../src/spellcheck/nspell-engine';
+import {
+  loadOfflineSpellEngine,
+  peekOfflineSpellStatus,
+  OfflineSpellStatus,
+} from '../../../src/spellcheck/nspell-engine';
 import { isDemoMode } from './synthetic-demo';
 
 const { convertFromHTML, convertToHTML } = ComposerSupport.Conversion;
@@ -31,6 +35,20 @@ interface DemoComposerState {
   dictWords: string[];
   backendStatus: SpellBackendStatus;
   offlineSpell: OfflineSpellStatus | null;
+}
+
+function offlinePhaseAttr(status: OfflineSpellStatus | null, which: 'all' | 'en' | 'he'): string {
+  if (!status) return 'not-installed';
+  if (status.phase === 'loading' || status.phase === 'timeout' || status.phase === 'error') {
+    return status.phase;
+  }
+  if (which === 'en') {
+    return status.english ? 'ready' : 'not-installed';
+  }
+  if (which === 'he') {
+    return status.hebrew ? 'ready' : 'not-installed';
+  }
+  return status.available ? 'ready' : 'not-installed';
 }
 
 function currentSession(): {
@@ -81,11 +99,13 @@ export default class DemoComposer extends React.Component<
     const langs = session ? session.availableSpellCheckerLanguages || [] : [];
     enableNativeSpellSession(session, null);
     const status: SpellBackendStatus = describeSpellBackends(langs);
-    const offlineSpell = loadOfflineSpellEngine();
     this.setState({
       backendNote: formatBackendStatusText(status),
       backendStatus: status,
-      offlineSpell,
+      offlineSpell: peekOfflineSpellStatus(),
+    });
+    void loadOfflineSpellEngine().then((offlineSpell) => {
+      this.setState({ offlineSpell }, () => this._refreshOverlay());
     });
     (window as any).__mailspringDemoComposer = {
       serializeAndReopen: () => this._onSerializeReopen(),
@@ -172,9 +192,9 @@ export default class DemoComposer extends React.Component<
             data-hebrew-detection={backendStatus.hebrewNativeDetection}
             data-hebrew-suggestions={backendStatus.hebrewNativeSuggestions}
             data-hebrew-bundled={backendStatus.hebrewBundledDictionary}
-            data-offline-spell={offlineSpell && offlineSpell.available ? 'ready' : 'not-installed'}
-            data-offline-spell-en={offlineSpell && offlineSpell.english ? 'ready' : 'not-installed'}
-            data-offline-spell-he={offlineSpell && offlineSpell.hebrew ? 'ready' : 'not-installed'}
+            data-offline-spell={offlinePhaseAttr(offlineSpell, 'all')}
+            data-offline-spell-en={offlinePhaseAttr(offlineSpell, 'en')}
+            data-offline-spell-he={offlinePhaseAttr(offlineSpell, 'he')}
           >
             <summary>{formatHebrewNativeSummary(backendStatus)}</summary>
             <p>

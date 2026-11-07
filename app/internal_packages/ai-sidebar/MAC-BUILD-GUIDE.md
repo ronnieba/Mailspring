@@ -21,7 +21,9 @@ cd /path/to/Mailspring   # e.g. /Users/d623300/Developer/Mailspring-AI-Dev/src
 git checkout cursor/ai-sidebar-prototype-842c
 # Do NOT run repo-root npm install if it would rewrite the existing
 # app/package-lock.json local diff — leave that file BYTE IDENTICAL.
-# Private nspell dictionaries (AGPL-3.0 he aff/dic, not committed):
+# Private Hunspell WASM dictionaries (AGPL-3.0 he aff/dic, not committed).
+# install.sh aborts if app/package-lock.json would change. Re-run after this SHA
+# to replace leftover nspell with hunspell-asm@4.0.2:
 bash app/src/spellcheck/offline-prototype/install.sh
 npm run typecheck
 npx ts-node --project app/tsconfig.json app/internal_packages/ai-sidebar/test-core.ts
@@ -179,20 +181,21 @@ Keyboard: click the typo, then Tab/Shift+Tab to the replace button, then Space o
 6. **Layout at the real sidebar width (~300pt, not declared minWidth):** after add/remove, with the overlay popover open, paragraphs 4/5 must remain fully readable. `מילון אישי` / `אין מילים שמורות` / the footer must **not** paint over editor text. Scroll the editor workspace if needed; dictionary/status/actions stay in flow (opaque, not covering). Measured column width may stay ~299pt because the MessageListSidebar also hosts contact cards (`maxWidth: 300`).
 7. **Expanded spelling status must not collapse the editor or dictionary:** click `מצב בודק איות` so the disclosure is **open**. At ~299pt, workspace and `מילון אישי` must keep a usable height (not ~1pt). Wheel inside the workspace still reveals all 5 paragraphs; wheel inside the yellow status slot scrolls the diagnostic text. Do **not** collapse the disclosure as a workaround. Collapsed status must still work as in (6).
 8. **Native OS suggestions:** 34a90265 recorded underlines on `recieve`/`seperate`/`mispell` and `אבטיחחח`/`חשבנוית`/`שלומ` with **No Guesses Found**; `teh` was not flagged. OS/Electron limitation, not a missing menu. Do not rebuild layout. Do not change the user’s Spelling language.
-9. **Offline nspell (after sidecar install):** status `data-offline-spell="ready"`. Type `recieve` / `אבטיחחח` (overlay silent). Caret → `הצעות איות` → `החלף ב-receive` / a Hebrew guess. AX Press/Space/Enter/mouse. Only that word changes; paragraph `dir` and neighbors stay. `watermelon` / `אבטיח` must not be flagged. Add/remove personal JSON under `Mailspring-demo` only. Fixtures remain two typos. If `הבית` is unknown while `בית` is known, or Hebrew suggest is multi-second, record **nspell blocked → Hunspell WASM** (dictionary license still AGPL-3.0).
+9. **Offline Hunspell WASM (after sidecar reinstall):** status `data-offline-spell="ready"` (or `timeout`/`error` if the child is killed — do not treat that as “no guesses”). Type `recieve` / `אבטיחחח` (overlay silent). Caret → `הצעות איות` → `החלף ב-receive` / a Hebrew guess. AX Press/Space/Enter/mouse. Only that word changes; paragraph `dir` and neighbors stay. `watermelon` / `אבטיח` must not be flagged. Add/remove personal JSON under `Mailspring-demo` only. Fixtures remain two typos. nspell was rejected on 7c346435 (194s / 1.31GiB on construct). Suite must print `…` before each check and finish without occupying the test Node at 99% CPU.
 
 There is no Send button on this surface. Production composer send/draft saving is unchanged. Overlay spell plugins are **not** in the default conversion plugin list.
 
 ### Spell backend provenance
 
-**Hspell aff/dic are not in git (AGPL-3.0). Native listing is not detection.** Private nspell sidecar: `bash app/src/spellcheck/offline-prototype/install.sh` — does not touch `app/package-lock.json`. Details: `app/src/spellcheck/HEBREW-SPELLCHECK.md` and `offline-prototype/NOTICE.md`.
+**Hspell aff/dic are not in git (AGPL-3.0). Native listing is not detection.** Private Hunspell WASM sidecar: `bash app/src/spellcheck/offline-prototype/install.sh` — does not touch `app/package-lock.json`. nspell is not installed. Details: `app/src/spellcheck/HEBREW-SPELLCHECK.md` and `offline-prototype/NOTICE.md`.
 
 | Backend | When | License / notes |
 |---------|------|-----------------|
 | Chromium/macOS `NSSpellChecker` | Production + DEMO `nativeSpellCheck={true}` | Official Electron docs: Hunspell is **not** used on macOS; `setSpellCheckerLanguages` is a **no-op**. Language auto-detect. Parent records `availableSpellCheckerLanguages` on the target Mac. |
 | Chromium Hunspell `he_IL` | Win/Linux only | Chromium `he_IL.dic` is Hspell **1.0 / GPL** (~3.2 MB). Not loaded on macOS. Not vendored here (would need a JS Hunspell engine). |
 | Hspell 1.4 / `dictionary-he` 2.0.0 | Sidecar local only, **not in git** | **AGPL-3.0** aff/dic (no “or later” grant verified). Packaging MIT. Install via `offline-prototype/install.sh`. Do not publish. |
-| nspell 2.1.5 + dictionary-en 4.0.0 | Sidecar local only | nspell MIT; dictionary-en (MIT AND BSD). Separate instances from Hebrew. |
+| hunspell-asm 4.0.2 + dictionary-en 4.0.0 | Sidecar local only | Wrapper MIT; Hunspell MPL-1.1/GPL-2+/LGPL-2.1+. dictionary-en (MIT AND BSD). Child process, separate en/he instances. |
+| nspell 2.1.5 | **Rejected** | Native 7c346435: first `nspell(aff,dic)` stalled 194s / 99% CPU / 1.31GiB. Eager PFX expansion. Not installed. |
 | UI-test overlay (`FIXTURE_TYPOS`) | DEMO extraPlugins only | Two typos: `misspelledd`, `איותת`. GPL-3.0-or-later authored. **Not** a Hebrew dictionary. |
 | Personal dictionary JSON | DEMO / `learnWord` while `MAILSPRING_DEMO=1` | `spell-personal-dictionary.json` under the isolated config dir. Demo never calls `session.addWordToSpellCheckerDictionary`. |
 | LanguageTool / paid grammar / Google Hunspell CDN / cloud AI | **Not used** | Existing grammar-check package is unchanged and is not this backend. |

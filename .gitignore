@@ -82,6 +82,6 @@ client_secret.json
 /playwright-report
 /playwright/test-results/
 
-# Private nspell evaluation: AGPL-3.0 aff/dic must not be committed
+# Private Hunspell WASM evaluation: AGPL-3.0 aff/dic must not be committed
 app/src/spellcheck/offline-prototype/node_modules/
 app/src/spellcheck/offline-prototype/package-lock.json

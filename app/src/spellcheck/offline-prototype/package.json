@@ -2,10 +2,10 @@
   "name": "mailspring-offline-spell-prototype",
   "private": true,
   "version": "0.0.0",
-  "description": "Private local nspell evaluation. Do not publish or vendor node_modules. dictionary-he aff/dic are AGPL-3.0 (not 3+).",
+  "description": "Private local Hunspell WASM evaluation. Do not publish or vendor node_modules. dictionary-he aff/dic are AGPL-3.0 (not 3+). nspell was rejected.",
   "license": "SEE notices in NOTICE.md",
   "dependencies": {
-    "nspell": "2.1.5",
+    "hunspell-asm": "4.0.2",
     "dictionary-en": "4.0.0",
     "dictionary-he": "2.0.0"
   }

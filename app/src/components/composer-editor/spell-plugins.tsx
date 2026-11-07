@@ -6,6 +6,7 @@ import {
   findOfflineTypos,
   loadOfflineSpellEngine,
   offlineSuggest,
+  OfflineTypo,
 } from '../../spellcheck/nspell-engine';
 import {
   PersonalDictionary,
@@ -32,6 +33,8 @@ export interface SpellRange {
 
 /** Last overlay target. AX/keyboard replace must not depend on the live caret. */
 let stickyRange: SpellRange | null = null;
+let decoGen = 0;
+const hunspellHitCache = new Map<string, OfflineTypo[]>();
 
 export function rememberSpellRange(range: SpellRange | null) {
   stickyRange = range;
@@ -75,9 +78,7 @@ function rangeAtSelection(value: Value): SpellRange | null {
   return found;
 }
 
-export function refreshSpellDecorations(editor: Editor) {
-  if (!editor || !editor.value) return;
-  const personal = getActivePersonalDictionary();
+function collectNonSpellDecorations(editor: Editor): Decoration[] {
   const decorations: Decoration[] = [];
   const existing = (editor.value as any).get('decorations');
   if (existing && existing.filter) {
@@ -87,52 +88,91 @@ export function refreshSpellDecorations(editor: Editor) {
       }
     });
   }
+  return decorations;
+}
 
+function pushTypoDecoration(decorations: Decoration[], textNode: any, miss: any, backend: string) {
+  decorations.push(
+    Decoration.create({
+      anchor: Point.create({ key: textNode.key, offset: miss.start }),
+      focus: Point.create({ key: textNode.key, offset: miss.end }),
+      mark: Mark.create({
+        type: SPELL_ERROR_MARK,
+        data: {
+          word: miss.word,
+          script: miss.script,
+          backend,
+          suggestions: miss.suggestions || [],
+        },
+      }),
+    })
+  );
+}
+
+function applyCachedSpellDecorations(editor: Editor) {
+  if (!editor || !editor.value) return;
+  const personal = getActivePersonalDictionary();
+  const decorations = collectNonSpellDecorations(editor);
   const personalList = personal ? personal.list() : [];
+  const liveTexts = new Set<string>();
   editor.value.document.getTexts().forEach((textNode) => {
+    liveTexts.add(textNode.text);
     for (const miss of findFixtureTypos(textNode.text, personalList)) {
-      decorations.push(
-        Decoration.create({
-          anchor: Point.create({ key: textNode.key, offset: miss.start }),
-          focus: Point.create({ key: textNode.key, offset: miss.end }),
-          mark: Mark.create({
-            type: SPELL_ERROR_MARK,
-            data: {
-              word: miss.word,
-              script: miss.script,
-              backend: 'fixture',
-              suggestions: [miss.suggestion],
-            },
-          }),
-        })
-      );
+      pushTypoDecoration(decorations, textNode, miss, 'fixture');
     }
-    if (loadOfflineSpellEngine().available) {
-      for (const miss of findOfflineTypos(textNode.text, personalList, {
-        includeSuggestions: false,
-      })) {
-        decorations.push(
-          Decoration.create({
-            anchor: Point.create({ key: textNode.key, offset: miss.start }),
-            focus: Point.create({ key: textNode.key, offset: miss.end }),
-            mark: Mark.create({
-              type: SPELL_ERROR_MARK,
-              data: {
-                word: miss.word,
-                script: miss.script,
-                backend: 'nspell',
-                suggestions: [],
-              },
-            }),
-          })
-        );
-      }
+    const cached = hunspellHitCache.get(textNode.text) || [];
+    for (const miss of cached) {
+      pushTypoDecoration(decorations, textNode, miss, 'hunspell');
     }
   });
-
+  for (const key of Array.from(hunspellHitCache.keys())) {
+    if (!liveTexts.has(key)) {
+      hunspellHitCache.delete(key);
+    }
+  }
   editor.withoutSaving(() => {
     (editor as any).setDecorations(decorations);
   });
+}
+
+async function scanHunspellDecorations(editor: Editor, gen: number) {
+  const personal = getActivePersonalDictionary();
+  const personalList = personal ? personal.list() : [];
+  const status = await loadOfflineSpellEngine();
+  if (gen !== decoGen) return;
+  if (!status.available) return;
+  const texts: { key: string; text: string }[] = [];
+  editor.value.document.getTexts().forEach((textNode) => {
+    texts.push({ key: textNode.key, text: textNode.text });
+  });
+  for (const row of texts) {
+    const hits = await findOfflineTypos(row.text, personalList, {
+      includeSuggestions: false,
+    });
+    if (gen !== decoGen) return;
+    hunspellHitCache.set(row.text, hits);
+  }
+  applyCachedSpellDecorations(editor);
+}
+
+/**
+ * Fixtures apply immediately. Hunspell marks come from a child process and
+ * must not block the editor. Call refreshSpellDecorationsAsync in tests.
+ */
+export function refreshSpellDecorations(editor: Editor) {
+  if (!editor || !editor.value) return;
+  applyCachedSpellDecorations(editor);
+  const gen = ++decoGen;
+  void scanHunspellDecorations(editor, gen).catch(() => {
+    // Timeout/error is visible via peekOfflineSpellStatus().phase — do not hang UI.
+  });
+}
+
+export async function refreshSpellDecorationsAsync(editor: Editor) {
+  if (!editor || !editor.value) return;
+  applyCachedSpellDecorations(editor);
+  const gen = ++decoGen;
+  await scanHunspellDecorations(editor, gen);
 }
 
 /**
@@ -201,11 +241,9 @@ function SpellSuggestionPopover({ editor, value }: ComposerEditorPluginTopLevelC
   }
 
   const target = stickyRange;
-  if (!target) return null;
-
   const decorations = (value as any).get('decorations');
   let mark: any = null;
-  if (decorations) {
+  if (target && decorations) {
     decorations.forEach((d: any) => {
       if (mark) return;
       if (!d.mark || d.mark.type !== SPELL_ERROR_MARK) return;
@@ -217,21 +255,65 @@ function SpellSuggestionPopover({ editor, value }: ComposerEditorPluginTopLevelC
       }
     });
   }
-  if (!mark) return null;
 
-  const word = mark.data.get('word');
-  const script = mark.data.get('script');
-  const backend = mark.data.get('backend') || 'fixture';
-  let suggestions: string[] = mark.data.get('suggestions') || [];
-  if (backend === 'nspell' && suggestions.length === 0) {
-    suggestions = offlineSuggest(word, script === 'he' ? 'he' : 'en');
-  }
+  const word = mark ? mark.data.get('word') : '';
+  const script = mark ? mark.data.get('script') : 'en';
+  const backend = mark ? mark.data.get('backend') || 'fixture' : 'fixture';
+  const markSuggestions: string[] = mark ? mark.data.get('suggestions') || [] : [];
+
+  const [liveSuggestions, setLiveSuggestions] = React.useState<string[]>(markSuggestions);
+  const [suggestState, setSuggestState] = React.useState<
+    'idle' | 'loading' | 'ready' | 'timeout' | 'error'
+  >(backend === 'hunspell' ? 'loading' : 'ready');
+
+  React.useEffect(() => {
+    if (!mark) {
+      setLiveSuggestions([]);
+      setSuggestState('idle');
+      return;
+    }
+    if (backend !== 'hunspell') {
+      setLiveSuggestions(markSuggestions);
+      setSuggestState('ready');
+      return;
+    }
+    let cancelled = false;
+    setSuggestState('loading');
+    setLiveSuggestions([]);
+    offlineSuggest(word, script === 'he' ? 'he' : 'en')
+      .then((s) => {
+        if (!cancelled) {
+          setLiveSuggestions(s);
+          setSuggestState('ready');
+        }
+      })
+      .catch((err: any) => {
+        if (!cancelled) {
+          setSuggestState(err && err.timedOut ? 'timeout' : 'error');
+        }
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [word, backend, script]);
+
+  if (!target || !mark) return null;
+
+  const suggestions = backend === 'hunspell' ? liveSuggestions : markSuggestions;
   const personal = getActivePersonalDictionary();
   const inDict = personal ? personal.has(word) : false;
   const caption =
-    backend === 'nspell'
-      ? 'nspell local prototype · no auto-correct'
+    backend === 'hunspell'
+      ? 'Hunspell WASM local prototype · no auto-correct'
       : 'UI-test overlay · not a Hebrew dictionary · no auto-correct';
+  const emptyLabel =
+    suggestState === 'loading'
+      ? 'טוען הצעות…'
+      : suggestState === 'timeout'
+        ? 'ההצעות חרגו מהזמן'
+        : suggestState === 'error'
+          ? 'שגיאה בטעינת הצעות'
+          : 'אין הצעות';
 
   return (
     <div
@@ -239,6 +321,7 @@ function SpellSuggestionPopover({ editor, value }: ComposerEditorPluginTopLevelC
       role="region"
       aria-label="הצעות איות"
       data-spell-backend={backend}
+      data-spell-suggest-state={backend === 'hunspell' ? suggestState : 'ready'}
       onMouseDown={(e) => {
         if ((e.target as HTMLElement).closest('button')) {
           e.preventDefault();
@@ -249,7 +332,7 @@ function SpellSuggestionPopover({ editor, value }: ComposerEditorPluginTopLevelC
         {word} <small>({caption})</small>
       </div>
       {suggestions.length === 0 ? (
-        <div className="spell-empty">אין הצעות</div>
+        <div className="spell-empty">{emptyLabel}</div>
       ) : (
         suggestions.map((s) => (
           <button

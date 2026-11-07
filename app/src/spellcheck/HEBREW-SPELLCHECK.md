@@ -69,27 +69,29 @@ GPL-3 (Mailspring) **can** combine with AGPL-3 (GPL-3 §13). The **combined dist
 | **A. Keep native-only** (current) | Whatever NSSpellChecker detects | Electron/macOS | n/a | Underlines observed; guesses empty under Automatic-by-Language; `teh` not flagged | None. Honest detection ≠ completion. |
 | **B. In-process English Hunspell/nspell** | English | `nspell` (MIT) + `dictionary-en` / SCOWL (permissive, attribution) | MIT + SCOWL/BSD-style; GPL-3 compatible | Real English suggestions without OS Spelling. Hebrew unchanged. New dependency + `webFrame.setSpellCheckProvider`. nspell is not full Hunspell morphology. | Approve English-only local engine + vendor the word list with notices. |
 | **C. WASM Hunspell (hunspell-asm)** | Any Hunspell `.aff/.dic` we ship | Hunspell in WASM | Wrapper MIT; Hunspell MPL-1.1 / GPL-2+ / LGPL-2.1+ (can be used under GPL-3) | Closer to Chromium Win/Linux. Still need a **Hebrew dictionary license**. ~engine size. | Approve WASM Hunspell **and** pick a Hebrew dictionary from D/E/F. |
-| **D. Hspell 1.4 / `dictionary-he` / LibreOffice he_IL** | Modern morphological Hebrew | Needs C or nspell | **AGPL-3.0** on aff/dic (package.json and Hspell 1.4 header: version 3, no independent “or later” grant verified). Packaging MIT. | Best Hebrew vocab. GPL-3 §13 allows combination; combined **distribution** still needs AGPL-3 §13 review. | Private evaluation of nspell+dictionary-he is in progress (sidecar). Do not commit aff/dic. |
+| **D. Hspell 1.4 / `dictionary-he` / LibreOffice he_IL** | Modern morphological Hebrew | Hunspell WASM (nspell rejected) | **AGPL-3.0** on aff/dic (package.json and Hspell 1.4 header: version 3, no independent “or later” grant verified). Packaging MIT. | Best Hebrew vocab. GPL-3 §13 allows combination; combined **distribution** still needs AGPL-3 §13 review. | Private Hunspell WASM + dictionary-he sidecar. Do not commit aff/dic. |
 | **E. Chromium `he_IL` from Hspell 1.0 (2000–2006)** | Older general Hebrew | Needs C | Chromium `README_he_IL.txt`: **GPL, version not specified**. If GPL-2-**only**, it cannot mix with GPL-3; if GPL-2-or-later, it can. | Incomplete vs modern Hebrew. Electron still will not load Hunspell on macOS without C. | License review of that dump **before** shipping. |
 | **F. Authored fixture list** | `misspelledd` / `איותת` only | Overlay | GPL-3.0-or-later | UI-test only. **Not** general spellcheck. | Already shipped. Do not relabel. |
 
 Rejected without a separate decision: LanguageTool / grammar cloud, Google Hunspell CDN downloads, writing `~/Library/Spelling`, changing the user’s Spelling language from the app.
 
-## Private nspell prototype (this SHA)
+## Private Hunspell WASM prototype (this SHA)
 
-Sidecar `app/src/spellcheck/offline-prototype/` pins `nspell@2.1.5`, `dictionary-en@4.0.0`, `dictionary-he@2.0.0`. **Install locally only:**
+Sidecar `app/src/spellcheck/offline-prototype/` pins `hunspell-asm@4.0.2`, `dictionary-en@4.0.0`, `dictionary-he@2.0.0`. **Install locally only:**
 
 ```bash
 bash app/src/spellcheck/offline-prototype/install.sh
 ```
 
-That does **not** modify `app/package-lock.json`. `node_modules` is gitignored. Aff/dic are **not** in the public PR.
+That does **not** modify `app/package-lock.json`. `node_modules` is gitignored. Aff/dic are **not** in the public PR. `nspell` is **not** installed.
 
-Verified from `dictionary-he` 2.0.0 `index.aff` (Hspell 1.4): PFX clitics (no SFX, no COMPLEXPREFIXES). **MAP** (ך/כ ם/מ …) and **BREAK** (quote/geresh edges) are in the aff and **unsupported by nspell**. If Hebrew suggestions miss lookalikes or quoted tokens, that is a concrete Hunspell/WASM candidate — the dictionary license stays AGPL-3.0 either way.
+**nspell rejected (native 7c346435):** `test-nspell-engine.ts` printed four passes (pins, no vendored aff/dic, tokenizer, affix inspection) then stalled on the first `nspell(aff, dic)` construct — 194s, 99% CPU, 1,377,552 KiB RSS, SIGTERM 143. `correct()` / `suggest()` were never reached. nspell `lib/util/add.js` + `apply.js` expand every PFX/SFX continuation into a JavaScript object key at load; `dictionary-he` has `PFX a N 962`. Hunspell applies affixes at check time in a **child process** with hard timeouts (`LOAD_TIMEOUT_MS=8000`, `CORRECT_TIMEOUT_MS=2000`, `SUGGEST_TIMEOUT_MS=2000`). Timeout is reported (`data-offline-spell="timeout"`, popover `ההצעות חרגו מהזמן`), not hidden as “no guesses.”
 
-UI: general typos get accessible `החלף ב-…` buttons (same AX as fixtures). Suggestions are computed when the popover opens, not on every keystroke. Personal JSON remains app-scoped. No silent replace. Fixtures `misspelledd` / `איותת` stay fixture-backend.
+Verified from `dictionary-he` 2.0.0 `index.aff` (Hspell 1.4): PFX clitics (no SFX, no COMPLEXPREFIXES). **MAP** and **BREAK** are present; Hunspell honors them (nspell did not). Dictionary license stays AGPL-3.0.
 
-**Distribution:** do not publish sidecar `node_modules`, combined installers, or a modified covered network service until notices + AGPL-3 §13 review. GPL-3 §13 does not automatically relicense Mailspring.
+UI: general typos get accessible `החלף ב-…` buttons (same AX as fixtures). Suggestions are computed when the popover opens, in the worker, not on every keystroke. Personal JSON remains app-scoped. No silent replace. Fixtures `misspelledd` / `איותת` stay fixture-backend.
+
+**Distribution:** do not publish sidecar `node_modules`, combined installers, or a modified covered network service until notices + AGPL-3 §13 review. GPL-3 §13 does not automatically relicense Mailspring. Hunspell tri-license is GPL-3 compatible; that does not change the AGPL dictionary obligation.
 
 ## Parent native acceptance
 
@@ -98,9 +100,9 @@ Use the isolated demo composer. Do **not** infer results from the two overlay fi
 | Mechanism | Words | How to accept |
 |-----------|-------|----------------|
 | UI-test overlay | only `misspelledd`, `איותת` | `החלף ב-misspelled` / `החלף ב-איות`. AX Press, Space, Enter. |
-| Offline nspell (after sidecar install) | `recieve`/`seperate`/`mispell`; `אבטיחחח`/`חשבנוית`/`שלומ`; clitics `הבית` | Overlay **or** popover `החלף ב-receive` etc. Only that word changes. Neighbors and paragraph `dir` stay. `watermelon`/`invoice`/`אבטיח`/`שלום` must **not** be flagged. Status `data-offline-spell="ready"`. |
-| Native OS/Chromium | same non-fixture words | Red underline + **real right-click**. Empty guesses remain an OS/Electron limitation. Do not treat nspell buttons as native NSSpellChecker completion. |
+| Offline Hunspell WASM (after sidecar install) | `recieve`/`seperate`/`mispell`; `אבטיחחח`/`חשבנוית`/`שלומ`; clitics `הבית` | Overlay **or** popover `החלף ב-receive` etc. Only that word changes. Neighbors and paragraph `dir` stay. `watermelon`/`invoice`/`אבטיח`/`שלום` must **not** be flagged. Status `data-offline-spell="ready"`. Timeout must say timeout, not “no guesses.” |
+| Native OS/Chromium | same non-fixture words | Red underline + **real right-click**. Empty guesses remain an OS/Electron limitation. Do not treat Hunspell buttons as native NSSpellChecker completion. |
 
-If `הבית` is unknown while `בית` is known: **nspell PFX blocked** → Hunspell WASM candidate. If Hebrew `suggest` exceeds ~5s: **nspell latency blocked** → Hunspell WASM candidate. Record misclassifications; fixtures are not completion.
+If `הבית` is unknown while `בית` is known: **Hunspell PFX blocked** — report, do not skip Hebrew coverage. If Hebrew `suggest` exceeds 2s: worker SIGTERM and `timeout` UI — report, do not hang. Record misclassifications; fixtures are not completion.
 
 Bundled Hspell files are **not shipped** in git.
