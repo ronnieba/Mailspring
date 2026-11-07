@@ -34,8 +34,10 @@ import {
   describeSpellBackends,
   enableNativeSpellSession,
   formatBackendStatusText,
+  formatHebrewNativeSummary,
   languagesToEnable,
   nativeContextSpellItems,
+  nativeGuessSupport,
   pickSupportedLanguage,
 } from '../../src/spellcheck/native-availability';
 import { SPELL_WORDLIST_LICENSE, SPELL_WORDLIST_PROVENANCE } from '../../src/spellcheck/word-lists';
@@ -257,18 +259,26 @@ function run() {
     assertEqual(none.english.listedInSession, true);
     assertEqual(none.hebrew.listedInSession, false);
     assertEqual(none.hebrewBundledDictionary, 'not-shipped');
-    assertEqual(none.hebrewNativeRuntime, 'pending');
+    assertEqual(none.hebrewNativeDetection, 'unproven');
+    assertEqual(none.hebrewNativeSuggestions, 'unproven');
     assertEqual(none.hebrewUiTestOverlay, 'fixture-typos-only');
     assertFalse(none.note.toLowerCase().includes('unavailable'));
     assertContains(none.note, 'not a universal macOS result');
     const both = describeSpellBackends(['en-US', 'he']);
     assertEqual(both.hebrew.listedInSession, true);
     assertEqual(both.hebrew.code, 'he');
-    assertEqual(both.hebrewNativeRuntime, 'pending');
+    assertEqual(both.hebrewNativeDetection, 'unproven');
+    assertEqual(both.hebrewNativeSuggestions, 'unproven');
     const listed = formatBackendStatusText(both);
-    assertContains(listed, 'runtime verification pending');
+    assertContains(listed, 'listing is not detection');
+    assertContains(listed, 'suggestions unproven');
     assertContains(listed, 'Hebrew native listed');
+    assertFalse(listed.includes('runtime verification pending'));
     assertFalse(listed.includes('General Hebrew: BLOCKED'));
+    const summary = formatHebrewNativeSummary(both);
+    assertContains(summary, 'listing is not detection');
+    assertContains(summary, 'suggestions unproven');
+    assertContains(formatHebrewNativeSummary(none), 'not a universal unavailable claim');
     assertEqual(pickSupportedLanguage(['en-US'], ['he', 'he-IL']), null);
     const enabled = languagesToEnable(['en-US', 'he'], 'he');
     assertTrue(enabled.includes('he'));
@@ -304,11 +314,14 @@ function run() {
     });
     assertEqual(empty.misspelledWord, 'recieve');
     assertEqual(empty.emptyGuesses, true);
+    assertEqual(nativeGuessSupport(empty), 'empty-guesses');
+    assertEqual(nativeGuessSupport(none), 'none');
     const guessed = nativeContextSpellItems({
       misspelledWord: 'teh',
       dictionarySuggestions: ['the', 'teh'],
     });
     assertEqual(guessed.emptyGuesses, false);
+    assertEqual(nativeGuessSupport(guessed), 'has-suggestions');
     assertTrue(guessed.suggestions.includes('the'));
     assertFalse(guessed.suggestions.includes('teh'));
     const weh = fs.readFileSync(path.join(APP_SRC_ROOT, 'window-event-handler.ts'), 'utf8');
@@ -348,16 +361,25 @@ function run() {
     assertContains(src, 'Library/Spelling');
     assertContains(src, 'Do not claim macOS Hebrew is unavailable');
     assertContains(src, 'enableNativeSpellSession');
-    assertContains(src, 'runtime verification pending');
     assertContains(src, 'nativeContextSpellItems');
     assertContains(src, 'electron/issues/24455');
+    const status = describeSpellBackends(['en-US', 'he']);
+    assertEqual(status.hebrew.listedInSession, true);
+    assertEqual(status.hebrewNativeDetection, 'unproven');
+    assertEqual(status.hebrewNativeSuggestions, 'unproven');
+    assertEqual(status.hebrewBundledDictionary, 'not-shipped');
+    const text = formatBackendStatusText(status);
+    assertContains(text, 'listing is not detection');
+    assertContains(text, 'suggestions unproven');
+    assertFalse(text.includes('runtime verification pending'));
     const blocker = fs.readFileSync(
       path.join(APP_SRC_ROOT, 'spellcheck/HEBREW-SPELLCHECK.md'),
       'utf8'
     );
     assertContains(blocker, 'AGPL-3');
     assertContains(blocker, 'Hunspell unused on macOS');
-    assertContains(blocker, 'runtime verification pending');
+    assertContains(blocker, 'detection observed, suggestions not proven');
+    assertContains(blocker, 'Listing ≠ detection ≠ suggestions');
   });
 
   test('overlay never silently auto-corrects (no replace except user action)', () => {

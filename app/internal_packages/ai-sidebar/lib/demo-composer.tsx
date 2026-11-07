@@ -11,6 +11,7 @@ import {
   describeSpellBackends,
   enableNativeSpellSession,
   formatBackendStatusText,
+  formatHebrewNativeSummary,
   SpellBackendStatus,
 } from '../../../src/spellcheck/native-availability';
 import {
@@ -27,7 +28,7 @@ interface DemoComposerState {
   lastHtml: string;
   backendNote: string;
   dictWords: string[];
-  hebrewListed: boolean;
+  backendStatus: SpellBackendStatus;
 }
 
 function currentSession(): {
@@ -56,7 +57,7 @@ export default class DemoComposer extends React.Component<
     lastHtml: '',
     backendNote: '',
     dictWords: [],
-    hebrewListed: false,
+    backendStatus: describeSpellBackends([]),
   };
 
   componentDidMount() {
@@ -79,7 +80,7 @@ export default class DemoComposer extends React.Component<
     const status: SpellBackendStatus = describeSpellBackends(langs);
     this.setState({
       backendNote: formatBackendStatusText(status),
-      hebrewListed: status.hebrew.listedInSession,
+      backendStatus: status,
     });
     (window as any).__mailspringDemoComposer = {
       serializeAndReopen: () => this._onSerializeReopen(),
@@ -146,7 +147,7 @@ export default class DemoComposer extends React.Component<
   };
 
   render() {
-    const { backendNote, lastHtml, value, hebrewListed } = this.state;
+    const { backendNote, lastHtml, value, backendStatus } = this.state;
     return (
       <div
         className="demo-composer"
@@ -161,18 +162,15 @@ export default class DemoComposer extends React.Component<
           className="demo-composer-backend"
           role="status"
           aria-label="מצב בודק איות"
-          data-hebrew-native={hebrewListed ? 'listed' : 'absent'}
-          data-hebrew-runtime="pending"
-          data-hebrew-bundled="not-shipped"
+          data-hebrew-native={backendStatus.hebrew.listedInSession ? 'listed' : 'absent'}
+          data-hebrew-detection={backendStatus.hebrewNativeDetection}
+          data-hebrew-suggestions={backendStatus.hebrewNativeSuggestions}
+          data-hebrew-bundled={backendStatus.hebrewBundledDictionary}
         >
-          <summary>
-            {hebrewListed
-              ? 'Native Hebrew listed this session — runtime verification pending'
-              : 'Native Hebrew not listed this session — not a universal unavailable claim'}
-          </summary>
+          <summary>{formatHebrewNativeSummary(backendStatus)}</summary>
           <p>
             {backendNote ||
-              'Native runtime pending · UI-test overlay only · bundled Hspell not shipped · no silent auto-correct'}
+              'Listing is not detection · suggestions unproven · UI-test overlay only · bundled Hspell not shipped · no silent auto-correct'}
           </p>
         </details>
         <div className="demo-composer-actions">

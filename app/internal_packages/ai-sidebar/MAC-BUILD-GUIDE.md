@@ -135,7 +135,7 @@ electron ./app --enable-logging --dev --demo --force-renderer-accessibility
 2. Click **עורך DEMO** (`aria-label="עורך DEMO"`).
 3. Toolbar direction buttons appear after ~400ms (existing ComposerEditorToolbar defer). Wait ~1s.
 4. Confirm banner: `עורך DEMO · אותו ComposerEditor · אין שליחה · אין שמירת טיוטה`.
-5. Spell status region `מצב בודק איות` (`data-hebrew-native="listed|absent"`, `data-hebrew-runtime="pending"`, `data-hebrew-bundled="not-shipped"`). If this Mac lists `he`, summary is **Native Hebrew listed this session — runtime verification pending**. Do **not** relabel native Hebrew universally BLOCKED. Bundled Hspell is not shipped (AGPL-3). Overlay remains two UI-test typos. Native spellcheck stays on (`nativeSpellCheck={true}`).
+5. Spell status region `מצב בודק איות` (`data-hebrew-native="listed|absent"`, `data-hebrew-detection="unproven"`, `data-hebrew-suggestions="unproven"`, `data-hebrew-bundled="not-shipped"`). If this Mac lists `he`, summary is **Native Hebrew listed this session (he) — listing is not detection; suggestions unproven**. Listing ≠ underlines ≠ guesses. Do **not** relabel native Hebrew universally BLOCKED. Bundled Hspell is not shipped (AGPL-3). Overlay remains two UI-test typos. Native spellcheck stays on (`nativeSpellCheck={true}`).
 
 ### Fixture paragraphs (synthetic in-memory draft)
 
@@ -177,7 +177,7 @@ There is no Send button on this surface. Production composer send/draft saving i
 
 ### Spell backend provenance
 
-**Bundled Hspell is not shipped (AGPL-3). Native Hebrew listed this session is runtime verification pending.** Details: `app/src/spellcheck/HEBREW-SPELLCHECK.md`.
+**Bundled Hspell is not shipped (AGPL-3). Native listing is not detection; suggestions remain unproven.** Details: `app/src/spellcheck/HEBREW-SPELLCHECK.md`.
 
 | Backend | When | License / notes |
 |---------|------|-----------------|

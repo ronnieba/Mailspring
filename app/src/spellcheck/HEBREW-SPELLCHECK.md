@@ -2,9 +2,9 @@
 
 The DEMO overlay’s two authored typos (`misspelledd`, `איותת`) exist only to exercise suggestion / personal-dictionary UI. They are **not** a Hebrew dictionary and must not be described as fulfilling general Hebrew spelling.
 
-This Mac session may list **`he`** in `availableSpellCheckerLanguages`. That means native `NSSpellChecker` Hebrew is **listed**. It does **not** mean underlines/suggestions are proven, and it does **not** mean a bundled Hspell dictionary was shipped.
+This Mac session may list **`he`** in `availableSpellCheckerLanguages`. That means native `NSSpellChecker` Hebrew is **listed**. Listing is not underlines and not guesses, and it is not a bundled Hspell dictionary.
 
-**Native Hebrew runtime verification is pending** on the target Mac (non-fixture words + real context menu). Do not label native Hebrew universally BLOCKED from a missing bundled dictionary, and do not claim it fully works until parent records ordinary-word behavior.
+**Listing ≠ detection ≠ suggestions.** Source reports listing from `availableSpellCheckerLanguages` only; it cannot see Chromium underlines. 733ff115 on one Mac recorded red underlines on non-fixture `recieve` / `אבטיחחח` (correct `watermelon` / `אבטיח` not underlined) with empty `dictionarySuggestions` (**No Guesses Found**). That is **detection observed, suggestions not proven**. Do not label native Hebrew universally BLOCKED, and do not claim full spell completion from a language list or underlines.
 
 ## What this SHA does deliver
 
@@ -12,7 +12,7 @@ This Mac session may list **`he`** in `availableSpellCheckerLanguages`. That mea
 - Native Chromium/OS spellcheck **on** (`nativeSpellCheck={true}` plus `session.setSpellCheckerEnabled(true)`). Languages listed this session, including `he` when present, are passed to `setSpellCheckerLanguages` (no-op on macOS; still required on Win/Linux).
 - User-invoked overlay suggestions and add/remove for **UI-test fixture typos only**.
 - Personal dictionary JSON under the isolated config dir. DEMO never writes `~/Library/Spelling`.
-- Status region `מצב בודק איות`: `data-hebrew-native="listed|absent"`, `data-hebrew-runtime="pending"`, `data-hebrew-bundled="not-shipped"`.
+- Status region `מצב בודק איות`: `data-hebrew-native="listed|absent"`, `data-hebrew-detection="unproven"`, `data-hebrew-suggestions="unproven"`, `data-hebrew-bundled="not-shipped"`. Detection/suggestions stay `unproven` in source because the session list cannot observe underlines or guesses.
 
 ## Platform (Electron / macOS)
 

@@ -11,9 +11,12 @@
  *   Demo must never call it.
  *
  * Do not claim macOS Hebrew is unavailable from source alone. If this session
- * lists `he` / `he-IL`, native detection is enabled and runtime underlines /
- * context-menu suggestions are pending parent verification on that Mac.
- * Bundled Hspell is not shipped (AGPL-3) — that is separate from native listing.
+ * lists `he` / `he-IL`, that is listing only — not underlines and not guesses.
+ * Source cannot observe Chromium underlines; 733ff115 on one Mac recorded
+ * red underlines on recieve / אבטיחחח with empty dictionarySuggestions
+ * (No Guesses Found). Listing ≠ detection ≠ suggestions. Suggestions stay
+ * unproven until a real context-menu guess is chosen. Bundled Hspell is not
+ * shipped (AGPL-3) — that is separate from native listing.
  * See ./HEBREW-SPELLCHECK.md.
  */
 
@@ -59,12 +62,25 @@ export function nativeContextSpellItems(
   };
 }
 
+/** Menu path only. Underlines are Chromium/OS; this does not infer detection. */
+export function nativeGuessSupport(
+  items: NativeContextSpellItems
+): 'none' | 'empty-guesses' | 'has-suggestions' {
+  if (!items.misspelledWord) return 'none';
+  return items.emptyGuesses ? 'empty-guesses' : 'has-suggestions';
+}
+
+export type NativeSpellPhase = 'unproven';
+
 export interface SpellBackendStatus {
   sessionLanguages: string[];
   english: { listedInSession: boolean; code: string | null };
   hebrew: { listedInSession: boolean; code: string | null };
   hebrewBundledDictionary: 'not-shipped';
-  hebrewNativeRuntime: 'pending';
+  /** Source cannot see Chromium underlines. Session listing is not detection. */
+  hebrewNativeDetection: NativeSpellPhase;
+  /** Empty dictionarySuggestions is a valid platform result; guesses stay unproven. */
+  hebrewNativeSuggestions: NativeSpellPhase;
   hebrewUiTestOverlay: 'fixture-typos-only';
   note: string;
 }
@@ -91,13 +107,14 @@ export function describeSpellBackends(available: string[]): SpellBackendStatus {
     english: { listedInSession: !!english, code: english },
     hebrew: { listedInSession: !!hebrew, code: hebrew },
     hebrewBundledDictionary: 'not-shipped',
-    hebrewNativeRuntime: 'pending',
+    hebrewNativeDetection: 'unproven',
+    hebrewNativeSuggestions: 'unproven',
     hebrewUiTestOverlay: 'fixture-typos-only',
     note: [
       'macOS: setSpellCheckerLanguages is a no-op; NSSpellChecker auto-detects.',
       'Hebrew listed in this session: ' + (hebrew || 'no'),
       hebrew
-        ? 'Native Hebrew is listed; runtime underlines and context-menu suggestions are pending parent verification (non-fixture words, real right-click — not AXShowMenu).'
+        ? 'Native Hebrew is listed. Listing is not detection. Suggestions unproven until a real right-click guess is chosen (not AXShowMenu). Empty dictionarySuggestions with a misspelledWord is a valid platform result.'
         : 'Hebrew not listed in this session. That is not a universal macOS result — parent must verify NSSpellChecker on this Mac.',
       'Bundled Hspell 1.4 is not shipped (AGPL-3). That is separate from whether NSSpellChecker lists Hebrew on this Mac.',
       'UI-test overlay: fixture typos misspelledd / איותת only — not a Hebrew dictionary.',
@@ -105,16 +122,25 @@ export function describeSpellBackends(available: string[]): SpellBackendStatus {
   };
 }
 
+export function formatHebrewNativeSummary(status: SpellBackendStatus): string {
+  if (status.hebrew.listedInSession) {
+    return `Native Hebrew listed this session (${status.hebrew.code}) — listing is not detection; suggestions unproven`;
+  }
+  return 'Native Hebrew not listed this session — not a universal unavailable claim';
+}
+
 export function formatBackendStatusText(status: SpellBackendStatus): string {
   const en = status.english.listedInSession
     ? `English native (this session): ${status.english.code}`
     : 'English native (this session): not listed in availableSpellCheckerLanguages';
   const he = status.hebrew.listedInSession
-    ? `Hebrew native listed (this session): ${status.hebrew.code} — runtime verification pending`
+    ? `Hebrew native listed (this session): ${status.hebrew.code} — listing is not detection; suggestions unproven`
     : 'Hebrew native listed (this session): no — not a universal macOS result; parent verifies NSSpellChecker';
   return [
     en,
     he,
+    'Native detection (underlines) is not claimed from the language list',
+    'Native suggestions unproven until a context-menu guess is chosen',
     'Bundled Hspell/Hunspell Hebrew dictionary: not shipped (AGPL-3)',
     'UI-test overlay: fixture typos only, not a dictionary',
     'No silent auto-correct',

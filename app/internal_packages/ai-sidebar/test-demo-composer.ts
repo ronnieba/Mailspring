@@ -92,11 +92,16 @@ function run() {
   test('native Chromium spellcheck stays on; overlay is extraPlugins only', () => {
     assertContains(demoTsx, 'nativeSpellCheck={true}');
     assertContains(demoTsx, 'enableNativeSpellSession');
-    assertContains(demoTsx, 'data-hebrew-runtime="pending"');
-    assertContains(demoTsx, 'data-hebrew-bundled="not-shipped"');
+    assertContains(demoTsx, 'data-hebrew-detection=');
+    assertContains(demoTsx, 'data-hebrew-suggestions=');
+    assertContains(demoTsx, 'hebrewNativeDetection');
+    assertContains(demoTsx, 'hebrewNativeSuggestions');
+    assertContains(demoTsx, 'hebrewBundledDictionary');
     assertContains(demoTsx, 'data-hebrew-native=');
+    assertFalse(demoTsx.includes('data-hebrew-runtime="pending"'));
     assertFalse(demoTsx.includes('data-hebrew-general="blocked"'));
     assertContains(demoTsx, 'formatBackendStatusText');
+    assertContains(demoTsx, 'formatHebrewNativeSummary');
     assertContains(demoTsx, 'extraPlugins={SpellPlugins}');
     assertContains(editorTsx, 'extraPlugins');
   });
