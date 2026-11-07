@@ -1,0 +1,283 @@
+#!/usr/bin/env npx ts-node
+/**
+ * Hebrew+English spell overlay: visible misspellings, user-invoked replace,
+ * personal dictionary. Never silent auto-correct. Never OS ~/Library/Spelling.
+ *
+ * UNRUN in cloud. Parent must execute locally on Mac.
+ *
+ *   npx ts-node --project app/tsconfig.json app/internal_packages/ai-sidebar/test-composer-spell.ts
+ *
+ * Alternate cwd:
+ *   npx --prefix "$REPO" ts-node --project "$REPO/app/tsconfig.json" \
+ *     "$REPO/app/internal_packages/ai-sidebar/test-composer-spell.ts"
+ */
+import * as fs from 'fs';
+import * as os from 'os';
+import * as path from 'path';
+import {
+  defaultSpellCheckContext,
+  findFixtureTypos,
+  findMisspellings,
+  isKnownWord,
+  replaceRange,
+  suggestionsFor,
+  tokenize,
+} from '../../src/spellcheck/spell-core';
+import {
+  isUnsafeDictionaryPath,
+  PersonalDictionary,
+  personalDictionaryPath,
+} from '../../src/spellcheck/personal-dictionary';
+import {
+  describeSpellBackends,
+  languagesToEnable,
+  pickSupportedLanguage,
+} from '../../src/spellcheck/native-availability';
+import { SPELL_WORDLIST_LICENSE, SPELL_WORDLIST_PROVENANCE } from '../../src/spellcheck/word-lists';
+import {
+  DEMO_EN_CORRECT_WORD,
+  DEMO_EN_LTR,
+  DEMO_EN_MISS,
+  DEMO_EN_MISS_WORD,
+  DEMO_HE_CORRECT_WORD,
+  DEMO_HE_MISS,
+  DEMO_HE_MISS_WORD,
+  DEMO_HE_RTL,
+} from '../../src/components/composer-editor/demo-composer-fixtures';
+
+const APP_SRC_ROOT = path.resolve(__dirname, '../../src');
+
+let passed = 0;
+let failed = 0;
+
+function test(name: string, fn: () => void) {
+  try {
+    fn();
+    console.log(`  ✓ ${name}`);
+    passed++;
+  } catch (e: any) {
+    console.log(`  ✗ ${name}`);
+    console.log(`    Error: ${e.message}`);
+    failed++;
+  }
+}
+
+function assertTrue(v: boolean, msg?: string) {
+  if (!v) throw new Error(msg || 'Expected true');
+}
+function assertFalse(v: boolean, msg?: string) {
+  if (v) throw new Error(msg || 'Expected false');
+}
+function assertEqual<T>(actual: T, expected: T, msg?: string) {
+  if (actual !== expected) {
+    throw new Error(msg || `Expected ${JSON.stringify(expected)}, got ${JSON.stringify(actual)}`);
+  }
+}
+function assertContains(haystack: string, needle: string) {
+  if (!haystack.includes(needle)) {
+    throw new Error(`Expected to contain "${needle}"`);
+  }
+}
+
+function run() {
+  console.log('\n=== Composer Hebrew+English spell (no auto-correct) ===\n');
+
+  const ctx = defaultSpellCheckContext();
+
+  test('tokenize splits mixed Hebrew and English and ignores numbers', () => {
+    const tokens = tokenize('Invoice 12345 — חשבונית 12345');
+    const words = tokens.map((t) => t.word);
+    assertTrue(words.includes('Invoice'));
+    assertTrue(words.includes('חשבונית'));
+    assertFalse(words.includes('12345'));
+  });
+
+  test('known fixture words are not misspellings', () => {
+    assertEqual(findMisspellings(DEMO_HE_RTL, ctx).length, 0);
+    assertEqual(findMisspellings(DEMO_EN_LTR, ctx).length, 0);
+  });
+
+  test('English misspelledd is visible and does not mutate the string', () => {
+    const original = DEMO_EN_MISS;
+    const misses = findMisspellings(original, ctx);
+    assertEqual(misses.length, 1);
+    assertEqual(misses[0].word, DEMO_EN_MISS_WORD);
+    assertEqual(original, DEMO_EN_MISS);
+  });
+
+  test('Hebrew איותת is visible and does not mutate the string', () => {
+    const original = DEMO_HE_MISS;
+    const misses = findMisspellings(original, ctx);
+    assertEqual(misses.length, 1);
+    assertEqual(misses[0].word, DEMO_HE_MISS_WORD);
+    assertEqual(original, DEMO_HE_MISS);
+  });
+
+  test('suggestionsFor is user-invoked only (text unchanged until replaceRange)', () => {
+    const s = suggestionsFor(DEMO_EN_MISS_WORD, 'en', ctx);
+    assertTrue(s.includes(DEMO_EN_CORRECT_WORD), `expected ${DEMO_EN_CORRECT_WORD} in ${s}`);
+    const he = suggestionsFor(DEMO_HE_MISS_WORD, 'he', ctx);
+    assertTrue(he.includes(DEMO_HE_CORRECT_WORD), `expected ${DEMO_HE_CORRECT_WORD} in ${he}`);
+    assertEqual(DEMO_EN_MISS_WORD, 'misspelledd');
+  });
+
+  test('replaceRange only changes text when explicitly applied', () => {
+    const next = replaceRange(
+      DEMO_EN_MISS,
+      DEMO_EN_MISS.indexOf(DEMO_EN_MISS_WORD),
+      DEMO_EN_MISS.indexOf(DEMO_EN_MISS_WORD) + DEMO_EN_MISS_WORD.length,
+      DEMO_EN_CORRECT_WORD
+    );
+    assertContains(next, DEMO_EN_CORRECT_WORD);
+    assertFalse(next.includes(DEMO_EN_MISS_WORD));
+    assertEqual(DEMO_EN_MISS.includes(DEMO_EN_MISS_WORD), true);
+  });
+
+  test('personal dictionary add/remove is scoped to a file and affects checks', () => {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'ms-spell-'));
+    const file = personalDictionaryPath(dir);
+    const dict = new PersonalDictionary(file);
+    assertFalse(isKnownWord(DEMO_EN_MISS_WORD, 'en', defaultSpellCheckContext(dict.list())));
+    dict.add(DEMO_EN_MISS_WORD);
+    assertTrue(isKnownWord(DEMO_EN_MISS_WORD, 'en', defaultSpellCheckContext(dict.list())));
+    assertEqual(findMisspellings(DEMO_EN_MISS, defaultSpellCheckContext(dict.list())).length, 0);
+    dict.remove(DEMO_EN_MISS_WORD);
+    assertEqual(findMisspellings(DEMO_EN_MISS, defaultSpellCheckContext(dict.list())).length, 1);
+    const saved = JSON.parse(fs.readFileSync(file, 'utf8'));
+    assertFalse(saved.words.includes(DEMO_EN_MISS_WORD));
+  });
+
+  test('refuses OS spelling dir and production Mailspring profile', () => {
+    assertTrue(isUnsafeDictionaryPath('/Users/x/Library/Spelling/LocalDictionary'));
+    assertTrue(
+      isUnsafeDictionaryPath(
+        '/Users/x/Library/Application Support/Mailspring/spell-personal-dictionary.json'
+      )
+    );
+    assertFalse(
+      isUnsafeDictionaryPath(
+        '/Users/x/Library/Application Support/Mailspring-demo/spell-personal-dictionary.json'
+      )
+    );
+    assertFalse(
+      isUnsafeDictionaryPath(
+        '/Users/x/Library/Application Support/Mailspring-dev/spell-personal-dictionary.json'
+      )
+    );
+    const dict = new PersonalDictionary('/Users/x/Library/Spelling/LocalDictionary', {
+      readFileSync: () => {
+        throw Object.assign(new Error('no'), { code: 'ENOENT' });
+      },
+      writeFileSync: () => {
+        throw new Error('should not write OS dictionary');
+      },
+    } as any);
+    let threw = false;
+    try {
+      dict.add('nope');
+    } catch {
+      threw = true;
+    }
+    assertTrue(threw);
+  });
+
+  test('session list reports he when present and does not claim macOS Hebrew unavailable', () => {
+    const none = describeSpellBackends(['en-US']);
+    assertEqual(none.english.listedInSession, true);
+    assertEqual(none.hebrew.listedInSession, false);
+    assertEqual(none.hebrewGeneral, 'blocked');
+    assertEqual(none.hebrewUiTestOverlay, 'fixture-typos-only');
+    assertFalse(none.note.toLowerCase().includes('unavailable'));
+    assertContains(none.note, 'Parent must verify');
+    const both = describeSpellBackends(['en-US', 'he']);
+    assertEqual(both.hebrew.listedInSession, true);
+    assertEqual(both.hebrew.code, 'he');
+    assertEqual(both.hebrewGeneral, 'blocked');
+    assertEqual(pickSupportedLanguage(['en-US'], ['he', 'he-IL']), null);
+    const enabled = languagesToEnable(['en-US'], 'he');
+    assertFalse(enabled.includes('he'));
+    assertTrue(enabled.includes('en-US'));
+  });
+
+  test('UI-test overlay flags only known typos, not general Hebrew', () => {
+    const hits = findFixtureTypos(`${DEMO_HE_RTL} אבטיח ${DEMO_HE_MISS} ${DEMO_EN_MISS}`);
+    assertEqual(hits.length, 2);
+    assertEqual(hits[0].word, DEMO_HE_MISS_WORD);
+    assertEqual(hits[1].word, DEMO_EN_MISS_WORD);
+    assertEqual(findFixtureTypos('שלום צוות אבטיח החשבונית').length, 0);
+  });
+
+  test('word list provenance is UI-test fixture only, not Hspell/Hunspell', () => {
+    assertContains(SPELL_WORDLIST_LICENSE, 'GPL-3.0');
+    assertContains(SPELL_WORDLIST_LICENSE, 'UI-test');
+    assertContains(SPELL_WORDLIST_PROVENANCE, 'Not general-language');
+    const lists = fs.readFileSync(path.join(APP_SRC_ROOT, 'spellcheck/word-lists.ts'), 'utf8');
+    assertContains(lists, 'Not Hspell');
+    assertContains(lists, 'not Hunspell');
+    assertContains(lists, 'NOT general Hebrew');
+  });
+
+  test('native-availability documents Electron/macOS NSSpellChecker vs Hunspell', () => {
+    const src = fs.readFileSync(
+      path.join(APP_SRC_ROOT, 'spellcheck/native-availability.ts'),
+      'utf8'
+    );
+    assertContains(src, 'NSSpellChecker');
+    assertContains(src, 'https://www.electronjs.org/docs/latest/tutorial/spellchecker');
+    assertContains(src, 'Library/Spelling');
+    assertContains(src, 'Do not claim macOS Hebrew is unavailable');
+    const blocker = fs.readFileSync(
+      path.join(APP_SRC_ROOT, 'spellcheck/HEBREW-SPELLCHECK.md'),
+      'utf8'
+    );
+    assertContains(blocker, 'AGPL-3');
+    assertContains(blocker, 'remaining blocker');
+    assertContains(blocker, 'Hunspell unused on macOS');
+  });
+
+  test('overlay never silently auto-corrects (no replace except user action)', () => {
+    const plugin = fs.readFileSync(
+      path.join(APP_SRC_ROOT, 'components/composer-editor/spell-plugins.tsx'),
+      'utf8'
+    );
+    assertContains(plugin, 'no auto-correct');
+    assertContains(plugin, 'not a Hebrew dictionary');
+    assertContains(plugin, 'findFixtureTypos');
+    assertContains(plugin, 'applyReplacement');
+    assertContains(plugin, 'הוסף למילון האישי');
+    assertContains(plugin, 'הסר מהמילון האישי');
+    assertContains(plugin, 'הצעות איות');
+    assertFalse(/setTimeout\([^)]*replace/.test(plugin));
+  });
+
+  test('production spellchecker does not write OS dict in demo', () => {
+    const src = fs.readFileSync(path.join(APP_SRC_ROOT, 'spellchecker.ts'), 'utf8');
+    assertContains(src, 'if (isDemoMode())');
+    assertContains(src, 'ensurePersonalDictionary');
+    assertContains(src, 'languagesToEnable');
+    const weh = fs.readFileSync(path.join(APP_SRC_ROOT, 'window-event-handler.ts'), 'utf8');
+    assertContains(weh, 'isDemoMode()');
+    assertContains(weh, 'ensurePersonalDictionary');
+  });
+
+  test('production conversion plugins do not include the fixture overlay', () => {
+    const conv = fs.readFileSync(
+      path.join(APP_SRC_ROOT, 'components/composer-editor/conversion.tsx'),
+      'utf8'
+    );
+    assertFalse(conv.includes('SpellPlugins'));
+    const editor = fs.readFileSync(
+      path.join(APP_SRC_ROOT, 'components/composer-editor/composer-editor.tsx'),
+      'utf8'
+    );
+    assertContains(editor, 'extraPlugins');
+    assertContains(editor, 'nativeSpellCheck');
+  });
+
+  console.log('\n' + '='.repeat(40));
+  console.log(`Results: ${passed} passed, ${failed} failed`);
+  console.log('='.repeat(40) + '\n');
+  if (failed > 0) process.exit(1);
+}
+
+run();

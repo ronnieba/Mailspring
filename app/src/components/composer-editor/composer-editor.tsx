@@ -85,6 +85,10 @@ interface ComposerEditorProps {
   onDrop?: (e: React.DragEvent) => void;
   onFileReceived?: (path: string) => void;
   onUpdatedSlateEditor?: (editor: Editor | null) => void;
+  /** When set, overrides config-driven native Chromium spellCheck. Demo uses false + overlay. */
+  nativeSpellCheck?: boolean;
+  /** Extra Slate plugins (demo spell overlay). Production composer omits this. */
+  extraPlugins?: typeof plugins;
 }
 
 interface ComposerEditorState {
@@ -96,6 +100,7 @@ export class ComposerEditor extends React.Component<ComposerEditorProps, Compose
 
   _pluginKeyHandlers = {};
   _mounted = false;
+  _resolvedPlugins = plugins;
   editor: Editor | null = null;
   state: ComposerEditorState = { isTyping: false };
 
@@ -121,7 +126,9 @@ export class ComposerEditor extends React.Component<ComposerEditorProps, Compose
     // Note that we cache these between renders so we don't remove and re-add them
     // every render.
     this._pluginKeyHandlers = {};
-    plugins.forEach((plugin) => {
+    const extra = this.props.extraPlugins;
+    this._resolvedPlugins = extra && extra.length ? plugins.concat(extra) : plugins;
+    this._resolvedPlugins.forEach((plugin) => {
       if (!plugin.appCommands) return;
       Object.entries(plugin.appCommands).forEach(
         ([command, handler]: [string, (event: any, val: any) => any]) => {
@@ -132,6 +139,10 @@ export class ComposerEditor extends React.Component<ComposerEditorProps, Compose
         }
       );
     });
+  }
+
+  resolvedPlugins() {
+    return this._resolvedPlugins;
   }
 
   componentDidMount() {
@@ -413,7 +424,8 @@ export class ComposerEditor extends React.Component<ComposerEditorProps, Compose
   render() {
     const { className, onBlur, onDrop, value, propsForPlugins, readOnly } = this.props;
 
-    const PluginTopComponents = this.editor ? plugins.filter((p) => p.topLevelComponent) : [];
+    const activePlugins = this.resolvedPlugins();
+    const PluginTopComponents = this.editor ? activePlugins.filter((p) => p.topLevelComponent) : [];
 
     return (
       <KeyCommandsRegion
@@ -421,7 +433,7 @@ export class ComposerEditor extends React.Component<ComposerEditorProps, Compose
         localHandlers={this._pluginKeyHandlers}
       >
         {this.editor && (
-          <ComposerEditorToolbar editor={this.editor} plugins={plugins} value={value} />
+          <ComposerEditorToolbar editor={this.editor} plugins={activePlugins} value={value} />
         )}
         <div className="RichEditor-content" onClick={this.onFocusIfBlurred}>
           {this.editor &&
@@ -448,8 +460,12 @@ export class ComposerEditor extends React.Component<ComposerEditorProps, Compose
             onCut={this.onCut as any}
             onCopy={this.onCopy as any}
             onPaste={this.onPaste as any}
-            spellCheck={!this.state.isTyping && AppEnv.config.get('core.composing.spellcheck')}
-            plugins={plugins as any as Plugin[]}
+            spellCheck={
+              this.props.nativeSpellCheck !== undefined
+                ? this.props.nativeSpellCheck && !this.state.isTyping
+                : !this.state.isTyping && AppEnv.config.get('core.composing.spellcheck')
+            }
+            plugins={activePlugins as any as Plugin[]}
             propsForPlugins={propsForPlugins}
           />
         </div>

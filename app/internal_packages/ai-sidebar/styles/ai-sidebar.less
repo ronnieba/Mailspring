@@ -493,6 +493,80 @@
     }
   }
   
+  .demo-surface-tabs {
+    display: flex;
+    gap: 4px;
+    padding: 8px 16px 0;
+    border-bottom: 1px solid var(--border-color-divider);
+
+    button {
+      flex: 1;
+      padding: 6px 8px;
+      border: 1px solid var(--border-color-divider);
+      background: var(--background-secondary);
+      cursor: pointer;
+
+      &.active,
+      &[aria-selected='true'] {
+        background: var(--background-primary);
+        font-weight: 600;
+      }
+    }
+  }
+
+  .demo-composer {
+    display: flex;
+    flex-direction: column;
+    flex: 1;
+    min-height: 280px;
+    overflow: auto;
+    padding: 8px 12px 12px;
+    direction: ltr;
+    text-align: left;
+
+    .demo-composer-banner,
+    .demo-composer-backend {
+      font-size: 11px;
+      margin-bottom: 6px;
+      color: #856404;
+      background: #fff3cd;
+      padding: 6px 8px;
+    }
+
+    .demo-composer-actions {
+      display: flex;
+      gap: 6px;
+      margin-bottom: 8px;
+
+      button {
+        font-size: 11px;
+        padding: 4px 8px;
+      }
+    }
+
+    .demo-composer-editor {
+      min-height: 180px;
+      border: 1px solid var(--border-color-divider);
+      padding: 0;
+      background: var(--background-primary);
+    }
+
+    .demo-composer-dict {
+      margin-top: 8px;
+      font-size: 11px;
+    }
+
+    .demo-composer-html {
+      margin-top: 8px;
+      font-size: 10px;
+      white-space: pre-wrap;
+      max-height: 120px;
+      overflow: auto;
+      background: var(--background-secondary);
+      padding: 6px;
+    }
+  }
+
   // Footer
   .ai-sidebar-footer {
     padding: 8px 16px;

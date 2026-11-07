@@ -4,6 +4,11 @@ import url from 'url';
 import { localized } from './intl';
 import { developerToolsAvailable } from './developer-tools';
 import DOMUtils from './dom-utils';
+import { isDemoMode } from './demo-mode';
+import {
+  ensurePersonalDictionary,
+  getActivePersonalDictionary,
+} from './spellcheck/personal-dictionary';
 
 let ComponentRegistry = null;
 
@@ -198,6 +203,13 @@ export default class WindowEventHandler {
           new MenuItem({
             label: localized('Learn Spelling'),
             click: () => {
+              if (isDemoMode()) {
+                const dict =
+                  getActivePersonalDictionary() ||
+                  ensurePersonalDictionary(AppEnv.getConfigDirPath());
+                dict.add(params.misspelledWord);
+                return;
+              }
               webContents.session.addWordToSpellCheckerDictionary(params.misspelledWord);
             },
           })

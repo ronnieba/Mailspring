@@ -8,6 +8,7 @@ import { FluxContainer, Spinner } from 'mailspring-component-kit';
 import AISidebarStore from './ai-sidebar-store';
 import { ScopeMode, RetrievalMode, ConversationMessage, Citation } from './core/types';
 import { DemoMessagePreview, isDemoMode } from './synthetic-demo';
+import DemoComposer from './demo-composer';
 import classNames from 'classnames';
 
 interface AISidebarState {
@@ -22,6 +23,7 @@ interface AISidebarState {
   providerName: string;
   isMockProvider: boolean;
   demoPreview: DemoMessagePreview | null;
+  demoTab: 'ai' | 'composer';
 }
 
 class AISidebarInner extends React.Component<Record<string, never>, AISidebarState> {
@@ -43,6 +45,7 @@ class AISidebarInner extends React.Component<Record<string, never>, AISidebarSta
     providerName: AISidebarStore.getProvider().name,
     isMockProvider: AISidebarStore.getProvider().isMock,
     demoPreview: null,
+    demoTab: 'ai',
   };
 
   componentDidMount() {
@@ -423,24 +426,56 @@ class AISidebarInner extends React.Component<Record<string, never>, AISidebarSta
   }
 
   render() {
+    const demo = isDemoMode();
+    const composerTab = demo && this.state.demoTab === 'composer';
     return (
-      <div className="ai-sidebar" dir="rtl" data-demo-ready={isDemoMode() ? 'true' : undefined}>
+      <div className="ai-sidebar" dir="rtl" data-demo-ready={demo ? 'true' : undefined}>
         <div className="ai-sidebar-header">
           <h2>🤖 עוזר AI</h2>
           <span className="provider-badge">{this.state.providerName}</span>
         </div>
 
+        {demo && (
+          <div className="demo-surface-tabs" role="tablist" aria-label="לוחות DEMO">
+            <button
+              type="button"
+              role="tab"
+              aria-label="עוזר AI"
+              aria-selected={this.state.demoTab === 'ai'}
+              className={classNames({ active: this.state.demoTab === 'ai' })}
+              onClick={() => this.setState({ demoTab: 'ai' })}
+            >
+              עוזר AI
+            </button>
+            <button
+              type="button"
+              role="tab"
+              aria-label="עורך DEMO"
+              aria-selected={this.state.demoTab === 'composer'}
+              className={classNames({ active: this.state.demoTab === 'composer' })}
+              onClick={() => this.setState({ demoTab: 'composer' })}
+            >
+              עורך
+            </button>
+          </div>
+        )}
+
         {this._renderMockWarning()}
-        {this._renderScopeSelector()}
+        {!composerTab && this._renderScopeSelector()}
         {this._renderError()}
 
-        <div className="ai-sidebar-body">
-          {this._renderDemoPreview()}
-          {this._renderConversation()}
-          {this._renderProgress()}
-        </div>
-
-        {this._renderInput()}
+        {composerTab ? (
+          <DemoComposer />
+        ) : (
+          <>
+            <div className="ai-sidebar-body">
+              {this._renderDemoPreview()}
+              {this._renderConversation()}
+              {this._renderProgress()}
+            </div>
+            {this._renderInput()}
+          </>
+        )}
 
         <div className="ai-sidebar-footer">
           <small>
