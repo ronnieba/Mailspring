@@ -1,7 +1,11 @@
 import fs from 'fs';
 import path from 'path';
 import { isDemoMode } from './demo-mode';
-import { languagesToEnable, pickSupportedLanguage } from './spellcheck/native-availability';
+import {
+  enableNativeSpellSession,
+  languagesToEnable,
+  pickSupportedLanguage,
+} from './spellcheck/native-availability';
 import {
   ensurePersonalDictionary,
   getActivePersonalDictionary,
@@ -18,10 +22,17 @@ class Spellchecker {
 
     // Nobody will notice if spellcheck isn't available for a few seconds and it
     // takes a considerable amount of time to startup (212ms in dev mode on my 2017 MBP)
+    try {
+      enableNativeSpellSession(this._session);
+    } catch {
+      // Session may not be ready; initHandler retries after the delay.
+    }
+
     const initHandler = () => {
       this._migrateFromCustomDict();
 
       const initialLanguage = AppEnv.config.get('core.composing.spellcheckDefaultLanguage');
+      enableNativeSpellSession(this._session, initialLanguage);
       this._switchToLanguage(initialLanguage);
 
       // Monitor language setting for changes. Note that as the user types in a draft we

@@ -19,6 +19,7 @@ import {
   focusedParagraphDirection,
   getBlockDirection,
   htmlDirForBlock,
+  htmlLangForBlock,
   paragraphSnapshots,
   parseDirAttribute,
   setCurrentParagraphDirection,
@@ -172,6 +173,21 @@ function run() {
     assertEqual(getBlockDirection(second), 'ltr');
     assertEqual(htmlDirForBlock(first), 'rtl');
     assertEqual(htmlDirForBlock(second), 'ltr');
+  });
+
+  test('htmlLangForBlock is he/en for homogeneous paragraphs and omitted when mixed', () => {
+    const value = createDemoComposerValue();
+    const he: any = value.document.nodes.get(0);
+    const en: any = value.document.nodes.get(1);
+    const mixed: any = value.document.nodes.get(4);
+    assertEqual(htmlLangForBlock(he), 'he');
+    assertEqual(htmlLangForBlock(en), 'en');
+    assertEqual(htmlLangForBlock(mixed), undefined);
+    const src = fs.readFileSync(
+      path.join(APP_SRC_ROOT, 'components/composer-editor/base-block-plugins.tsx'),
+      'utf8'
+    );
+    assertContains(src, 'htmlLangForBlock');
   });
 
   test('live + HTML render and toolbar AX names are wired on the real editor', () => {

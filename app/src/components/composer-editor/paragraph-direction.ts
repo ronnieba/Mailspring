@@ -21,6 +21,25 @@ export function getBlockDirection(block: Block | null | undefined): ParagraphDir
   return 'auto';
 }
 
+/**
+ * lang for native NSSpellChecker / Chromium. Homogeneous Hebrew → he,
+ * homogeneous English → en, mixed → omitted so the OS can auto-detect.
+ * Not a claim that native Hebrew underlines work; parent still verifies.
+ */
+export function htmlLangForBlock(node: Block): 'he' | 'en' | undefined {
+  const text = node && typeof (node as any).text === 'string' ? (node as any).text : '';
+  let he = 0;
+  let en = 0;
+  for (let i = 0; i < text.length; i++) {
+    const c = text.charCodeAt(i);
+    if (c >= 0x0590 && c <= 0x05ff) he += 1;
+    else if ((c >= 65 && c <= 90) || (c >= 97 && c <= 122)) en += 1;
+  }
+  if (he > 0 && en === 0) return 'he';
+  if (en > 0 && he === 0) return 'en';
+  return undefined;
+}
+
 /** Explicit dir wins. Auto uses Slate's first strong directional character. */
 export function htmlDirForBlock(node: Block): 'rtl' | 'ltr' | undefined {
   const explicit = getBlockDirection(node);

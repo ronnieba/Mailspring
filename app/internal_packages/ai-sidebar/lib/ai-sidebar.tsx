@@ -500,8 +500,8 @@ AISidebar.displayName = 'AISidebar';
 // Container styles for sidebar panel
 AISidebar.containerStyles = {
   order: 99,
-  minWidth: 280,
-  maxWidth: 400,
+  minWidth: 360,
+  maxWidth: 560,
 };
 
 // Mark as sidebar panel for the panel switcher

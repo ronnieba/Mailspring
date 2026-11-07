@@ -94,6 +94,7 @@ After launch, GPU/network `--user-data-dir` must contain `Mailspring-demo`, neve
 | Reload demo draft | `טען טיוטת DEMO מחדש` |
 | Spell backend status | `מצב בודק איות` |
 | Spell suggestions | `הצעות איות` |
+| Replace overlay typo | `החלף ב-misspelled` / `החלף ב-איות` (AX Press, Space, Enter) |
 | Add to personal dictionary | `הוסף למילון האישי` |
 | Remove from personal dictionary | `הסר מהמילון האישי` / `הסר מהמילון האישי: <word>` |
 | Personal dictionary region | `מילון אישי` |
@@ -134,7 +135,7 @@ electron ./app --enable-logging --dev --demo --force-renderer-accessibility
 2. Click **עורך DEMO** (`aria-label="עורך DEMO"`).
 3. Toolbar direction buttons appear after ~400ms (existing ComposerEditorToolbar defer). Wait ~1s.
 4. Confirm banner: `עורך DEMO · אותו ComposerEditor · אין שליחה · אין שמירת טיוטה`.
-5. Spell status region `מצב בודק איות` (`data-hebrew-general="blocked"`) must report **this session’s** `availableSpellCheckerLanguages`. Do **not** treat a missing `he` as proof that macOS Hebrew is universally unavailable — parent verifies `NSSpellChecker` on that Mac. Status must include **General Hebrew: BLOCKED** and **UI-test overlay: fixture typos only**. Native English spellcheck stays on (`nativeSpellCheck={true}`).
+5. Spell status region `מצב בודק איות` (`data-hebrew-native="listed|absent"`, `data-hebrew-runtime="pending"`, `data-hebrew-bundled="not-shipped"`). If this Mac lists `he`, summary is **Native Hebrew listed this session — runtime verification pending**. Do **not** relabel native Hebrew universally BLOCKED. Bundled Hspell is not shipped (AGPL-3). Overlay remains two UI-test typos. Native spellcheck stays on (`nativeSpellCheck={true}`).
 
 ### Fixture paragraphs (synthetic in-memory draft)
 
@@ -146,23 +147,36 @@ electron ./app --enable-logging --dev --demo --force-renderer-accessibility
 | 4 | LTR | `This is a misspelledd word in English.` |
 | 5 | LTR | `Invoice 12345 — חשבונית 12345.` |
 
-**UI-test overlay only** (never auto-corrected; **not** general Hebrew): English `misspelledd` → `misspelled`; Hebrew `איותת` → `איות`. Ordinary Hebrew such as `אבטיח` must **not** be flagged by the overlay. Native Chromium/OS English underlines remain on. Whether native Hebrew underlines appear is a **parent Mac observation**, not a cloud claim.
+**UI-test overlay only** (never auto-corrected; **not** general Hebrew): English `misspelledd` → `misspelled`; Hebrew `איותת` → `איות`. Ordinary Hebrew such as `אבטיח` must **not** be flagged by the overlay.
+
+### Overlay AX / keyboard (must work without a physical mouse)
+
+| Control | AX name | Activation |
+|---------|---------|------------|
+| Replace English | `החלף ב-misspelled` (`data-spell-action="replace"`) | AX Press, Space, Enter, or mouse. Caret may leave the typo; stored range is used. |
+| Replace Hebrew | `החלף ב-איות` | same |
+| Add to dictionary | `הוסף למילון האישי` | AX Press / click |
+| Remove from list | `הסר מהמילון האישי: misspelledd` | AX Press / click — overlay on that word must return **immediately**, no reload |
+| Status | `מצב בודק איות` | expand `<details>` for the full session note |
+
+Keyboard: click the typo, then Tab/Shift+Tab to the replace button, then Space or Enter. Overlay popover stays up while the editor is unfocused.
 
 ### Native verification cases
 
-1. **Per-paragraph independence:** caret in paragraph 1, click `פסקה משמאל לימין (LTR)`. Paragraph 1 must flip LTR; paragraph 2 must stay LTR English; paragraph 3 must stay RTL Hebrew. Caret/selection must not jump to another paragraph. Numbers in paragraph 5 (`12345`) stay intact if you only change dir.
-2. **Serialize/reopen:** click `סריאליזציה ופתיחה מחדש`. The HTML preview (`aria-label="HTML after serialize"`) must include `dir="rtl"` and `dir="ltr"` on the corresponding `<div>`s. After reopen, paragraph directions and mixed Hebrew/English text must match. This uses real `convertToHTML` / `convertFromHTML`, not a lookalike editor.
-3. **Suggestion accept (UI-test typos only):** click into `misspelledd` (or `איותת`). Region `הצעות איות` appears (copy includes `not a Hebrew dictionary`). Click `החלף ב-misspelled` (or `החלף ב-איות`). Only that word changes. Type `אבטיח`: overlay must **not** underline it.
-4. **Dictionary add:** with the fixture typo selected, `הוסף למילון האישי`. Overlay underline disappears; word appears under `מילון אישי`. File must be `~/Library/Application Support/Mailspring-demo/spell-personal-dictionary.json` — **never** `~/Library/Spelling` and never `.../Mailspring/` (production).
-5. **Dictionary remove:** click `הסר מהמילון האישי: misspelledd` (list button) or the overlay remove control. Overlay flags the fixture typo again. Production OS dictionary must be untouched (`stat ~/Library/Spelling` timestamps unchanged if you check names only; do not edit it).
-6. **Native English:** `misspelledd` may also be underlined by Chromium/OS spellcheck. Context-menu Learn Spelling in DEMO still writes the isolated JSON, not the OS dictionary.
-7. **Native Hebrew:** record whether `he` appears in the status line and whether non-fixture Hebrew is underlined. That observation belongs in the parent report. Cloud agents must not pre-claim unavailable.
+1. **Per-paragraph independence:** caret in paragraph 1, click `פסקה משמאל לימין (LTR)`. Paragraph 1 must flip LTR; neighbors unchanged. Numbers in paragraph 5 (`12345`) stay intact.
+2. **Serialize/reopen:** `סריאליזציה ופתיחה מחדש`. HTML includes `dir="rtl"` / `dir="ltr"`; homogeneous Hebrew paragraphs may also have `lang="he"`. Mixed paragraph 5 omits `lang`.
+3. **Overlay accept:** caret in `misspelledd` / `איותת` → `הצעות איות` → replace. AX Press and keyboard must succeed, not only mouse. Type `אבטיח`: overlay must **not** underline it.
+4. **Dictionary add:** `הוסף למילון האישי`. File: `~/Library/Application Support/Mailspring-demo/spell-personal-dictionary.json` only.
+5. **Dictionary remove:** `הסר מהמילון האישי: misspelledd`. Overlay for **that word** must reappear immediately (Hebrew mark stays). No reload/edit workaround.
+6. **Native non-fixture (required this SHA):** append `watermelon` / `recieve` and `אבטיח` / `אבטיחחח` (or `חשבנוית`). Overlay silent. Wait ~1s. **Real right-click** (not AXShowMenu) on `recieve` and `אבטיחחח`. Record native suggestions. Learn Spelling in DEMO still writes isolated JSON.
+
+If `he` is listed and native Hebrew suggestions appear, report listed+observed. If listed but no spelling menu items, report **native Hebrew listed, runtime verification pending**. Do not relabel unavailable. Bundled Hspell remains not shipped.
 
 There is no Send button on this surface. Production composer send/draft saving is unchanged. Overlay spell plugins are **not** in the default conversion plugin list.
 
 ### Spell backend provenance
 
-**General Hebrew spellchecking is a remaining blocker.** Details: `app/src/spellcheck/HEBREW-SPELLCHECK.md`.
+**Bundled Hspell is not shipped (AGPL-3). Native Hebrew listed this session is runtime verification pending.** Details: `app/src/spellcheck/HEBREW-SPELLCHECK.md`.
 
 | Backend | When | License / notes |
 |---------|------|-----------------|
@@ -189,13 +203,13 @@ Parent runs these on Mac from repo root (and once from another cwd with `--prefi
 | `test-demo-query.ts` | 18 |
 | `test-demo-cli.ts` | 12 |
 | **prior portable subtotal** | **160** |
-| `test-composer-direction.ts` | 13 |
-| `test-composer-spell.ts` | 17 |
-| `test-demo-composer.ts` | 12 |
-| **new portable subtotal** | **42** |
-| **portable total** | **202** |
+| `test-composer-direction.ts` | 14 |
+| `test-composer-spell.ts` | 19 |
+| `test-demo-composer.ts` | 13 |
+| **new portable subtotal** | **46** |
+| **portable total** | **206** |
 
-Plus prior native: CLI 12 / query 18 alternate-cwd, 29 native UI assertions. Typecheck + lint locally. Do not run these in cloud CI.
+Typecheck + lint locally. Do not run these in cloud CI. Auto direction / other-focus / AI regression smoke were **not** rerun after the 767b82e dictionary/AX failures — do not reuse those old UI passes.
 
 `--demo` does **not** open, migrate, rebuild, or relaunch over `edgehill.db`. A leftover empty stub in `Mailspring-demo/` from an older checkout is ignored; do not delete it. Production `application:reset-database` (Okay → rebuild → relaunch) is unchanged.
 

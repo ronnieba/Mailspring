@@ -73,6 +73,7 @@
   padding: 8px;
   border: 1px solid @border-color-divider;
   background: @background-primary;
+  color: @text-color;
   font-size: 12px;
 
   .spell-suggestion,
@@ -80,8 +81,16 @@
   .spell-dict-remove {
     display: block;
     width: 100%;
+    min-height: 28px;
     text-align: start;
     margin-top: 4px;
+    padding: 6px 8px;
+    color: @text-color;
+    background: @background-off-primary;
+    border: 1px solid @border-color-divider;
+    -webkit-appearance: none;
+    appearance: none;
+    cursor: pointer;
   }
 }
 

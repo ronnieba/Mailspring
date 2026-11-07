@@ -10,16 +10,25 @@
  * - session.addWordToSpellCheckerDictionary on macOS writes ~/Library/Spelling.
  *   Demo must never call it.
  *
- * Do not claim macOS Hebrew is unavailable from source alone. Report whatever
- * this session's availableSpellCheckerLanguages contains; parent verifies
- * NSSpellChecker on the target Mac. See ./HEBREW-SPELLCHECK.md.
+ * Do not claim macOS Hebrew is unavailable from source alone. If this session
+ * lists `he` / `he-IL`, native detection is enabled and runtime underlines /
+ * context-menu suggestions are pending parent verification on that Mac.
+ * Bundled Hspell is not shipped (AGPL-3) — that is separate from native listing.
+ * See ./HEBREW-SPELLCHECK.md.
  */
+
+export interface SpellCheckerSession {
+  setSpellCheckerEnabled?: (enable: boolean) => void;
+  setSpellCheckerLanguages?: (languages: string[]) => void;
+  availableSpellCheckerLanguages?: string[];
+}
 
 export interface SpellBackendStatus {
   sessionLanguages: string[];
   english: { listedInSession: boolean; code: string | null };
   hebrew: { listedInSession: boolean; code: string | null };
-  hebrewGeneral: 'blocked';
+  hebrewBundledDictionary: 'not-shipped';
+  hebrewNativeRuntime: 'pending';
   hebrewUiTestOverlay: 'fixture-typos-only';
   note: string;
 }
@@ -45,13 +54,16 @@ export function describeSpellBackends(available: string[]): SpellBackendStatus {
     sessionLanguages: [...available],
     english: { listedInSession: !!english, code: english },
     hebrew: { listedInSession: !!hebrew, code: hebrew },
-    hebrewGeneral: 'blocked',
+    hebrewBundledDictionary: 'not-shipped',
+    hebrewNativeRuntime: 'pending',
     hebrewUiTestOverlay: 'fixture-typos-only',
     note: [
       'macOS: setSpellCheckerLanguages is a no-op; NSSpellChecker auto-detects.',
       'Hebrew listed in this session: ' + (hebrew || 'no'),
-      'That list is not a claim about every Mac. Parent must verify.',
-      'General Hebrew spellchecking: BLOCKED (Hspell 1.4 AGPL-3; Hunspell unused on macOS).',
+      hebrew
+        ? 'Native Hebrew is listed; runtime underlines and context-menu suggestions are pending parent verification (non-fixture words, real right-click — not AXShowMenu).'
+        : 'Hebrew not listed in this session. That is not a universal macOS result — parent must verify NSSpellChecker on this Mac.',
+      'Bundled Hspell 1.4 is not shipped (AGPL-3). That is separate from whether NSSpellChecker lists Hebrew on this Mac.',
       'UI-test overlay: fixture typos misspelledd / איותת only — not a Hebrew dictionary.',
     ].join(' '),
   };
@@ -62,14 +74,15 @@ export function formatBackendStatusText(status: SpellBackendStatus): string {
     ? `English native (this session): ${status.english.code}`
     : 'English native (this session): not listed in availableSpellCheckerLanguages';
   const he = status.hebrew.listedInSession
-    ? `Hebrew listed in this session: ${status.hebrew.code}`
-    : 'Hebrew listed in this session: no (not a universal macOS claim — parent must verify NSSpellChecker)';
+    ? `Hebrew native listed (this session): ${status.hebrew.code} — runtime verification pending`
+    : 'Hebrew native listed (this session): no — not a universal macOS result; parent verifies NSSpellChecker';
   return [
     en,
     he,
-    'General Hebrew: BLOCKED — see HEBREW-SPELLCHECK.md',
+    'Bundled Hspell/Hunspell Hebrew dictionary: not shipped (AGPL-3)',
     'UI-test overlay: fixture typos only, not a dictionary',
     'No silent auto-correct',
+    'Demo dictionary: Mailspring-demo JSON only, never ~/Library/Spelling',
     status.note,
   ].join(' · ');
 }
@@ -88,4 +101,32 @@ export function languagesToEnable(
   add(pickSupportedLanguage(available, ['en-US', 'en-GB', 'en']));
   add(pickSupportedLanguage(available, ['he', 'he-IL', 'iw']));
   return out;
+}
+
+/**
+ * Turn native Chromium/OS spellcheck on for this session. Never downloads
+ * dictionaries, never calls addWordToSpellCheckerDictionary.
+ */
+export function enableNativeSpellSession(
+  session: SpellCheckerSession | null | undefined,
+  preferred?: string | null
+): string[] {
+  if (!session) return [];
+  try {
+    if (typeof session.setSpellCheckerEnabled === 'function') {
+      session.setSpellCheckerEnabled(true);
+    }
+  } catch {
+    // Some sessions expose the method but reject in tests / early startup.
+  }
+  const available = session.availableSpellCheckerLanguages || [];
+  const list = languagesToEnable(available, preferred);
+  if (list.length && typeof session.setSpellCheckerLanguages === 'function') {
+    try {
+      session.setSpellCheckerLanguages(list);
+    } catch {
+      // Unknown codes throw on Win/Linux; macOS treats this as a no-op.
+    }
+  }
+  return list;
 }

@@ -32,11 +32,21 @@ import {
 } from '../../src/spellcheck/personal-dictionary';
 import {
   describeSpellBackends,
+  enableNativeSpellSession,
+  formatBackendStatusText,
   languagesToEnable,
   pickSupportedLanguage,
 } from '../../src/spellcheck/native-availability';
 import { SPELL_WORDLIST_LICENSE, SPELL_WORDLIST_PROVENANCE } from '../../src/spellcheck/word-lists';
 import {
+  applySpellReplacement,
+  refreshSpellDecorations,
+  rememberSpellRange,
+  spellRangeForWord,
+  SPELL_ERROR_MARK,
+} from '../../src/components/composer-editor/spell-plugins';
+import {
+  createDemoComposerValue,
   DEMO_EN_CORRECT_WORD,
   DEMO_EN_LTR,
   DEMO_EN_MISS,
@@ -46,6 +56,7 @@ import {
   DEMO_HE_MISS_WORD,
   DEMO_HE_RTL,
 } from '../../src/components/composer-editor/demo-composer-fixtures';
+import { Editor } from 'slate';
 
 const APP_SRC_ROOT = path.resolve(__dirname, '../../src');
 
@@ -244,18 +255,36 @@ function run() {
     const none = describeSpellBackends(['en-US']);
     assertEqual(none.english.listedInSession, true);
     assertEqual(none.hebrew.listedInSession, false);
-    assertEqual(none.hebrewGeneral, 'blocked');
+    assertEqual(none.hebrewBundledDictionary, 'not-shipped');
+    assertEqual(none.hebrewNativeRuntime, 'pending');
     assertEqual(none.hebrewUiTestOverlay, 'fixture-typos-only');
     assertFalse(none.note.toLowerCase().includes('unavailable'));
-    assertContains(none.note, 'Parent must verify');
+    assertContains(none.note, 'not a universal macOS result');
     const both = describeSpellBackends(['en-US', 'he']);
     assertEqual(both.hebrew.listedInSession, true);
     assertEqual(both.hebrew.code, 'he');
-    assertEqual(both.hebrewGeneral, 'blocked');
+    assertEqual(both.hebrewNativeRuntime, 'pending');
+    const listed = formatBackendStatusText(both);
+    assertContains(listed, 'runtime verification pending');
+    assertContains(listed, 'Hebrew native listed');
+    assertFalse(listed.includes('General Hebrew: BLOCKED'));
     assertEqual(pickSupportedLanguage(['en-US'], ['he', 'he-IL']), null);
-    const enabled = languagesToEnable(['en-US'], 'he');
-    assertFalse(enabled.includes('he'));
+    const enabled = languagesToEnable(['en-US', 'he'], 'he');
+    assertTrue(enabled.includes('he'));
     assertTrue(enabled.includes('en-US'));
+    let enabledFlag = false;
+    const langs = enableNativeSpellSession(
+      {
+        availableSpellCheckerLanguages: ['en-US', 'he'],
+        setSpellCheckerEnabled: (v: boolean) => {
+          enabledFlag = v;
+        },
+        setSpellCheckerLanguages: () => {},
+      },
+      null
+    );
+    assertTrue(enabledFlag);
+    assertTrue(langs.includes('he'));
   });
 
   test('UI-test overlay flags only known typos, not general Hebrew', () => {
@@ -285,13 +314,15 @@ function run() {
     assertContains(src, 'https://www.electronjs.org/docs/latest/tutorial/spellchecker');
     assertContains(src, 'Library/Spelling');
     assertContains(src, 'Do not claim macOS Hebrew is unavailable');
+    assertContains(src, 'enableNativeSpellSession');
+    assertContains(src, 'runtime verification pending');
     const blocker = fs.readFileSync(
       path.join(APP_SRC_ROOT, 'spellcheck/HEBREW-SPELLCHECK.md'),
       'utf8'
     );
     assertContains(blocker, 'AGPL-3');
-    assertContains(blocker, 'remaining blocker');
     assertContains(blocker, 'Hunspell unused on macOS');
+    assertContains(blocker, 'runtime verification pending');
   });
 
   test('overlay never silently auto-corrects (no replace except user action)', () => {
@@ -302,11 +333,65 @@ function run() {
     assertContains(plugin, 'no auto-correct');
     assertContains(plugin, 'not a Hebrew dictionary');
     assertContains(plugin, 'findFixtureTypos');
-    assertContains(plugin, 'applyReplacement');
+    assertContains(plugin, 'applySpellReplacement');
+    assertContains(plugin, 'onClick');
+    assertContains(plugin, "e.key === 'Enter'");
+    assertContains(plugin, 'data-spell-action="replace"');
+    assertContains(plugin, 'refreshSpellDecorations');
     assertContains(plugin, 'הוסף למילון האישי');
     assertContains(plugin, 'הסר מהמילון האישי');
     assertContains(plugin, 'הצעות איות');
     assertFalse(/setTimeout\([^)]*replace/.test(plugin));
+  });
+
+  test('AX/keyboard replacement uses stored range after the caret leaves the typo', () => {
+    const editor = new Editor({ value: createDemoComposerValue() });
+    const range = spellRangeForWord(editor, DEMO_EN_MISS_WORD);
+    assertTrue(!!range, 'expected misspelledd in the fixture value');
+    rememberSpellRange(range);
+    editor.moveToStartOfDocument();
+    const ok = applySpellReplacement(editor, DEMO_EN_CORRECT_WORD, range);
+    assertTrue(ok);
+    const texts: string[] = [];
+    editor.value.document.getTexts().forEach((t) => texts.push(t.text));
+    const text = texts.join('\n');
+    assertTrue(text.includes(DEMO_EN_CORRECT_WORD));
+    assertFalse(text.includes(DEMO_EN_MISS_WORD));
+    assertTrue(text.includes(DEMO_HE_MISS_WORD));
+  });
+
+  test('dictionary remove immediately restores only the overlay for that word', () => {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'ms-spell-deco-'));
+    const dict = new PersonalDictionary(personalDictionaryPath(dir));
+    installPersonalDictionary(dict);
+    try {
+      const editor = new Editor({ value: createDemoComposerValue() });
+      refreshSpellDecorations(editor);
+      const wordsOf = () => {
+        const decorations = (editor.value as any).get('decorations');
+        const words: string[] = [];
+        if (decorations) {
+          decorations.forEach((d: any) => {
+            if (d.mark && d.mark.type === SPELL_ERROR_MARK) {
+              words.push(d.mark.data.get('word'));
+            }
+          });
+        }
+        return words;
+      };
+      assertTrue(wordsOf().includes(DEMO_EN_MISS_WORD));
+      assertTrue(wordsOf().includes(DEMO_HE_MISS_WORD));
+      dict.add(DEMO_EN_MISS_WORD);
+      refreshSpellDecorations(editor);
+      assertFalse(wordsOf().includes(DEMO_EN_MISS_WORD));
+      assertTrue(wordsOf().includes(DEMO_HE_MISS_WORD));
+      dict.remove(DEMO_EN_MISS_WORD);
+      refreshSpellDecorations(editor);
+      assertTrue(wordsOf().includes(DEMO_EN_MISS_WORD));
+      assertTrue(wordsOf().includes(DEMO_HE_MISS_WORD));
+    } finally {
+      installPersonalDictionary(null);
+    }
   });
 
   test('production spellchecker does not write OS dict in demo', () => {
@@ -314,6 +399,7 @@ function run() {
     assertContains(src, 'if (isDemoMode())');
     assertContains(src, 'ensurePersonalDictionary');
     assertContains(src, 'languagesToEnable');
+    assertContains(src, 'enableNativeSpellSession');
     const weh = fs.readFileSync(path.join(APP_SRC_ROOT, 'window-event-handler.ts'), 'utf8');
     assertContains(weh, 'isDemoMode()');
     assertContains(weh, 'ensurePersonalDictionary');

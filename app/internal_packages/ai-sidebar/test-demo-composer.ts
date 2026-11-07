@@ -89,9 +89,13 @@ function run() {
     assertContains(demoTsx, 'אין שמירת טיוטה');
   });
 
-  test('native Chromium spellcheck is off; overlay is extraPlugins only', () => {
+  test('native Chromium spellcheck stays on; overlay is extraPlugins only', () => {
     assertContains(demoTsx, 'nativeSpellCheck={true}');
-    assertContains(demoTsx, 'data-hebrew-general="blocked"');
+    assertContains(demoTsx, 'enableNativeSpellSession');
+    assertContains(demoTsx, 'data-hebrew-runtime="pending"');
+    assertContains(demoTsx, 'data-hebrew-bundled="not-shipped"');
+    assertContains(demoTsx, 'data-hebrew-native=');
+    assertFalse(demoTsx.includes('data-hebrew-general="blocked"'));
     assertContains(demoTsx, 'formatBackendStatusText');
     assertContains(demoTsx, 'extraPlugins={SpellPlugins}');
     assertContains(editorTsx, 'extraPlugins');
@@ -101,6 +105,10 @@ function run() {
     assertContains(demoTsx, 'ensurePersonalDictionary(AppEnv.getConfigDirPath())');
     assertContains(demoTsx, 'aria-label="מילון אישי"');
     assertContains(demoTsx, 'הסר מהמילון האישי');
+    assertContains(demoTsx, 'refreshSpellDecorations');
+    assertContains(demoTsx, 'onUpdatedSlateEditor');
+    assertContains(demoTsx, '_removeDictWord');
+    assertContains(demoTsx, '_refreshOverlay');
   });
 
   test('accessible names for tab, serialize, reload, backend, composer region', () => {
@@ -175,6 +183,17 @@ function run() {
     assertFalse(demoTsx.includes('LanguageTool'));
     assertFalse(demoTsx.includes('http.createServer'));
     assertFalse(demoTsx.includes('fetch('));
+  });
+
+  test('demo composer layout is scrollable with contrast buttons (sidebar only)', () => {
+    const less = fs.readFileSync(path.join(PKG_ROOT, 'styles/ai-sidebar.less'), 'utf8');
+    assertContains(less, '.demo-composer');
+    assertContains(less, 'overflow-y: auto');
+    assertContains(less, '-webkit-appearance: none');
+    assertContains(less, 'min-height: 240px');
+    const sidebar = fs.readFileSync(path.join(PKG_ROOT, 'lib/ai-sidebar.tsx'), 'utf8');
+    assertContains(sidebar, 'minWidth: 360');
+    assertFalse(sidebar.includes('minWidth: 280'));
   });
 
   test('early raw-argv isolation source is unchanged', () => {

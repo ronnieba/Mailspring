@@ -12,6 +12,7 @@ import {
   deserializeBlockData,
   focusedParagraphDirection,
   htmlDirForBlock,
+  htmlLangForBlock,
   setCurrentParagraphDirection,
 } from './paragraph-direction';
 
@@ -103,7 +104,11 @@ export const BLOCK_CONFIG: {
     tagNames: ['div', 'br', 'p'],
     render: ({ node, attributes, children, targetIsHTML }) => {
       const dir = htmlDirForBlock(node);
-      const dirAttrs = dir ? { dir } : undefined;
+      const lang = htmlLangForBlock(node);
+      const dirAttrs = {
+        ...(dir ? { dir } : {}),
+        ...(lang ? { lang } : {}),
+      };
 
       const data: any = node.data;
       const sourceClassName = data

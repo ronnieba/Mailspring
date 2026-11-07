@@ -85,7 +85,7 @@ interface ComposerEditorProps {
   onDrop?: (e: React.DragEvent) => void;
   onFileReceived?: (path: string) => void;
   onUpdatedSlateEditor?: (editor: Editor | null) => void;
-  /** When set, overrides config-driven native Chromium spellCheck. Demo uses false + overlay. */
+  /** When set, overrides config-driven native Chromium spellCheck. Demo keeps this true. */
   nativeSpellCheck?: boolean;
   /** Extra Slate plugins (demo spell overlay). Production composer omits this. */
   extraPlugins?: typeof plugins;
