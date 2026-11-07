@@ -6,6 +6,9 @@
   display: flex;
   flex-direction: column;
   height: 100%;
+  min-width: 0;
+  min-height: 0;
+  overflow: hidden;
   background: var(--background-primary);
   color: var(--text-color);
   font-family: system-ui, -apple-system, sans-serif;
@@ -168,6 +171,7 @@
   // Message body
   .ai-sidebar-body {
     flex: 1;
+    min-height: 0;
     overflow-y: auto;
     padding: 12px 16px;
   }
@@ -517,11 +521,11 @@
   .demo-composer {
     display: flex;
     flex-direction: column;
-    flex: 1;
+    flex: 1 1 auto;
     min-height: 0;
-    overflow-x: hidden;
-    overflow-y: auto;
-    padding: 8px 10px 12px;
+    min-width: 0;
+    overflow: hidden;
+    padding: 8px 10px 8px;
     gap: 8px;
     direction: ltr;
     text-align: left;
@@ -573,10 +577,20 @@
       }
     }
 
-    .demo-composer-editor {
+    .demo-composer-workspace {
       flex: 1 1 auto;
-      min-height: 240px;
+      min-height: 0;
+      min-width: 0;
+      overflow-x: hidden;
+      overflow-y: auto;
       border: 1px solid var(--border-color-divider);
+      background: var(--background-primary);
+    }
+
+    .demo-composer-editor {
+      flex: 0 0 auto;
+      min-height: 6em;
+      width: 100%;
       padding: 0;
       background: var(--background-primary);
       overflow: visible;
@@ -584,7 +598,7 @@
       &.RichEditor-root,
       .RichEditor-root {
         padding: 0 8px 12px;
-        min-height: 240px;
+        min-height: 6em;
       }
 
       .RichEditor-toolbar {
@@ -641,9 +655,14 @@
 
     .demo-composer-dict {
       flex: 0 0 auto;
+      position: relative;
+      z-index: 2;
       margin-top: 0;
+      padding: 8px 4px 4px;
       font-size: 12px;
       color: var(--text-color);
+      background: var(--background-primary);
+      border-top: 1px solid var(--border-color-divider);
 
       .demo-composer-dict-remove {
         display: inline-block;
@@ -688,7 +707,11 @@
 
   // Footer
   .ai-sidebar-footer {
+    flex: 0 0 auto;
+    position: relative;
+    z-index: 2;
     padding: 8px 16px;
+    background: var(--background-primary);
     border-top: 1px solid var(--border-color-divider);
     text-align: center;
     

@@ -497,7 +497,9 @@ export default function AISidebar() {
 // Export display name for registration
 AISidebar.displayName = 'AISidebar';
 
-// Container styles for sidebar panel
+// Container styles for this panel only. The MessageListSidebar column also
+// hosts contact cards (maxWidth 300), so the measured column is often ~300pt
+// regardless of this minWidth. Demo composer layout must work at that width.
 AISidebar.containerStyles = {
   order: 99,
   minWidth: 360,

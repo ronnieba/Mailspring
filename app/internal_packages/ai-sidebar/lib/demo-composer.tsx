@@ -187,16 +187,18 @@ export default class DemoComposer extends React.Component<
             טען טיוטת DEMO מחדש
           </button>
         </div>
-        <ComposerEditor
-          value={value}
-          className="demo-composer-editor"
-          nativeSpellCheck={true}
-          extraPlugins={SpellPlugins}
-          propsForPlugins={{ draft: null, session: null, demoComposer: true }}
-          onChange={this._onChange}
-          onFileReceived={() => {}}
-          onUpdatedSlateEditor={this._onEditor}
-        />
+        <div className="demo-composer-workspace">
+          <ComposerEditor
+            value={value}
+            className="demo-composer-editor"
+            nativeSpellCheck={true}
+            extraPlugins={SpellPlugins}
+            propsForPlugins={{ draft: null, session: null, demoComposer: true }}
+            onChange={this._onChange}
+            onFileReceived={() => {}}
+            onUpdatedSlateEditor={this._onEditor}
+          />
+        </div>
         <div className="demo-composer-dict" role="region" aria-label="מילון אישי">
           <div className="demo-composer-dict-label">מילון אישי (פרופיל DEMO בלבד)</div>
           {this.state.dictWords.length === 0 ? (

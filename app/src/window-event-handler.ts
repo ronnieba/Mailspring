@@ -9,6 +9,7 @@ import {
   ensurePersonalDictionary,
   getActivePersonalDictionary,
 } from './spellcheck/personal-dictionary';
+import { nativeContextSpellItems } from './spellcheck/native-availability';
 
 let ComponentRegistry = null;
 
@@ -180,13 +181,18 @@ export default class WindowEventHandler {
         return;
       }
 
+      event.preventDefault();
+
       const { Menu, MenuItem } = require('@electron/remote');
       const menu = new Menu();
+      const spell = nativeContextSpellItems(params);
 
-      // Add spelling suggestions if there's a misspelled word
-      if (params.misspelledWord) {
-        if (params.dictionarySuggestions && params.dictionarySuggestions.length > 0) {
-          for (const suggestion of params.dictionarySuggestions) {
+      // Suggestions come only from Electron/NSSpellChecker. Empty guesses is a
+      // real platform result (electron#24455), not a missing menu. Never invent
+      // or auto-apply replacements.
+      if (spell.misspelledWord) {
+        if (spell.suggestions.length > 0) {
+          for (const suggestion of spell.suggestions) {
             menu.append(
               new MenuItem({
                 label: suggestion,
@@ -207,10 +213,10 @@ export default class WindowEventHandler {
                 const dict =
                   getActivePersonalDictionary() ||
                   ensurePersonalDictionary(AppEnv.getConfigDirPath());
-                dict.add(params.misspelledWord);
+                dict.add(spell.misspelledWord);
                 return;
               }
-              webContents.session.addWordToSpellCheckerDictionary(params.misspelledWord);
+              webContents.session.addWordToSpellCheckerDictionary(spell.misspelledWord);
             },
           })
         );

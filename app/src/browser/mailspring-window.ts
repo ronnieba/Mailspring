@@ -127,6 +127,7 @@ export default class MailspringWindow extends EventEmitter {
         nodeIntegration: true,
         contextIsolation: false,
         webviewTag: true,
+        spellcheck: true,
         // Withholding the capability, rather than only the ways to ask for it, is what makes
         // the console unreachable in a packaged build: these windows hand the renderer a
         // @electron/remote handle to their own webContents, so any code running in them could

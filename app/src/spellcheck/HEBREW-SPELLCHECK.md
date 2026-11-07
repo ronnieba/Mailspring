@@ -50,17 +50,23 @@ Use the isolated demo composer. Do **not** infer results from the two overlay fi
 
 ### Non-fixture examples (type these; overlay must stay silent)
 
-After **טען טיוטת DEMO מחדש** so fixtures are intact, append a new paragraph or edit paragraph 5:
+Reload the demo draft, replace the body with four paragraphs (or append). Overlay must stay silent on all of these.
 
-| Script | Correct (should not be overlay-flagged) | Intentional typo (native may underline) |
-|--------|------------------------------------------|-----------------------------------------|
-| English | `watermelon` | `recieve` or `mispelled` (one s — **not** `misspelledd`) |
-| Hebrew | `אבטיח` | `אבטיחחח` or `חשבנוית` |
+| Role | English | Hebrew |
+|------|---------|--------|
+| Correct (no underline expected) | `watermelon` · `invoice` | `אבטיח` · `שלום` |
+| Typo that English checkers often guess | `teh` → the · `recieve` → receive · `seperate` → separate · `mispell` → misspell | — |
+| Typo that may underline with **no** guesses | `recieve` (if macOS Spelling is Automatic) · `qqqqxxxx` | `אבטיחחח` · `חשבנוית` · `שלומ` |
 
-1. Overlay (`data-spell-error`) must **not** wrap `אבטיח`, `watermelon`, `recieve`, `אבטיחחח`.
-2. Place the caret in the intentional typo, wait ~1s (`spellcheck` re-enables after typing).
-3. **Real right-click** (two-finger or Control-click) on that word.
-4. Record whether the menu contains native suggestions and whether choosing one replaces only that word via `webContents.replaceMisspelling`.
-5. Learn Spelling in DEMO must write `Mailspring-demo/spell-personal-dictionary.json` only — never `~/Library/Spelling`.
+1. Overlay (`data-spell-error`) must **not** wrap these words.
+2. Wait ~1s after typing (`spellcheck` re-enables).
+3. **Real right-click / Control-click** (not AXShowMenu).
+4. Menu wiring: misspelled word → either suggestion items (`replaceMisspelling`) **or** disabled `לא נמצאו ניחושים` / `No Guesses Found`, then Learn Spelling / Cut / Copy. Empty guesses with a red underline is a **platform result** ([electron#24455](https://github.com/electron/electron/issues/24455), macOS Spelling = Automatic by Language), not a missing menu. Do not treat that as full spell completion, and do not invent replacements.
+5. If a suggestion **is** listed, choose it; only that word must change. Never silent auto-correct.
+6. Learn Spelling in DEMO writes `Mailspring-demo/spell-personal-dictionary.json` only — never `~/Library/Spelling`. Do not click it unless that is the case under test.
 
-If `he` is listed and native Hebrew suggestions appear for `אבטיחחח`, report **native Hebrew listed and observed**. If `he` is listed but the menu has no spelling items, report **native Hebrew listed, runtime verification pending** (do not relabel unavailable). General / bundled Hebrew remains **not complete**.
+733ff115 on one Mac: `recieve` and `אבטיחחח` were red-underlined; `watermelon` / `אבטיח` were not; both typo menus showed **No Guesses Found**. That is **detection observed, suggestions not proven**.
+
+Optional OS check (not a product patch): System Settings → Keyboard → Text Input → Spelling. If it is Automatic by Language, try U.S. English, relaunch demo, and retry `teh` / `recieve`. Report either **suggestions observed** or **native listed, guesses empty**.
+
+If `he` is listed and Hebrew suggestions appear, report listed+guesses. If listed, underlined, empty guesses: **native Hebrew listed, suggestions not proven**. General/bundled Hebrew remains not complete.

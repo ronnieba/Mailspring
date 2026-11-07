@@ -20,7 +20,43 @@
 export interface SpellCheckerSession {
   setSpellCheckerEnabled?: (enable: boolean) => void;
   setSpellCheckerLanguages?: (languages: string[]) => void;
+  setSpellCheckerMaxReplacements?: (max: number) => void;
   availableSpellCheckerLanguages?: string[];
+}
+
+export interface NativeContextSpellParams {
+  misspelledWord?: string;
+  dictionarySuggestions?: string[] | null;
+}
+
+export interface NativeContextSpellItems {
+  misspelledWord: string | null;
+  suggestions: string[];
+  emptyGuesses: boolean;
+}
+
+/**
+ * Map Electron context-menu spell fields. Empty suggestions with a misspelled
+ * word is a valid NSSpellChecker/Electron result (often macOS “Automatic by
+ * Language”) — show “No Guesses Found”, do not invent replacements.
+ * https://github.com/electron/electron/issues/24455
+ */
+export function nativeContextSpellItems(
+  params: NativeContextSpellParams | null | undefined
+): NativeContextSpellItems {
+  const misspelledWord =
+    params && typeof params.misspelledWord === 'string' && params.misspelledWord.trim()
+      ? params.misspelledWord
+      : null;
+  const raw = (params && params.dictionarySuggestions) || [];
+  const suggestions = misspelledWord
+    ? raw.filter((s) => typeof s === 'string' && s.length > 0 && s !== misspelledWord)
+    : [];
+  return {
+    misspelledWord,
+    suggestions,
+    emptyGuesses: !!misspelledWord && suggestions.length === 0,
+  };
 }
 
 export interface SpellBackendStatus {
@@ -118,6 +154,13 @@ export function enableNativeSpellSession(
     }
   } catch {
     // Some sessions expose the method but reject in tests / early startup.
+  }
+  try {
+    if (typeof session.setSpellCheckerMaxReplacements === 'function') {
+      session.setSpellCheckerMaxReplacements(5);
+    }
+  } catch {
+    // Optional Electron API; detection still works if this is missing.
   }
   const available = session.availableSpellCheckerLanguages || [];
   const list = languagesToEnable(available, preferred);

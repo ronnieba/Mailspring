@@ -188,12 +188,17 @@ function run() {
   test('demo composer layout is scrollable with contrast buttons (sidebar only)', () => {
     const less = fs.readFileSync(path.join(PKG_ROOT, 'styles/ai-sidebar.less'), 'utf8');
     assertContains(less, '.demo-composer');
+    assertContains(less, '.demo-composer-workspace');
     assertContains(less, 'overflow-y: auto');
+    assertContains(less, 'overflow: hidden');
     assertContains(less, '-webkit-appearance: none');
-    assertContains(less, 'min-height: 240px');
+    assertFalse(less.includes('min-height: 240px'));
+    assertContains(demoTsx, 'demo-composer-workspace');
+    const editorIdx = demoTsx.indexOf('<ComposerEditor');
+    const dictIdx = demoTsx.indexOf('aria-label="מילון אישי"');
+    assertTrue(editorIdx >= 0 && dictIdx > editorIdx, 'dictionary must follow the editor in DOM');
     const sidebar = fs.readFileSync(path.join(PKG_ROOT, 'lib/ai-sidebar.tsx'), 'utf8');
-    assertContains(sidebar, 'minWidth: 360');
-    assertFalse(sidebar.includes('minWidth: 280'));
+    assertContains(sidebar, 'contact cards (maxWidth 300)');
   });
 
   test('early raw-argv isolation source is unchanged', () => {

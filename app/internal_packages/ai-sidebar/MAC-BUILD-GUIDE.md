@@ -168,9 +168,10 @@ Keyboard: click the typo, then Tab/Shift+Tab to the replace button, then Space o
 3. **Overlay accept:** caret in `misspelledd` / `איותת` → `הצעות איות` → replace. AX Press and keyboard must succeed, not only mouse. Type `אבטיח`: overlay must **not** underline it.
 4. **Dictionary add:** `הוסף למילון האישי`. File: `~/Library/Application Support/Mailspring-demo/spell-personal-dictionary.json` only.
 5. **Dictionary remove:** `הסר מהמילון האישי: misspelledd`. Overlay for **that word** must reappear immediately (Hebrew mark stays). No reload/edit workaround.
-6. **Native non-fixture (required this SHA):** append `watermelon` / `recieve` and `אבטיח` / `אבטיחחח` (or `חשבנוית`). Overlay silent. Wait ~1s. **Real right-click** (not AXShowMenu) on `recieve` and `אבטיחחח`. Record native suggestions. Learn Spelling in DEMO still writes isolated JSON.
+6. **Layout at the real sidebar width (~300pt, not declared minWidth):** after add/remove, with the overlay popover open, paragraphs 4/5 must remain fully readable. `מילון אישי` / `אין מילים שמורות` / the footer must **not** paint over editor text. Scroll the editor workspace if needed; dictionary/status/actions stay in flow (opaque, not covering). Measured column width may stay ~299pt because the MessageListSidebar also hosts contact cards (`maxWidth: 300`).
+7. **Native non-fixture suggestions:** reload, type `watermelon` / `teh` / `recieve` / `אבטיח` / `אבטיחחח`. Overlay silent. Wait ~1s. **Real right-click** on `teh` (often guessed as `the`) and on `recieve` / `אבטיחחח`. If the menu lists a guess, choose it — only that word changes (`replaceMisspelling`). If it shows `לא נמצאו ניחושים` with a red underline, that is empty `dictionarySuggestions` (Electron/macOS Automatic-by-language), **not** a missing menu. Detection ≠ suggestions ≠ overlay fixtures. Do not click Learn Spelling unless testing the isolated JSON.
 
-If `he` is listed and native Hebrew suggestions appear, report listed+observed. If listed but no spelling menu items, report **native Hebrew listed, runtime verification pending**. Do not relabel unavailable. Bundled Hspell remains not shipped.
+If `he` is listed and Hebrew **guesses** appear, report listed+guesses. If listed, underlined, empty guesses: **native Hebrew listed, suggestions not proven**. Bundled Hspell remains not shipped.
 
 There is no Send button on this surface. Production composer send/draft saving is unchanged. Overlay spell plugins are **not** in the default conversion plugin list.
 
@@ -204,12 +205,12 @@ Parent runs these on Mac from repo root (and once from another cwd with `--prefi
 | `test-demo-cli.ts` | 12 |
 | **prior portable subtotal** | **160** |
 | `test-composer-direction.ts` | 14 |
-| `test-composer-spell.ts` | 19 |
+| `test-composer-spell.ts` | 20 |
 | `test-demo-composer.ts` | 13 |
-| **new portable subtotal** | **46** |
-| **portable total** | **206** |
+| **new portable subtotal** | **47** |
+| **portable total** | **207** |
 
-Typecheck + lint locally. Do not run these in cloud CI. Auto direction / other-focus / AI regression smoke were **not** rerun after the 767b82e dictionary/AX failures — do not reuse those old UI passes.
+Typecheck + lint locally. Do not run these in cloud CI. Cancellation was **not** rerun on 733ff115 — do not reuse old delayed-cancel UI.
 
 `--demo` does **not** open, migrate, rebuild, or relaunch over `edgehill.db`. A leftover empty stub in `Mailspring-demo/` from an older checkout is ignored; do not delete it. Production `application:reset-database` (Okay → rebuild → relaunch) is unchanged.
 

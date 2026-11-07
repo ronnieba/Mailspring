@@ -35,6 +35,7 @@ import {
   enableNativeSpellSession,
   formatBackendStatusText,
   languagesToEnable,
+  nativeContextSpellItems,
   pickSupportedLanguage,
 } from '../../src/spellcheck/native-availability';
 import { SPELL_WORDLIST_LICENSE, SPELL_WORDLIST_PROVENANCE } from '../../src/spellcheck/word-lists';
@@ -273,6 +274,7 @@ function run() {
     assertTrue(enabled.includes('he'));
     assertTrue(enabled.includes('en-US'));
     let enabledFlag = false;
+    let maxRep = 0;
     const langs = enableNativeSpellSession(
       {
         availableSpellCheckerLanguages: ['en-US', 'he'],
@@ -280,11 +282,42 @@ function run() {
           enabledFlag = v;
         },
         setSpellCheckerLanguages: () => {},
+        setSpellCheckerMaxReplacements: (n: number) => {
+          maxRep = n;
+        },
       },
       null
     );
     assertTrue(enabledFlag);
+    assertEqual(maxRep, 5);
     assertTrue(langs.includes('he'));
+  });
+
+  test('native context menu distinguishes empty guesses from missing misspelledWord', () => {
+    const none = nativeContextSpellItems({ misspelledWord: '', dictionarySuggestions: ['x'] });
+    assertEqual(none.misspelledWord, null);
+    assertEqual(none.suggestions.length, 0);
+    assertEqual(none.emptyGuesses, false);
+    const empty = nativeContextSpellItems({
+      misspelledWord: 'recieve',
+      dictionarySuggestions: [],
+    });
+    assertEqual(empty.misspelledWord, 'recieve');
+    assertEqual(empty.emptyGuesses, true);
+    const guessed = nativeContextSpellItems({
+      misspelledWord: 'teh',
+      dictionarySuggestions: ['the', 'teh'],
+    });
+    assertEqual(guessed.emptyGuesses, false);
+    assertTrue(guessed.suggestions.includes('the'));
+    assertFalse(guessed.suggestions.includes('teh'));
+    const weh = fs.readFileSync(path.join(APP_SRC_ROOT, 'window-event-handler.ts'), 'utf8');
+    assertContains(weh, 'nativeContextSpellItems');
+    assertContains(weh, 'event.preventDefault()');
+    assertContains(weh, 'replaceMisspelling');
+    assertContains(weh, 'No Guesses Found');
+    const win = fs.readFileSync(path.join(APP_SRC_ROOT, 'browser/mailspring-window.ts'), 'utf8');
+    assertContains(win, 'spellcheck: true');
   });
 
   test('UI-test overlay flags only known typos, not general Hebrew', () => {
@@ -316,6 +349,8 @@ function run() {
     assertContains(src, 'Do not claim macOS Hebrew is unavailable');
     assertContains(src, 'enableNativeSpellSession');
     assertContains(src, 'runtime verification pending');
+    assertContains(src, 'nativeContextSpellItems');
+    assertContains(src, 'electron/issues/24455');
     const blocker = fs.readFileSync(
       path.join(APP_SRC_ROOT, 'spellcheck/HEBREW-SPELLCHECK.md'),
       'utf8'
