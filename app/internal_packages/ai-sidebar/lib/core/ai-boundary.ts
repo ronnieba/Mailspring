@@ -1,10 +1,13 @@
 /**
- * Provider-neutral AI boundary. Live generation is disabled: consumer OAuth
- * wrappers and unverified private-mail backends are out of scope. The host
- * validates every payload and calculates coverage; a worker never owns those.
+ * Provider-neutral AI boundary. General live providers stay disabled
+ * (`LIVE_AI_PROVIDERS_ENABLED`). The official paid Gemini Developer API is a
+ * DEMO-synthetic exception via `allowLiveSynthetic` — not consumer Gemini,
+ * not a production mailbox. The host validates every payload and calculates
+ * coverage; a worker never owns those.
  *
  * Local cancel/timeout/stale-generation are host decisions. They are not a
  * completed remote generation and must not be billed or shown as an answer.
+ * Aborting fetch does not guarantee the provider stopped generating.
  */
 import { Citation, SearchResult } from './types';
 import { buildCoverageDisclosure } from './coverage-disclosure';
@@ -14,11 +17,15 @@ export const LIVE_AI_PROVIDERS_ENABLED = false;
 export const LIVE_AI_DISABLED_REASON =
   'Live AI providers are disabled. No consumer OAuth wrappers, API billing, or remote generation. Marked mock only.';
 
+export const NON_SYNTHETIC_LIVE_REASON =
+  'Live Gemini is DEMO-synthetic only. Real mailbox messages are not admitted.';
+
 export type AIBoundaryReason =
   | 'invalid-schema'
   | 'unknown-source-id'
   | 'not-mock'
   | 'live-disabled'
+  | 'non-synthetic-source'
   | 'stale-generation'
   | 'cancelled'
   | 'timeout';
@@ -30,19 +37,26 @@ export interface AIValidateContext {
   startedGeneration: number;
   currentGeneration: number;
   aborted: boolean;
+  /**
+   * DEMO-only exception for the official paid Gemini Developer API host.
+   * Still requires synthetic fixtures. Does not enable consumer OAuth or
+   * production mailbox generation.
+   */
+  allowLiveSynthetic?: boolean;
+  sourcesAreSynthetic?: boolean;
 }
 
 export interface ValidatedAIResult {
   response: string;
   citations: Citation[];
   tokensUsed: number;
-  isMock: true;
+  isMock: boolean;
   mockLabel: string;
 }
 
 export interface AIBoundaryOk {
   ok: true;
-  origin: 'mock';
+  origin: 'mock' | 'live';
   result: ValidatedAIResult;
 }
 
@@ -153,15 +167,19 @@ export function validateProviderPayload(raw: unknown, ctx: AIValidateContext): A
     return fail('local', 'invalid-schema', 'provider payload is not an object');
   }
   const p = raw;
-  if (!LIVE_AI_PROVIDERS_ENABLED && p.isMock === false) {
+  const liveSynthetic = p.isMock === false && ctx.allowLiveSynthetic === true;
+  if (p.isMock === false && ctx.allowLiveSynthetic !== true) {
     return fail('local', 'live-disabled', LIVE_AI_DISABLED_REASON);
   }
-  if (p.isMock !== true) {
+  if (!liveSynthetic && p.isMock !== true) {
     return fail(
       'local',
       p.isMock === false ? 'not-mock' : 'invalid-schema',
       'Payload must be a marked mock (isMock: true). Live providers are disabled.'
     );
+  }
+  if (liveSynthetic && ctx.sourcesAreSynthetic !== true) {
+    return fail('local', 'non-synthetic-source', NON_SYNTHETIC_LIVE_REASON);
   }
   if (typeof p.response !== 'string') {
     return fail('local', 'invalid-schema', 'payload.response must be a string');
@@ -180,17 +198,19 @@ export function validateProviderPayload(raw: unknown, ctx: AIValidateContext): A
   const mockLabel =
     typeof p.mockLabel === 'string' && p.mockLabel.trim()
       ? p.mockLabel
-      : 'Mock AI (No External Connection)';
+      : liveSynthetic
+        ? 'Gemini Developer API (paid project required)'
+        : 'Mock AI (No External Connection)';
   const tokensUsed =
     typeof p.tokensUsed === 'number' && Number.isFinite(p.tokensUsed) ? p.tokensUsed : 0;
   return {
     ok: true,
-    origin: 'mock',
+    origin: liveSynthetic ? 'live' : 'mock',
     result: {
       response: p.response,
       citations,
       tokensUsed,
-      isMock: true,
+      isMock: liveSynthetic ? false : true,
       mockLabel,
     },
   };

@@ -8,6 +8,7 @@ import { FluxContainer, Spinner } from 'mailspring-component-kit';
 import AISidebarStore from './ai-sidebar-store';
 import { ScopeMode, RetrievalMode, ConversationMessage, Citation } from './core/types';
 import { DemoMessagePreview, isDemoMode } from './synthetic-demo';
+import { GEMINI_DISPLAY_NAME, GeminiDemoStatus } from '../../../src/browser/gemini-demo-protocol';
 import DemoComposer from './demo-composer';
 import classNames from 'classnames';
 
@@ -24,6 +25,7 @@ interface AISidebarState {
   isMockProvider: boolean;
   demoPreview: DemoMessagePreview | null;
   demoTab: 'ai' | 'composer';
+  geminiStatus: GeminiDemoStatus | null;
 }
 
 class AISidebarInner extends React.Component<Record<string, never>, AISidebarState> {
@@ -46,6 +48,7 @@ class AISidebarInner extends React.Component<Record<string, never>, AISidebarSta
     isMockProvider: AISidebarStore.getProvider().isMock,
     demoPreview: null,
     demoTab: 'ai',
+    geminiStatus: AISidebarStore.getState().geminiStatus,
   };
 
   componentDidMount() {
@@ -60,9 +63,10 @@ class AISidebarInner extends React.Component<Record<string, never>, AISidebarSta
         isProcessing: storeState.isProcessing,
         progress: storeState.progress,
         error: storeState.error,
-        providerName: provider.name,
-        isMockProvider: provider.isMock,
+        providerName: storeState.geminiStatus.configured ? GEMINI_DISPLAY_NAME : provider.name,
+        isMockProvider: storeState.geminiStatus.configured ? false : provider.isMock,
         demoPreview: storeState.demoPreview,
+        geminiStatus: storeState.geminiStatus,
       });
     });
 
@@ -139,12 +143,23 @@ class AISidebarInner extends React.Component<Record<string, never>, AISidebarSta
 
   _renderMockWarning() {
     const inDemoMode = isDemoMode();
+    const geminiConfigured = !!this.state.geminiStatus?.configured;
+    const geminiStatus = geminiConfigured ? 'configured' : 'unconfigured';
 
     return (
-      <div className="ai-sidebar-mock-warning">
+      <div className="ai-sidebar-mock-warning" data-gemini-status={geminiStatus}>
         <span className="icon">⚠️</span>
         <span className="text">
-          {inDemoMode ? (
+          {inDemoMode && geminiConfigured ? (
+            <>
+              🧪 מצב DEMO — Gemini Developer API (מסלול משולם)
+              <br />
+              <small>
+                Official paid Developer API · not consumer Gemini · synthetic only · billing not
+                proven from key
+              </small>
+            </>
+          ) : inDemoMode ? (
             <>
               🧪 מצב DEMO - נתונים סינתטיים
               <br />
@@ -310,6 +325,11 @@ class AISidebarInner extends React.Component<Record<string, never>, AISidebarSta
         )}
 
         {msg.isMock && <div className="mock-indicator">🔧 Mock Response</div>}
+        {msg.role === 'assistant' && msg.isMock === false && (
+          <div className="live-indicator">
+            Gemini Developer API · DEMO synthetic · paid project required
+          </div>
+        )}
       </div>
     );
   }

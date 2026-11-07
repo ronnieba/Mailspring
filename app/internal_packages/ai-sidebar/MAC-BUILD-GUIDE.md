@@ -35,6 +35,7 @@ npx ts-node --project app/tsconfig.json app/internal_packages/ai-sidebar/test-ma
 npx ts-node --project app/tsconfig.json app/internal_packages/ai-sidebar/test-demo-sidebar.ts
 npx ts-node --project app/tsconfig.json app/internal_packages/ai-sidebar/test-demo-query.ts
 npx ts-node --project app/tsconfig.json app/internal_packages/ai-sidebar/test-ai-boundary.ts
+npx ts-node --project app/tsconfig.json app/internal_packages/ai-sidebar/test-gemini-demo.ts
 npx ts-node --project app/tsconfig.json app/internal_packages/ai-sidebar/test-demo-cli.ts
 npx ts-node --project app/tsconfig.json app/internal_packages/ai-sidebar/test-composer-direction.ts
 npx ts-node --project app/tsconfig.json app/internal_packages/ai-sidebar/test-composer-spell.ts
@@ -56,6 +57,8 @@ npx ts-node --project app/tsconfig.json app/internal_packages/ai-sidebar/test-ns
 #   "$REPO/app/internal_packages/ai-sidebar/test-demo-query.ts"
 # npx --prefix "$REPO" ts-node --project "$REPO/app/tsconfig.json" \
 #   "$REPO/app/internal_packages/ai-sidebar/test-ai-boundary.ts"
+# npx --prefix "$REPO" ts-node --project "$REPO/app/tsconfig.json" \
+#   "$REPO/app/internal_packages/ai-sidebar/test-gemini-demo.ts"
 # npx --prefix "$REPO" ts-node --project "$REPO/app/tsconfig.json" \
 #   "$REPO/app/internal_packages/ai-sidebar/test-demo-cli.ts"
 # npx --prefix "$REPO" ts-node --project "$REPO/app/tsconfig.json" \
@@ -220,22 +223,25 @@ Parent runs these on Mac from repo root (and once from another cwd with `--prefi
 | `test-demo-sidebar.ts` | 21 |
 | `test-demo-query.ts` | 18 |
 | `test-ai-boundary.ts` | **17** |
+| `test-gemini-demo.ts` | **18** (mocked transport; no live Gemini) |
 | `test-demo-cli.ts` | 12 |
-| **prior portable subtotal** | **177** |
+| **prior portable subtotal** | **195** |
 | `test-composer-direction.ts` | 14 |
 | `test-composer-spell.ts` | 21 |
 | `test-demo-composer.ts` | 13 |
 | **composer subtotal (no sidecar)** | **48** |
 | `test-nspell-engine.ts` | **13** (requires sidecar install) |
-| **portable total after sidecar** | **238** |
+| **portable total after sidecar** | **256** |
 
-Without sidecar install: prior **225** + alt-cwd **48** still apply. After `install.sh`: **238** portable (225+13). Composer+engine alt-cwd remains **61** (48+13) unless `test-ai-boundary.ts` is included (**+17**). Do not run these in cloud CI. Preserve 34a90265 layout/AI/isolation. Do not rewrite `app/package-lock.json`.
+Without sidecar install: prior **243** + alt-cwd **48** still apply. After `install.sh`: **256** portable (243+13). Composer+engine alt-cwd remains **61** (48+13) unless `test-ai-boundary.ts` / `test-gemini-demo.ts` are included (**+17 / +18**). Do not run these in cloud CI. Preserve 34a90265 layout/AI/isolation. Do not rewrite `app/package-lock.json`.
 
 **This SHA targeted Mac commands (do not claim f89b4e4b 221+61 / 81 UI):**
 
 ```bash
 npx ts-node --project app/tsconfig.json app/internal_packages/ai-sidebar/test-ai-boundary.ts
 # expected 17 passed, natural exit
+npx ts-node --project app/tsconfig.json app/internal_packages/ai-sidebar/test-gemini-demo.ts
+# expected 18 passed (mocked transport only; no live Gemini, no key required)
 npx ts-node --project app/tsconfig.json app/internal_packages/ai-sidebar/test-demo-query.ts
 # expected 18 passed (explicit exhaustive 2/5/6)
 npx ts-node --project app/tsconfig.json app/internal_packages/ai-sidebar/test-demo-sidebar.ts
@@ -280,3 +286,43 @@ Quit with Cmd+Q.
 Apple Silicon, Node 24 at `/opt/homebrew/bin` is fine. Leave `/Applications/Mailspring.app` closed.
 
 `npm start` (dev, no `--demo`) still shows onboarding if there is no account. That is intentional.
+
+## Official paid Gemini Developer API (DEMO synthetic only)
+
+This is the **Gemini Developer API** billed through AI Studio / Cloud Billing. It is **not a consumer Gemini** app subscription (Google AI Pro / Gemini in a browser). An API key or the model id **cannot prove billing** is linked. Do not treat a key as a free-tier-only project prerequisite — live execution requires an explicitly configured **paid** project/key plus `MAILSPRING_DEMO_GEMINI_PAID=1`.
+
+Pinned model: `gemini-3.5-flash-lite` (no auto-substitution). Official Interactions REST:
+
+`POST https://generativelanguage.googleapis.com/v1beta/interactions`
+
+Headers: `x-goog-api-key`, `Content-Type: application/json`, `Api-Revision: 2026-05-20`. Read `output_text`. Sources: https://ai.google.dev/gemini-api/docs/get-started · https://ai.google.dev/gemini-api/docs/pricing · https://ai.google.dev/gemini-api/docs/billing · https://ai.google.dev/gemini-api/terms#data-use-paid
+
+Listed paid price for this model as of 2026-11-08: **$0.30 input / $2.50 output per 1M tokens** (output includes thinking). Parent is researching rates, prepaid amount, and spend controls. App token estimates are **not** a cost ceiling.
+
+### Data use (do not over-claim)
+
+Paid-tier docs currently say prompts/responses are **not used to improve Google products**, and Google acts as a data processor. Google still logs prompts/responses **for a limited period** to detect policy violations and for legal disclosures (no day count published). That is **not zero** retention. Whether an abuse review can involve a human reading logs is **not stated**. Do not promise zero retention or no human access.
+
+### Billing gates (parent, not this SHA)
+
+- Prepaid minimum **$5**; unused credits expire after 12 months.
+- Keep **auto-reload** **OFF** unless the parent later enables it.
+- Spend caps are **not** a true real-time hard stop: billing can lag about **10 minute**s and overshoot a cap or a $0 prepay balance. Batch/agent jobs can overshoot further.
+- Linking billing and issuing live generations is **not authorized** until the parent settles price/budget/key.
+
+### Local env (main process only — never argv, config.json, Keychain, or UI)
+
+Live path stays **unconfigured** without both variables. Synthetic DEMO fixtures only; real mailbox access is not admitted on this milestone.
+
+```bash
+# Do not paste a real key into git, screenshots, or argv.
+# MAILSPRING_DEMO_GEMINI_PAID=1 is an operator ack, not proof of Cloud Billing.
+MAILSPRING_DEMO=1 \
+MAILSPRING_DEMO_GEMINI_API_KEY='…paid project key…' \
+MAILSPRING_DEMO_GEMINI_PAID=1 \
+electron ./app --enable-logging --dev --demo
+```
+
+Without those env vars the sidebar stays mock. A Gemini error must not fall back to mock fixtures. Local Cancel/timeout abort the process fetch; they do **not** guarantee the provider stopped a billed generation.
+
+Remaining gates before live execution: paid project + key in env, Cloud Billing linked (not inferable from the key), prepaid amount, auto-reload off, budget/cap accepted with overshoot risk, official data-use terms accepted, native mocked-transport tests, then a separate approval to admit real mail.

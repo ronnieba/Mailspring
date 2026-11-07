@@ -37,6 +37,7 @@ import { MailsyncProcess } from '../mailsync-process';
 import Config from '../config';
 import { registerQuickpreviewIPCHandlers } from './quickpreview-ipc';
 import { registerLocalAIIPCHandlers } from './local-ai-service';
+import { registerGeminiDemoIpcHandlers } from './gemini-demo-ipc';
 import { registerViewSessionIPCHandlers } from './view-sessions';
 import { guardAuxiliaryWindowNavigation } from './auxiliary-window-guard';
 import { onFromMailspringWindows, handleFromMailspringWindows } from './trusted-ipc';
@@ -1185,6 +1186,9 @@ export default class Application extends EventEmitter {
       configDirPath: this.configDirPath,
       config: this.config,
       devMode: this.devMode,
+    });
+    registerGeminiDemoIpcHandlers(ipcMain, {
+      isDemoMode: () => this.demoMode,
     });
   }
 

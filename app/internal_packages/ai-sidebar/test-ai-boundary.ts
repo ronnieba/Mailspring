@@ -364,6 +364,9 @@ async function run() {
     assertContains(store, 'hostCoverageFooter');
     assertContains(store, 'mockOnlyProviderGuard');
     assertContains(store, 'isAIBoundaryFailure');
+    assertContains(store, 'allowLiveSynthetic');
+    assertContains(store, 'areSyntheticDemoSources');
+    assertContains(store, 'validated.result.isMock');
     const worker = fs.readFileSync(MOCK_AI_WORKER_PATH, 'utf8');
     assertContains(worker, 'MOCK subprocess');
   });

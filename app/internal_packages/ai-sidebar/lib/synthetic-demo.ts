@@ -270,3 +270,19 @@ export function getDemoSyncProgress(): { [accountId: string]: number } {
 export function getDemoMessageBody(messageId: string): string | null {
   return getDemoMessagePreview(messageId)?.body || null;
 }
+
+/** DEMO-synthetic gate. Live Gemini refuses anything that fails this check. */
+export function isSyntheticDemoMessage(m: MessageRef): boolean {
+  return (
+    /^demo-msg-\d+$/.test(m.id) &&
+    m.accountId === DEMO_ACCOUNT_ID &&
+    typeof m.from === 'string' &&
+    m.from.endsWith('@synthetic.test') &&
+    typeof m.subject === 'string' &&
+    m.subject.includes('[DEMO]')
+  );
+}
+
+export function areSyntheticDemoSources(messages: ReadonlyArray<MessageRef>): boolean {
+  return Array.isArray(messages) && messages.every(isSyntheticDemoMessage);
+}

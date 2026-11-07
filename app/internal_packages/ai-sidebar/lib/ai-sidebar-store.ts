@@ -17,11 +17,24 @@ import {
   isAIBoundaryFailure,
   isAIBoundaryOk,
   mockOnlyProviderGuard,
+  NON_SYNTHETIC_LIVE_REASON,
   validateProviderPayload,
 } from './core/ai-boundary';
+import { GeminiDemoProvider } from './core/gemini-demo-provider';
 import { nextQueryGeneration, shouldAcceptAssistantResponse } from './core/query-generation';
+import { createGeminiIpcTransport } from './gemini-ipc-transport';
 import { mailspringAdapter } from './mailspring-adapter';
-import { DemoMessagePreview, getDemoMessagePreview, isDemoMode } from './synthetic-demo';
+import {
+  areSyntheticDemoSources,
+  DemoMessagePreview,
+  getDemoMessagePreview,
+  isDemoMode,
+} from './synthetic-demo';
+import {
+  GEMINI_DISPLAY_NAME,
+  GeminiDemoStatus,
+  unconfiguredGeminiStatus,
+} from '../../../src/browser/gemini-demo-protocol';
 
 const DEFAULT_BUDGET: ProcessingBudget = {
   maxMessages: 100,
@@ -41,6 +54,7 @@ interface AISidebarState {
   error: string | null;
   abortController: AbortController | null;
   demoPreview: DemoMessagePreview | null;
+  geminiStatus: GeminiDemoStatus;
 }
 
 class AISidebarStore extends MailspringStore {
@@ -55,9 +69,11 @@ class AISidebarStore extends MailspringStore {
     error: null,
     abortController: null,
     demoPreview: null,
+    geminiStatus: unconfiguredGeminiStatus(isDemoMode(), 'Gemini status not refreshed yet'),
   };
 
   private _provider: AIProvider = mockProvider;
+  private _gemini = new GeminiDemoProvider(createGeminiIpcTransport());
   private _queryGeneration = 0;
 
   getState(): Readonly<AISidebarState> {
@@ -104,7 +120,16 @@ class AISidebarStore extends MailspringStore {
    */
   async refreshScope() {
     await this._resolveScope();
+    await this.refreshGeminiStatus();
     this.trigger();
+  }
+
+  async refreshGeminiStatus() {
+    if (!isDemoMode()) {
+      this._state.geminiStatus = unconfiguredGeminiStatus(false, 'Gemini DEMO host is --demo only');
+      return;
+    }
+    this._state.geminiStatus = await this._gemini.refreshStatus();
   }
 
   private async _resolveScope() {
@@ -172,6 +197,7 @@ class AISidebarStore extends MailspringStore {
       });
 
     try {
+      await this.refreshGeminiStatus();
       const searchResult = await mailspringAdapter.searchMessages(
         scope,
         query,
@@ -196,7 +222,24 @@ class AISidebarStore extends MailspringStore {
       };
       this.trigger();
 
-      const result = await this._provider.processQuery(
+      const sourcesAreSynthetic = areSyntheticDemoSources(searchResult.messages);
+      const useGemini = isDemoMode() && this._state.geminiStatus.configured;
+      if (useGemini && !sourcesAreSynthetic) {
+        this._state.error = NON_SYNTHETIC_LIVE_REASON;
+        this._state.conversation.push({
+          id: `error-${Date.now()}`,
+          role: 'system',
+          content: `❌ שגיאה: ${NON_SYNTHETIC_LIVE_REASON}`,
+          timestamp: new Date(),
+        });
+        return;
+      }
+
+      const provider = useGemini ? this._gemini : this._provider;
+      if (useGemini) {
+        this._gemini.setGeneration(startedGeneration);
+      }
+      const result = await provider.processQuery(
         query,
         searchResult.messages,
         scope,
@@ -228,14 +271,16 @@ class AISidebarStore extends MailspringStore {
           response: result.response,
           citations: result.citations,
           tokensUsed: result.tokensUsed,
-          isMock: this._provider.isMock,
-          mockLabel: this._provider.name,
+          isMock: useGemini ? false : true,
+          mockLabel: useGemini ? GEMINI_DISPLAY_NAME : this._provider.name,
         },
         {
           allowedSourceIds,
           startedGeneration,
           currentGeneration: this._queryGeneration,
           aborted: !!this._state.abortController?.signal.aborted,
+          allowLiveSynthetic: useGemini,
+          sourcesAreSynthetic,
         }
       );
       if (!isAIBoundaryOk(validated)) {
@@ -260,10 +305,11 @@ class AISidebarStore extends MailspringStore {
         content: responseContent,
         citations: validated.result.citations,
         timestamp: new Date(),
-        isMock: true,
+        isMock: validated.result.isMock,
       };
       this._state.conversation.push(assistantMessage);
     } catch (err) {
+      // Live Gemini failures stay errors. Never substitute mock fixtures.
       if (!stillCurrent()) {
         return;
       }
@@ -292,9 +338,13 @@ class AISidebarStore extends MailspringStore {
    * cannot attach after Cancel.
    */
   cancel() {
+    const inFlight = this._queryGeneration;
     this._queryGeneration = nextQueryGeneration(this._queryGeneration);
     if (this._state.abortController) {
       this._state.abortController.abort();
+    }
+    if (this._state.geminiStatus.configured) {
+      void this._gemini.cancel(inFlight);
     }
     this._state.isProcessing = false;
     this._state.abortController = null;

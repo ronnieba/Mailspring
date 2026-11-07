@@ -205,6 +205,7 @@ function run() {
     assertContains(storeTs, "isDemoMode() ? 'all-mail'");
     assertContains(sidebarTs, "isDemoMode() ? 'all-mail'");
     assertContains(sidebarTs, 'data-demo-ready');
+    assertContains(sidebarTs, 'data-gemini-status');
     assertContains(sidebarTs, '__mailspringDemoSidebar');
   });
   test('Full Scan radio has a stable AX name and stores retrievalMode', () => {
