@@ -198,9 +198,11 @@ async function run() {
     assertEqual(urls.length, 2);
     const skipped = tokenize('see https://example.com/foo and a@b.com please');
     assertFalse(skipped.some((t) => t.word === 'example'));
-    const geresh = tokenize(`צה\"ל במבחן`);
-    assertTrue(geresh.some((t) => t.word.includes('ל') || t.word.length >= 2));
+    const geresh = tokenize('צה"ל במבחן');
+    assertTrue(geresh.some((t) => t.word === 'צה"ל'));
     assertEqual(stripNiqqud('שָׁלוֹם'), 'שלום');
+    const marked = tokenize('שָׁלוֹם צוות');
+    assertTrue(marked.some((t) => stripNiqqud(t.word) === 'שלום'));
   });
 
   await test('affix inspection records Hspell MAP/BREAK/PFX; nspell rejected for eager expansion', () => {

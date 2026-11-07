@@ -10,8 +10,11 @@ export interface Token {
 }
 
 const EN_RE = /[A-Za-z]+(?:['’][A-Za-z]+)*/g;
+// Letters stay in a letter class. Niqqud/cantillation are \p{Mn} after a letter so
+// combining marks are not listed next to bases in one class (that looks like one
+// grapheme but matches two code points — no-misleading-character-class).
 const HE_RE =
-  /[\u05D0-\u05EA\u0591-\u05BD\u05BF\u05C1-\u05C2\u05C4-\u05C5\u05C7]+(?:[\u05F3\u05F4'’"][\u05D0-\u05EA\u0591-\u05BD\u05BF\u05C1-\u05C2\u05C4-\u05C5\u05C7]+)*/g;
+  /[\u05D0-\u05EA]\p{Mn}*(?:[\u05D0-\u05EA]\p{Mn}*|[\u05F3\u05F4'’"][\u05D0-\u05EA]\p{Mn}*)*/gu;
 
 const NIQQUD_RE = /[\u0591-\u05BD\u05BF\u05C1-\u05C2\u05C4-\u05C5\u05C7]/g;
 const URL_RE = /https?:\/\/[^\s]+|[\w.+-]+@[\w.-]+\.[A-Za-z]{2,}/g;

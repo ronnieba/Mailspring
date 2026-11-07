@@ -19,6 +19,7 @@ import {
   findFixtureTypos,
   findMisspellings,
   replaceRange,
+  stripNiqqud,
   suggestionsFor,
   tokenize,
 } from '../../src/spellcheck/spell-core';
@@ -106,6 +107,10 @@ function run() {
     assertTrue(words.includes('Invoice'));
     assertTrue(words.includes('חשבונית'));
     assertFalse(words.includes('12345'));
+    const geresh = tokenize('צה"ל במבחן');
+    assertTrue(geresh.some((t) => t.word === 'צה"ל'));
+    const marked = tokenize('שָׁלוֹם');
+    assertTrue(marked.some((t) => stripNiqqud(t.word) === 'שלום'));
   });
 
   test('known fixture words are not misspellings', () => {

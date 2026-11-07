@@ -210,21 +210,26 @@ function detachStdio(proc: ChildProcess) {
 
 function terminateProcess(proc: ChildProcess, waitMs = 1000): Promise<void> {
   return new Promise((resolve) => {
+    if (proc.exitCode !== null || proc.signalCode !== null) {
+      detachStdio(proc);
+      resolve();
+      return;
+    }
     let settled = false;
-    let killTimer: NodeJS.Timeout | undefined;
+    const killTimer = setTimeout(() => {
+      try {
+        proc.kill('SIGKILL');
+      } catch {
+        // already gone
+      }
+    }, waitMs);
     const finish = () => {
       if (settled) return;
       settled = true;
-      if (killTimer) {
-        clearTimeout(killTimer);
-      }
+      clearTimeout(killTimer);
       detachStdio(proc);
       resolve();
     };
-    if (proc.exitCode !== null || proc.signalCode !== null) {
-      finish();
-      return;
-    }
     proc.once('exit', finish);
     try {
       if (proc.connected) {
@@ -236,15 +241,10 @@ function terminateProcess(proc: ChildProcess, waitMs = 1000): Promise<void> {
     try {
       proc.kill('SIGTERM');
     } catch {
-      // already gone
-    }
-    killTimer = setTimeout(() => {
-      try {
-        proc.kill('SIGKILL');
-      } catch {
-        // already gone
+      if (proc.exitCode !== null || proc.signalCode !== null) {
+        finish();
       }
-    }, waitMs);
+    }
   });
 }
 
