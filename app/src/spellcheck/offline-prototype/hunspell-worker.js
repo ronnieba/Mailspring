@@ -104,6 +104,7 @@ process.on('message', async (msg) => {
       }
       en = he = factory = null;
       send({ id, ok: true, result: true, ms: Date.now() - t0 });
+      setImmediate(() => process.exit(0));
       return;
     }
     throw new Error('unknown op ' + msg.op);

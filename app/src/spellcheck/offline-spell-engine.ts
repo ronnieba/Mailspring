@@ -187,27 +187,71 @@ function rejectAll(err: Error) {
   pending.clear();
 }
 
-function killWorker(reason: string) {
-  loadPromise = null;
-  const proc = child;
-  child = null;
-  if (proc && !proc.killed) {
+function detachStdio(proc: ChildProcess) {
+  for (const stream of [proc.stdin, proc.stdout, proc.stderr]) {
+    if (!stream) continue;
+    stream.removeAllListeners();
+    try {
+      stream.unref();
+    } catch {
+      // ignore
+    }
+    try {
+      stream.destroy();
+    } catch {
+      // ignore
+    }
+  }
+}
+
+function terminateProcess(proc: ChildProcess, waitMs = 1000): Promise<void> {
+  return new Promise((resolve) => {
+    let settled = false;
+    let killTimer: NodeJS.Timeout | undefined;
+    const finish = () => {
+      if (settled) return;
+      settled = true;
+      if (killTimer) {
+        clearTimeout(killTimer);
+      }
+      detachStdio(proc);
+      resolve();
+    };
+    if (proc.exitCode !== null || proc.signalCode !== null) {
+      finish();
+      return;
+    }
+    proc.once('exit', finish);
+    try {
+      if (proc.connected) {
+        proc.disconnect();
+      }
+    } catch {
+      // already disconnected
+    }
     try {
       proc.kill('SIGTERM');
     } catch {
       // already gone
     }
-    setTimeout(() => {
+    killTimer = setTimeout(() => {
       try {
-        if (!proc.killed) {
-          proc.kill('SIGKILL');
-        }
+        proc.kill('SIGKILL');
       } catch {
         // already gone
       }
-    }, 1000);
-  }
+    }, waitMs);
+  });
+}
+
+function killWorker(reason: string) {
+  loadPromise = null;
+  const proc = child;
+  child = null;
   rejectAll(Object.assign(new Error(reason), { timedOut: /timeout/i.test(reason) }));
+  if (proc) {
+    void terminateProcess(proc);
+  }
 }
 
 function spawnWorker(): ChildProcess {
@@ -216,11 +260,12 @@ function spawnWorker(): ChildProcess {
     cwd: SIDECAR,
     env: { ...process.env, ELECTRON_RUN_AS_NODE: '1' },
     execArgv: [],
-    silent: true,
+    stdio: ['ignore', 'ignore', 'pipe', 'ipc'],
   });
   proc.stderr?.on('data', (buf: Buffer) => {
     lastStderr = (lastStderr + buf.toString('utf8')).slice(-4000);
   });
+  proc.stderr?.unref();
   proc.on('message', (msg: RpcResponse) => {
     if (!msg || msg.id == null) {
       return;
@@ -253,6 +298,8 @@ function spawnWorker(): ChildProcess {
   proc.on('error', (err) => {
     rejectAll(err);
   });
+  // Idle helper must not pin the parent event loop (composer-spell natural exit).
+  proc.unref();
   return proc;
 }
 
@@ -291,16 +338,20 @@ function rpc(payload: Record<string, unknown>, timeoutMs: number): Promise<RpcRe
 
 export async function disposeOfflineSpellEngine(): Promise<void> {
   loadPromise = null;
-  if (!child) {
+  const proc = child;
+  if (!proc) {
     cachedStatus = emptyStatus('idle', 'disposed');
     return;
   }
   try {
-    await rpc({ op: 'dispose' }, 1000);
+    await rpc({ op: 'dispose' }, 500);
   } catch {
-    // kill below
+    // timeout path already started terminateProcess
   }
-  killWorker('dispose');
+  if (child === proc) {
+    child = null;
+  }
+  await terminateProcess(proc);
   cachedStatus = emptyStatus('idle', 'disposed');
 }
 

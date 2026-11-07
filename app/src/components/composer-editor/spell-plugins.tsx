@@ -6,6 +6,7 @@ import {
   findOfflineTypos,
   loadOfflineSpellEngine,
   offlineSuggest,
+  peekOfflineSpellStatus,
   OfflineTypo,
 } from '../../spellcheck/nspell-engine';
 import {
@@ -138,9 +139,8 @@ function applyCachedSpellDecorations(editor: Editor) {
 async function scanHunspellDecorations(editor: Editor, gen: number) {
   const personal = getActivePersonalDictionary();
   const personalList = personal ? personal.list() : [];
-  const status = await loadOfflineSpellEngine();
+  if (!peekOfflineSpellStatus().available) return;
   if (gen !== decoGen) return;
-  if (!status.available) return;
   const texts: { key: string; text: string }[] = [];
   editor.value.document.getTexts().forEach((textNode) => {
     texts.push({ key: textNode.key, text: textNode.text });
@@ -156,12 +156,14 @@ async function scanHunspellDecorations(editor: Editor, gen: number) {
 }
 
 /**
- * Fixtures apply immediately. Hunspell marks come from a child process and
- * must not block the editor. Call refreshSpellDecorationsAsync in tests.
+ * Fixtures apply immediately. Do not start Hunspell from this path — a live
+ * child would keep Node from exiting (native cf9ca4f composer-spell 20/0 then
+ * 35s SIGTERM). Demo/engine tests call loadOfflineSpellEngine first.
  */
 export function refreshSpellDecorations(editor: Editor) {
   if (!editor || !editor.value) return;
   applyCachedSpellDecorations(editor);
+  if (!peekOfflineSpellStatus().available) return;
   const gen = ++decoGen;
   void scanHunspellDecorations(editor, gen).catch(() => {
     // Timeout/error is visible via peekOfflineSpellStatus().phase — do not hang UI.
@@ -171,6 +173,7 @@ export function refreshSpellDecorations(editor: Editor) {
 export async function refreshSpellDecorationsAsync(editor: Editor) {
   if (!editor || !editor.value) return;
   applyCachedSpellDecorations(editor);
+  await loadOfflineSpellEngine();
   const gen = ++decoGen;
   await scanHunspellDecorations(editor, gen);
 }

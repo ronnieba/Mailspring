@@ -176,6 +176,9 @@ async function run() {
     assertContains(engineSrc, 'Never silently');
     assertContains(engineSrc, 'killWorker');
     assertContains(engineSrc, 'LOAD_TIMEOUT_MS');
+    assertContains(engineSrc, 'terminateProcess');
+    assertContains(engineSrc, 'proc.unref');
+    assertContains(engineSrc, 'await terminateProcess');
     const workerSrc = fs.readFileSync(
       path.join(__dirname, '../../src/spellcheck/offline-prototype/hunspell-worker.js'),
       'utf8'
@@ -421,8 +424,12 @@ async function run() {
   if (failed > 0) process.exit(1);
 }
 
-run().catch((err) => {
+run().catch(async (err) => {
   console.error(err);
-  void disposeOfflineSpellEngine();
+  try {
+    await disposeOfflineSpellEngine();
+  } catch {
+    // still fail the suite
+  }
   process.exit(1);
 });

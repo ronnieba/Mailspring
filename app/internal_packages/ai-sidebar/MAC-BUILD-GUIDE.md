@@ -37,6 +37,8 @@ npx ts-node --project app/tsconfig.json app/internal_packages/ai-sidebar/test-de
 npx ts-node --project app/tsconfig.json app/internal_packages/ai-sidebar/test-demo-cli.ts
 npx ts-node --project app/tsconfig.json app/internal_packages/ai-sidebar/test-composer-direction.ts
 npx ts-node --project app/tsconfig.json app/internal_packages/ai-sidebar/test-composer-spell.ts
+# First gate: 20 passed, 0 failed, and the process must EXIT on its own
+# (cf9ca4f printed 20/0 then hung on Hunspell child IPC until 35s SIGTERM).
 npx ts-node --project app/tsconfig.json app/internal_packages/ai-sidebar/test-demo-composer.ts
 # After sidecar install (does NOT touch app/package-lock.json):
 # bash app/src/spellcheck/offline-prototype/install.sh
@@ -181,7 +183,7 @@ Keyboard: click the typo, then Tab/Shift+Tab to the replace button, then Space o
 6. **Layout at the real sidebar width (~300pt, not declared minWidth):** after add/remove, with the overlay popover open, paragraphs 4/5 must remain fully readable. `מילון אישי` / `אין מילים שמורות` / the footer must **not** paint over editor text. Scroll the editor workspace if needed; dictionary/status/actions stay in flow (opaque, not covering). Measured column width may stay ~299pt because the MessageListSidebar also hosts contact cards (`maxWidth: 300`).
 7. **Expanded spelling status must not collapse the editor or dictionary:** click `מצב בודק איות` so the disclosure is **open**. At ~299pt, workspace and `מילון אישי` must keep a usable height (not ~1pt). Wheel inside the workspace still reveals all 5 paragraphs; wheel inside the yellow status slot scrolls the diagnostic text. Do **not** collapse the disclosure as a workaround. Collapsed status must still work as in (6).
 8. **Native OS suggestions:** 34a90265 recorded underlines on `recieve`/`seperate`/`mispell` and `אבטיחחח`/`חשבנוית`/`שלומ` with **No Guesses Found**; `teh` was not flagged. OS/Electron limitation, not a missing menu. Do not rebuild layout. Do not change the user’s Spelling language.
-9. **Offline Hunspell WASM (after sidecar reinstall):** status `data-offline-spell="ready"` (or `timeout`/`error` if the child is killed — do not treat that as “no guesses”). Type `recieve` / `אבטיחחח` (overlay silent). Caret → `הצעות איות` → `החלף ב-receive` / a Hebrew guess. AX Press/Space/Enter/mouse. Only that word changes; paragraph `dir` and neighbors stay. `watermelon` / `אבטיח` must not be flagged. Add/remove personal JSON under `Mailspring-demo` only. Fixtures remain two typos. nspell was rejected on 7c346435 (194s / 1.31GiB on construct). Suite must print `…` before each check and finish without occupying the test Node at 99% CPU.
+9. **Offline Hunspell WASM (after sidecar reinstall):** first confirm composer-spell **exits** after 20/0. Then engine 13. Status `data-offline-spell="ready"` (or `timeout`/`error` if the child is killed — do not treat that as “no guesses”). Type `recieve` / `אבטיחחח` (overlay silent). Caret → `הצעות איות` → `החלף ב-receive` / a Hebrew guess. AX Press/Space/Enter/mouse. Only that word changes; paragraph `dir` and neighbors stay. `watermelon` / `אבטיח` must not be flagged. Add/remove personal JSON under `Mailspring-demo` only. Fixtures remain two typos. nspell was rejected on 7c346435 (194s / 1.31GiB on construct). Suite must print `…` before each check and finish without occupying the test Node at 99% CPU.
 
 There is no Send button on this surface. Production composer send/draft saving is unchanged. Overlay spell plugins are **not** in the default conversion plugin list.
 

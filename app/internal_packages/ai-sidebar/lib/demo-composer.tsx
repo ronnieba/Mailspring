@@ -20,6 +20,7 @@ import {
   PersonalDictionary,
 } from '../../../src/spellcheck/personal-dictionary';
 import {
+  disposeOfflineSpellEngine,
   loadOfflineSpellEngine,
   peekOfflineSpellStatus,
   OfflineSpellStatus,
@@ -122,6 +123,7 @@ export default class DemoComposer extends React.Component<
       this.unsubDict();
     }
     installPersonalDictionary(null);
+    void disposeOfflineSpellEngine();
     if ((window as any).__mailspringDemoComposer) {
       delete (window as any).__mailspringDemoComposer;
     }

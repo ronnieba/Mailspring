@@ -395,6 +395,7 @@ function run() {
     assertContains(plugin, "e.key === 'Enter'");
     assertContains(plugin, 'data-spell-action="replace"');
     assertContains(plugin, 'refreshSpellDecorations');
+    assertContains(plugin, 'if (!peekOfflineSpellStatus().available)');
     assertContains(plugin, 'הוסף למילון האישי');
     assertContains(plugin, 'הסר מהמילון האישי');
     assertContains(plugin, 'הצעות איות');
