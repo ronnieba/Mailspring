@@ -3,6 +3,7 @@ import ReactDOM from 'react-dom';
 import { Decoration, Editor, Mark, Point, Value } from 'slate';
 import { ComposerEditorPlugin, ComposerEditorPluginTopLevelComponentProps } from './types';
 import { findFixtureTypos } from '../../spellcheck/spell-core';
+import { FIXTURE_TYPOS } from '../../spellcheck/word-lists';
 import {
   findOfflineTypos,
   loadOfflineSpellEngine,
@@ -100,6 +101,22 @@ function collectNonSpellDecorations(editor: Editor): Decoration[] {
   return decorations;
 }
 
+/** Fixture typos use `suggestion`; Hunspell hits use `suggestions` (often empty until live fetch). */
+function typoSuggestions(miss: { suggestions?: string[]; suggestion?: string }): string[] {
+  if (Array.isArray(miss.suggestions) && miss.suggestions.length) {
+    return miss.suggestions;
+  }
+  if (typeof miss.suggestion === 'string' && miss.suggestion) {
+    return [miss.suggestion];
+  }
+  return [];
+}
+
+function authoredFixtureSuggestions(word: string): string[] {
+  const replacement = FIXTURE_TYPOS[word];
+  return replacement ? [replacement] : [];
+}
+
 function pushTypoDecoration(decorations: Decoration[], textNode: any, miss: any, backend: string) {
   decorations.push(
     Decoration.create({
@@ -111,7 +128,7 @@ function pushTypoDecoration(decorations: Decoration[], textNode: any, miss: any,
           word: miss.word,
           script: miss.script,
           backend,
-          suggestions: miss.suggestions || [],
+          suggestions: typoSuggestions(miss),
         },
       }),
     })
@@ -271,6 +288,12 @@ function SpellSuggestionPopover({ editor, value }: ComposerEditorPluginTopLevelC
   const script = mark ? mark.data.get('script') : 'en';
   const backend = mark ? mark.data.get('backend') || 'fixture' : 'fixture';
   const markSuggestions: string[] = mark ? mark.data.get('suggestions') || [] : [];
+  const fixtureSuggestions =
+    backend === 'hunspell'
+      ? []
+      : markSuggestions.length
+        ? markSuggestions
+        : authoredFixtureSuggestions(word);
 
   const [liveSuggestions, setLiveSuggestions] = React.useState<string[]>(markSuggestions);
   const [suggestState, setSuggestState] = React.useState<
@@ -284,7 +307,7 @@ function SpellSuggestionPopover({ editor, value }: ComposerEditorPluginTopLevelC
       return;
     }
     if (backend !== 'hunspell') {
-      setLiveSuggestions(markSuggestions);
+      setLiveSuggestions(fixtureSuggestions);
       setSuggestState('ready');
       return;
     }
@@ -310,7 +333,7 @@ function SpellSuggestionPopover({ editor, value }: ComposerEditorPluginTopLevelC
 
   if (!target || !mark) return null;
 
-  const suggestions = backend === 'hunspell' ? liveSuggestions : markSuggestions;
+  const suggestions = backend === 'hunspell' ? liveSuggestions : fixtureSuggestions;
   const personal = getActivePersonalDictionary();
   const inDict = personal ? personal.has(word) : false;
   const caption =

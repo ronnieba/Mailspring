@@ -395,6 +395,8 @@ function run() {
     assertContains(plugin, 'no auto-correct');
     assertContains(plugin, 'not a Hebrew dictionary');
     assertContains(plugin, 'findFixtureTypos');
+    assertContains(plugin, 'FIXTURE_TYPOS');
+    assertContains(plugin, 'typoSuggestions');
     assertContains(plugin, 'applySpellReplacement');
     assertContains(plugin, 'onClick');
     assertContains(plugin, "e.key === 'Enter'");
@@ -423,6 +425,43 @@ function run() {
     assertTrue(text.includes(DEMO_EN_CORRECT_WORD));
     assertFalse(text.includes(DEMO_EN_MISS_WORD));
     assertTrue(text.includes(DEMO_HE_MISS_WORD));
+  });
+
+  test('authored fixture replacements survive refresh, dict add/remove, and reload', () => {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'ms-spell-fixture-sugg-'));
+    const dict = new PersonalDictionary(personalDictionaryPath(dir));
+    installPersonalDictionary(dict);
+    const suggestionsOf = (editor: Editor, word: string): string[] | null => {
+      const decorations = (editor.value as any).get('decorations');
+      let found: string[] | null = null;
+      if (decorations) {
+        decorations.forEach((d: any) => {
+          if (d.mark && d.mark.type === SPELL_ERROR_MARK && d.mark.data.get('word') === word) {
+            found = d.mark.data.get('suggestions') || [];
+          }
+        });
+      }
+      return found;
+    };
+    try {
+      let editor = new Editor({ value: createDemoComposerValue() });
+      refreshSpellDecorations(editor);
+      assertTrue((suggestionsOf(editor, DEMO_EN_MISS_WORD) || []).includes(DEMO_EN_CORRECT_WORD));
+      assertTrue((suggestionsOf(editor, DEMO_HE_MISS_WORD) || []).includes(DEMO_HE_CORRECT_WORD));
+      dict.add(DEMO_EN_MISS_WORD);
+      refreshSpellDecorations(editor);
+      assertEqual(suggestionsOf(editor, DEMO_EN_MISS_WORD), null);
+      assertTrue((suggestionsOf(editor, DEMO_HE_MISS_WORD) || []).includes(DEMO_HE_CORRECT_WORD));
+      dict.remove(DEMO_EN_MISS_WORD);
+      refreshSpellDecorations(editor);
+      assertTrue((suggestionsOf(editor, DEMO_EN_MISS_WORD) || []).includes(DEMO_EN_CORRECT_WORD));
+      editor = new Editor({ value: createDemoComposerValue() });
+      refreshSpellDecorations(editor);
+      assertTrue((suggestionsOf(editor, DEMO_EN_MISS_WORD) || []).includes(DEMO_EN_CORRECT_WORD));
+      assertTrue((suggestionsOf(editor, DEMO_HE_MISS_WORD) || []).includes(DEMO_HE_CORRECT_WORD));
+    } finally {
+      installPersonalDictionary(null);
+    }
   });
 
   test('dictionary remove immediately restores only the overlay for that word', () => {

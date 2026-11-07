@@ -365,6 +365,22 @@ async function run() {
     }
     assertTrue(marks.some((m) => m === 'fixture:misspelledd'));
     assertTrue(marks.some((m) => m === 'fixture:איותת'));
+    if (decorations) {
+      decorations.forEach((d: any) => {
+        if (!d.mark || d.mark.type !== SPELL_ERROR_MARK) return;
+        const word = d.mark.data.get('word');
+        const suggestions = d.mark.data.get('suggestions') || [];
+        if (word === 'misspelledd') {
+          assertTrue(
+            suggestions.includes('misspelled'),
+            'authored misspelledd replacement missing'
+          );
+        }
+        if (word === 'איותת') {
+          assertTrue(suggestions.includes('איות'), 'authored איותת replacement missing');
+        }
+      });
+    }
   });
 
   await test('misclassification probe: demo fixture sentences should not mass-flag', async () => {

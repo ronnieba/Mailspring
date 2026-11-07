@@ -177,7 +177,7 @@ Keyboard: click the typo, then Tab/Shift+Tab to the replace button, then Space o
 
 1. **Per-paragraph independence:** caret in paragraph 1, click `פסקה משמאל לימין (LTR)`. Paragraph 1 must flip LTR; neighbors unchanged. Numbers in paragraph 5 (`12345`) stay intact.
 2. **Serialize/reopen:** `סריאליזציה ופתיחה מחדש`. HTML includes `dir="rtl"` / `dir="ltr"`; homogeneous Hebrew paragraphs may also have `lang="he"`. Mixed paragraph 5 omits `lang`.
-3. **Overlay accept:** caret in `misspelledd` / `איותת` → `הצעות איות` → replace. AX Press and keyboard must succeed, not only mouse. Type `אבטיח`: overlay must **not** underline it.
+3. **Overlay accept:** caret in `misspelledd` / `איותת` → `הצעות איות` → authored `החלף ב-misspelled` / `החלף ב-איות`. These two stay fixture-backend with authored replacements even after Hunspell is loaded, dictionary add/remove, and `טען טיוטת DEMO מחדש`. Do **not** show `אין הצעות` for those two. AX Press and keyboard must succeed, not only mouse. Type `אבטיח`: overlay must **not** underline it.
 4. **Dictionary add:** `הוסף למילון האישי`. File: `~/Library/Application Support/Mailspring-demo/spell-personal-dictionary.json` only.
 5. **Dictionary remove:** `הסר מהמילון האישי: misspelledd`. Overlay for **that word** must reappear immediately (Hebrew mark stays). No reload/edit workaround.
 6. **Layout at the real sidebar width (~300pt, not declared minWidth):** after add/remove, with the overlay popover open, paragraphs 4/5 must remain fully readable. `מילון אישי` / `אין מילים שמורות` / the footer must **not** paint over editor text. Scroll the editor workspace if needed; dictionary/status/actions stay in flow (opaque, not covering). Measured column width may stay ~299pt because the MessageListSidebar also hosts contact cards (`maxWidth: 300`).
@@ -219,13 +219,13 @@ Parent runs these on Mac from repo root (and once from another cwd with `--prefi
 | `test-demo-cli.ts` | 12 |
 | **prior portable subtotal** | **160** |
 | `test-composer-direction.ts` | 14 |
-| `test-composer-spell.ts` | 20 |
+| `test-composer-spell.ts` | 21 |
 | `test-demo-composer.ts` | 13 |
-| **composer subtotal (no sidecar)** | **47** |
+| **composer subtotal (no sidecar)** | **48** |
 | `test-nspell-engine.ts` | **13** (requires sidecar install) |
-| **portable total after sidecar** | **220** |
+| **portable total after sidecar** | **221** |
 
-Without sidecar install: prior **207** + alt-cwd **47** still apply. After `install.sh`: **220** portable (207+13) and alt-cwd **60** (47+13). Do not run these in cloud CI. Preserve 34a90265 layout/AI/isolation. Do not rewrite `app/package-lock.json`.
+Without sidecar install: prior **208** + alt-cwd **48** still apply. After `install.sh`: **221** portable (208+13) and alt-cwd **61** (48+13). Do not run these in cloud CI. Preserve 34a90265 layout/AI/isolation. Do not rewrite `app/package-lock.json`.
 
 `--demo` does **not** open, migrate, rebuild, or relaunch over `edgehill.db`. A leftover empty stub in `Mailspring-demo/` from an older checkout is ignored; do not delete it. Production `application:reset-database` (Okay → rebuild → relaunch) is unchanged.
 
