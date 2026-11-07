@@ -132,10 +132,16 @@ async function runTests() {
     assertContains(appTs, 'setAsDefaultProtocolClient');
   });
   await test('main.js applies isolationIdentity before setName / paths', () => {
-    assertContains(mainJs, 'isolationIdentity');
+    assertContains(mainJs, 'identityFromArgv');
+    assertContains(mainJs, 'startupFlagsFromArgv');
     assertContains(mainJs, 'app.setName(identity.appName)');
     assertContains(mainJs, "appendSwitch('use-mock-keychain')");
     assertContains(mainJs, "appendSwitch('crash-dumps-dir'");
+    const startFn = mainJs.slice(mainJs.indexOf('const start = () =>'));
+    assertTrue(
+      startFn.indexOf('app.setName') < startFn.indexOf('parseCommandLine(process.argv)'),
+      'setName must run before Optimist parse (native 63b7210 production userData)'
+    );
   });
   await test('main.js skips single-instance lock when identity says so', () => {
     assertContains(mainJs, 'skipSingleInstanceLock');
@@ -165,6 +171,8 @@ async function runTests() {
     assertContains(mainJs, 'demo-delay-ms');
     assertContains(mainJs, 'MAILSPRING_DEMO_DELAY_MS');
     assertContains(mainJs, 'if (options.demoMode)');
+    assertContains(mainJs, ".string('demo-delay-ms')");
+    assertFalse(/\.number\s*\(/.test(mainJs));
     assertFalse(/http\.createServer/.test(mainJs));
     assertFalse(/chrome-devtools/.test(mainJs));
   });

@@ -9,6 +9,50 @@
  */
 const path = require('path');
 
+/**
+ * Raw argv flags without Optimist. `--demo-delay-ms` / `--demo-capture` are
+ * not `--demo`. Used before CLI parse so a declareOptions throw cannot leave
+ * Chromium helpers on the production userData path (native 63b7210).
+ */
+function startupFlagsFromArgv(argv) {
+  const list = argv || [];
+  const hasShort = (short, long) =>
+    list.some(arg => arg === `-${short}` || arg === `--${long}` || arg.startsWith(`--${long}=`));
+
+  let configDirPath = null;
+  for (let i = 0; i < list.length; i++) {
+    const arg = list[i];
+    if (arg === '--config-dir-path' || arg === '-c') {
+      const next = list[i + 1];
+      configDirPath = next && !String(next).startsWith('-') ? next : null;
+    } else if (arg.startsWith('--config-dir-path=')) {
+      configDirPath = arg.slice('--config-dir-path='.length) || null;
+    }
+  }
+
+  const demoMode = list.some(arg => arg === '--demo' || arg.startsWith('--demo='));
+  const specMode = hasShort('t', 'test');
+  const explicitDev = hasShort('d', 'dev');
+  return {
+    demoMode,
+    specMode,
+    devMode: explicitDev || demoMode || specMode,
+    configDirPath,
+  };
+}
+
+/**
+ * Isolation identity from argv + whether this is an unpackaged developer build.
+ * Packaged production ignores --demo/--dev/--test (same as parseCommandLine).
+ */
+function identityFromArgv(argv, { developerBuild = false } = {}) {
+  const flags = startupFlagsFromArgv(argv);
+  const demoMode = !!developerBuild && flags.demoMode;
+  const specMode = !!developerBuild && flags.specMode;
+  const devMode = !!developerBuild && (flags.devMode || specMode || demoMode);
+  return isolationIdentity({ devMode, specMode, demoMode });
+}
+
 function isolationIdentity({ devMode = false, specMode = false, demoMode = false } = {}) {
   if (specMode) {
     return {
@@ -80,6 +124,8 @@ function keychainItemNameForApp(appName) {
 module.exports = {
   isolationIdentity,
   isolatedPaths,
+  startupFlagsFromArgv,
+  identityFromArgv,
   productionKeychainItemName,
   keychainItemNameForApp,
 };

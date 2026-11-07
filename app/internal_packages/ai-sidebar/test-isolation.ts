@@ -10,6 +10,8 @@ import * as path from 'path';
 const {
   isolationIdentity,
   isolatedPaths,
+  startupFlagsFromArgv,
+  identityFromArgv,
   productionKeychainItemName,
   keychainItemNameForApp,
 } = require('../../src/browser/dev-isolation.js');
@@ -110,6 +112,24 @@ function run() {
     const id = isolationIdentity({ specMode: true, devMode: true, demoMode: true });
     assertEqual(id.appName, 'Mailspring-spec');
     assertTrue(id.useMockKeychain);
+  });
+
+  test('startupFlagsFromArgv treats --demo-delay-ms as not --demo', () => {
+    const withDemo = startupFlagsFromArgv(['--dev', '--demo', '--demo-delay-ms=8000']);
+    assertTrue(withDemo.demoMode);
+    assertFalse(startupFlagsFromArgv(['--demo-delay-ms=8000']).demoMode);
+    assertFalse(startupFlagsFromArgv(['--demo-capture=/tmp/x.png']).demoMode);
+  });
+
+  test('identityFromArgv isolates demo before CLI parse; packaged stays production', () => {
+    const demo = identityFromArgv(['electron', './app', '--dev', '--demo'], {
+      developerBuild: true,
+    });
+    assertEqual(demo.appName, 'Mailspring-demo');
+    const packaged = identityFromArgv(['electron', './app', '--dev', '--demo'], {
+      developerBuild: false,
+    });
+    assertEqual(packaged.appName, 'Mailspring');
   });
 
   console.log('\n' + '='.repeat(40));

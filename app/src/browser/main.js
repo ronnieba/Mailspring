@@ -37,8 +37,9 @@ const { app, session, protocol } = require('electron');
 const path = require('path');
 const { developerToolsAvailable } = require('../developer-tools');
 const {
-  isolationIdentity,
   isolatedPaths,
+  startupFlagsFromArgv,
+  identityFromArgv,
 } = require('./dev-isolation');
 
 if (typeof process.setFdLimit === 'function') {
@@ -166,7 +167,7 @@ const declareOptions = argv => {
       'Demo only: capture this instance\'s own BrowserWindow to a PNG path via Electron capturePage, then keep running.'
     );
   options
-    .number('demo-delay-ms')
+    .string('demo-delay-ms')
     .describe(
       'demo-delay-ms',
       'Demo+dev only: delay mock responses by N ms so Cancel can be inspected. Ignored without --demo. Capped at 30000. Not a debug or network endpoint.'
@@ -321,19 +322,40 @@ const handleStartupEventWithSquirrel = () => {
 };
 
 const start = () => {
-  // Parse argv before any identity APIs. Chromium OSCrypt/Crashpad pick a
-  // Keychain item and dump dir from the app name; production is "Mailspring".
-  const options = parseCommandLine(process.argv);
-  const identity = isolationIdentity({
-    devMode: options.devMode,
-    specMode: options.specMode,
-    demoMode: options.demoMode,
+  // Isolate from raw argv BEFORE Optimist. Native 63b7210: declareOptions
+  // threw `options.number is not a function` (optimist 0.4 has no .number),
+  // so setName/setPath never ran and GPU/network helpers used production
+  // --user-data-dir=.../Mailspring, not Mailspring-demo. Production launch
+  // (no --demo/--dev/--test, or packaged) still gets appName "Mailspring".
+  const earlyFlags = startupFlagsFromArgv(process.argv);
+  const identity = identityFromArgv(process.argv, {
+    developerBuild: developerToolsAvailable(),
   });
+  app.setName(identity.appName);
+  if (identity.useMockKeychain) {
+    app.commandLine.appendSwitch('use-mock-keychain');
+  }
+  const configDirPath = setupConfigDir(
+    { configDirPath: earlyFlags.configDirPath },
+    identity
+  );
+  if (identity.appName === 'Mailspring-demo') {
+    process.env.MAILSPRING_DEMO = '1';
+  }
+
+  let options;
+  try {
+    options = parseCommandLine(process.argv);
+  } catch (err) {
+    console.error(
+      `[Startup] CLI parse failed after isolation appName=${identity.appName} userData=${configDirPath}`
+    );
+    throw err;
+  }
   options.isolation = identity;
+  options.configDirPath = configDirPath;
 
   if (options.demoMode) {
-    // Inherited by renderer processes. IdentityStore/KeyManager skip keychain
-    // even in hot empty windows that never received windowProps.demoMode.
     process.env.MAILSPRING_DEMO = '1';
     if (options.demoDelayMs > 0) {
       process.env.MAILSPRING_DEMO_DELAY_MS = String(options.demoDelayMs);
@@ -347,19 +369,6 @@ const start = () => {
     app.setToastActivatorCLSID('{E6AD16B0-2830-48E7-9DB7-439152FA917B}');
     app.setAppUserModelId('com.squirrel.mailspring.mailspring');
   }
-
-  // Distinct name so macOS Keychain "… Safe Storage" is not the production item.
-  // Production keeps "Mailspring". Dev/demo/spec never share that name.
-  app.setName(identity.appName);
-
-  if (identity.useMockKeychain) {
-    // Chromium test switch: do not touch the login keychain or prompt.
-    app.commandLine.appendSwitch('use-mock-keychain');
-  }
-
-  // Paths immediately after setName, before Crashpad / @electron/remote init.
-  const configDirPath = setupConfigDir(options, identity);
-  options.configDirPath = configDirPath;
 
   protocol.registerSchemesAsPrivileged([
     {

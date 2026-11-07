@@ -29,6 +29,7 @@ npx ts-node --project app/tsconfig.json app/internal_packages/ai-sidebar/test-in
 npx ts-node --project app/tsconfig.json app/internal_packages/ai-sidebar/test-mail-database.ts
 npx ts-node --project app/tsconfig.json app/internal_packages/ai-sidebar/test-demo-sidebar.ts
 npx ts-node --project app/tsconfig.json app/internal_packages/ai-sidebar/test-demo-query.ts
+npx ts-node --project app/tsconfig.json app/internal_packages/ai-sidebar/test-demo-cli.ts
 
 # From any other cwd — pass ABSOLUTE paths and --prefix so npx uses the repo
 # ts-node. Do not use a local tsconfig.json (that was a tester command error,
@@ -39,6 +40,8 @@ npx ts-node --project app/tsconfig.json app/internal_packages/ai-sidebar/test-de
 #   "$REPO/app/internal_packages/ai-sidebar/test-mail-database.ts"
 # npx --prefix "$REPO" ts-node --project "$REPO/app/tsconfig.json" \
 #   "$REPO/app/internal_packages/ai-sidebar/test-demo-query.ts"
+# npx --prefix "$REPO" ts-node --project "$REPO/app/tsconfig.json" \
+#   "$REPO/app/internal_packages/ai-sidebar/test-demo-cli.ts"
 
 # Accountless synthetic demo (NOT npm start — that is onboarding)
 npm run start:demo
@@ -51,7 +54,9 @@ electron ./app --enable-logging --dev --demo --force-renderer-accessibility --de
 # or: npm run start:demo -- --force-renderer-accessibility --demo-delay-ms=8000
 ```
 
-`--demo-delay-ms` is not a debug port or network endpoint. It only delays the mock provider so **ביטול** can be clicked. Leave it off for normal fixture checks.
+`--demo-delay-ms` is not a debug port or network endpoint. It only delays the mock provider so **ביטול** can be clicked. Leave it off for normal fixture checks. Optimist 0.4 has no `.number()` — the flag is a `.string()` like `--demo-capture`. Isolation (`setName` / `userData` / mock keychain) is applied from raw argv **before** Optimist parse so a CLI throw cannot leave helpers on `.../Mailspring`.
+
+After launch, GPU/network `--user-data-dir` must contain `Mailspring-demo`, never `.../Application Support/Mailspring` without `-demo`.
 
 ## Accessible control names (AX)
 
