@@ -6,8 +6,11 @@ const util = require('util');
 const fs = require('fs');
 
 // Native e1ec474c: renderer PID 70413 inherited MAILSPRING_DEMO_GEMINI_API_KEY
-// from the launch environment. Capture into main-process memory and unsetenv
-// before requiring Electron so Chromium helper spawns cannot inherit it.
+// from the launch environment. Native 33d7f263: JS unsetenv contained children
+// but macOS ps eww still showed KEY/PAID on Electron main and the Node
+// launcher. Read MAILSPRING_DEMO_GEMINI_KEY_FILE into module memory (ignore
+// launch-env KEY/PAID) before requiring Electron so helpers cannot inherit
+// a captured value. Does not rewrite exec-time environ.
 require('./gemini-demo-secret').captureAndStripGeminiDemoCredentials();
 
 // On Linux, writes to process.stdout/stderr use a synchronous fast path when

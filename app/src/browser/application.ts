@@ -37,7 +37,9 @@ import { MailsyncProcess } from '../mailsync-process';
 import Config from '../config';
 import { registerQuickpreviewIPCHandlers } from './quickpreview-ipc';
 import { registerLocalAIIPCHandlers } from './local-ai-service';
+import { resolveGeminiDemoStatus } from './gemini-demo-host';
 import { registerGeminiDemoIpcHandlers } from './gemini-demo-ipc';
+import { formatGeminiDemoStatusLog } from './gemini-demo-secret';
 import { registerViewSessionIPCHandlers } from './view-sessions';
 import { guardAuxiliaryWindowNavigation } from './auxiliary-window-guard';
 import { onFromMailspringWindows, handleFromMailspringWindows } from './trusted-ipc';
@@ -146,6 +148,7 @@ export default class Application extends EventEmitter {
     try {
       if (this.demoMode) {
         console.log('[Demo Mode] Skipping mailsync migrate — no real mailbox database');
+        console.log(formatGeminiDemoStatusLog(resolveGeminiDemoStatus({ demoMode: true })));
         if (process.env.MAILSPRING_DEMO_DELAY_MS) {
           console.log(
             `[Demo Mode] Mock query delay ${process.env.MAILSPRING_DEMO_DELAY_MS}ms (Cancel testing only)`

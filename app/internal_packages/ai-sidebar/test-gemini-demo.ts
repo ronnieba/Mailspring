@@ -8,10 +8,12 @@
 import * as fs from 'fs';
 import * as path from 'path';
 import { spawnSync } from 'child_process';
+import * as os from 'os';
 import {
   GEMINI_DEMO_API_REVISION,
   GEMINI_DEMO_ENDPOINT,
   GEMINI_DEMO_KEY_ENV,
+  GEMINI_DEMO_KEY_FILE_ENV,
   GEMINI_DEMO_MODEL,
   GEMINI_DEMO_PAID_ENV,
   GEMINI_PAID_INPUT_USD_PER_MILLION,
@@ -31,7 +33,9 @@ import {
 } from '../../src/browser/gemini-demo-host';
 import {
   captureAndStripGeminiDemoCredentials,
+  formatGeminiDemoStatusLog,
   getCapturedGeminiDemoCredentials,
+  getGeminiDemoCaptureSource,
   resetGeminiDemoCredentialsForTests,
   sanitizeSpawnEnv,
 } from '../../src/browser/gemini-demo-secret';
@@ -56,10 +60,9 @@ function envHasCredentialName(env: NodeJS.ProcessEnv, name: string): boolean {
   return Object.keys(env).some((k) => k.toLowerCase() === lower);
 }
 
-function childNamedEnvProbe(env: NodeJS.ProcessEnv): string {
-  const script =
-    'process.stdout.write(Object.keys(process.env).some((k)=>k.toLowerCase()==="mailspring_demo_gemini_api_key")?"PRESENT":"ABSENT")';
-  const out = spawnSync(process.execPath, ['-e', script], {
+function spawnProbe(env: NodeJS.ProcessEnv, script: string, arg?: string): string {
+  const args = arg === undefined ? ['-e', script] : ['-e', script, arg];
+  const out = spawnSync(process.execPath, args, {
     env,
     encoding: 'utf8',
   });
@@ -67,6 +70,40 @@ function childNamedEnvProbe(env: NodeJS.ProcessEnv): string {
     throw out.error;
   }
   return (out.stdout || '').trim();
+}
+
+function childNamedEnvProbe(env: NodeJS.ProcessEnv, name: string): string {
+  const script =
+    'process.stdout.write(Object.keys(process.env).some((k)=>k===process.argv[1])?"PRESENT":"ABSENT")';
+  return spawnProbe(env, script, name);
+}
+
+function childEnvValuesContain(env: NodeJS.ProcessEnv, needle: string): string {
+  const script =
+    'process.stdout.write(Object.values(process.env).some((v)=>String(v).includes(process.argv[1]))?"PRESENT":"ABSENT")';
+  return spawnProbe(env, script, needle);
+}
+
+function writeKeyFile(paid: '0' | '1', key: string, mode = 0o600): string {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'ms-gemini-'));
+  const filePath = path.join(dir, 'cred');
+  fs.writeFileSync(filePath, `paid=${paid}\n${key}\n`, { encoding: 'utf8', mode });
+  fs.chmodSync(filePath, mode);
+  return filePath;
+}
+
+function collectLogs(fn: () => void): string[] {
+  const logs: string[] = [];
+  const orig = console.log;
+  console.log = (...args: unknown[]) => {
+    logs.push(args.map(String).join(' '));
+  };
+  try {
+    fn();
+  } finally {
+    console.log = orig;
+  }
+  return logs;
 }
 
 let passed = 0;
@@ -386,39 +423,95 @@ async function run() {
     assertContains(fail.message, '[redacted-key]');
   });
 
-  console.log('\nCategory: nonsecret marker — main captures, children do not inherit');
-  await test('captureAndStrip removes the named env and keeps the marker only in main memory', () => {
+  console.log('\nCategory: nonsecret marker — KEY_FILE into main memory, not OS launch env');
+  await test('KEY_FILE paid=0 captures into memory, unlinks, and reports paid-disabled', () => {
+    resetGeminiDemoCredentialsForTests();
+    const filePath = writeKeyFile('0', NONSECRET_MARKER);
+    process.env[GEMINI_DEMO_KEY_FILE_ENV] = filePath;
+    try {
+      const logs = collectLogs(() => {
+        captureAndStripGeminiDemoCredentials();
+      });
+      assertFalse(fs.existsSync(filePath));
+      assertFalse(envHasCredentialName(process.env, GEMINI_DEMO_KEY_ENV));
+      assertFalse(envHasCredentialName(process.env, GEMINI_DEMO_PAID_ENV));
+      assertFalse(envHasCredentialName(process.env, GEMINI_DEMO_KEY_FILE_ENV));
+      const captured = getCapturedGeminiDemoCredentials();
+      assertEqual(captured.key, NONSECRET_MARKER);
+      assertEqual(captured.paidAcknowledged, false);
+      assertEqual(getGeminiDemoCaptureSource(), 'key-file');
+      const status = resolveGeminiDemoStatus({ demoMode: true });
+      assertTrue(status.keyPresent);
+      assertFalse(status.paidAcknowledged);
+      assertFalse(status.configured);
+      assertFalse(status.billingProven);
+      assertFalse(JSON.stringify(status).includes(NONSECRET_MARKER));
+      const statusLog = formatGeminiDemoStatusLog(status);
+      assertContains(statusLog, 'keyPresent=true');
+      assertContains(statusLog, 'paidAcknowledged=false');
+      assertContains(statusLog, 'configured=false');
+      assertContains(statusLog, 'billingProven=false');
+      assertFalse(statusLog.includes(NONSECRET_MARKER));
+      const joined = logs.join('\n');
+      assertContains(joined, 'source=key-file');
+      assertFalse(joined.includes(NONSECRET_MARKER));
+      assertFalse(joined.includes(filePath));
+    } finally {
+      resetGeminiDemoCredentialsForTests();
+      try {
+        fs.rmSync(path.dirname(filePath), { recursive: true, force: true });
+      } catch (err) {
+        // already unlinked
+      }
+    }
+  });
+
+  await test('launch-env KEY/PAID are ignored and never captured', () => {
     resetGeminiDemoCredentialsForTests();
     process.env[GEMINI_DEMO_KEY_ENV] = NONSECRET_MARKER;
     process.env[GEMINI_DEMO_PAID_ENV] = '1';
     try {
-      captureAndStripGeminiDemoCredentials();
+      const logs = collectLogs(() => {
+        captureAndStripGeminiDemoCredentials();
+      });
+      assertEqual(getCapturedGeminiDemoCredentials().key, '');
+      assertEqual(getCapturedGeminiDemoCredentials().paidAcknowledged, false);
+      assertEqual(getGeminiDemoCaptureSource(), 'launch-env-ignored');
       assertFalse(envHasCredentialName(process.env, GEMINI_DEMO_KEY_ENV));
       assertFalse(envHasCredentialName(process.env, GEMINI_DEMO_PAID_ENV));
-      const captured = getCapturedGeminiDemoCredentials();
-      assertEqual(captured.key, NONSECRET_MARKER);
-      assertEqual(captured.paidAcknowledged, true);
       const status = resolveGeminiDemoStatus({ demoMode: true });
-      assertTrue(status.configured);
-      assertTrue(status.keyPresent);
-      assertFalse(status.billingProven);
-      assertFalse(JSON.stringify(status).includes(NONSECRET_MARKER));
+      assertFalse(status.keyPresent);
+      assertFalse(status.configured);
+      const joined = logs.join('\n');
+      assertContains(joined, 'launch environment and ignored');
+      assertContains(joined, 'source=launch-env-ignored');
+      assertFalse(joined.includes(NONSECRET_MARKER));
     } finally {
       resetGeminiDemoCredentialsForTests();
     }
   });
 
-  await test('child spawned from stripped process.env does not inherit the named key', () => {
+  await test('child spawned after KEY_FILE capture has no key name, paid name, or marker value', () => {
     resetGeminiDemoCredentialsForTests();
-    process.env[GEMINI_DEMO_KEY_ENV] = NONSECRET_MARKER;
-    process.env[GEMINI_DEMO_PAID_ENV] = '0';
+    const filePath = writeKeyFile('0', NONSECRET_MARKER);
+    process.env[GEMINI_DEMO_KEY_FILE_ENV] = filePath;
     try {
-      assertEqual(childNamedEnvProbe({ ...process.env }), 'PRESENT');
-      captureAndStripGeminiDemoCredentials();
-      assertEqual(childNamedEnvProbe(process.env), 'ABSENT');
+      assertEqual(childNamedEnvProbe({ ...process.env }, GEMINI_DEMO_KEY_FILE_ENV), 'PRESENT');
+      collectLogs(() => {
+        captureAndStripGeminiDemoCredentials();
+      });
+      assertEqual(childNamedEnvProbe(process.env, GEMINI_DEMO_KEY_ENV), 'ABSENT');
+      assertEqual(childNamedEnvProbe(process.env, GEMINI_DEMO_PAID_ENV), 'ABSENT');
+      assertEqual(childNamedEnvProbe(process.env, GEMINI_DEMO_KEY_FILE_ENV), 'ABSENT');
+      assertEqual(childEnvValuesContain(process.env, NONSECRET_MARKER), 'ABSENT');
       assertEqual(getCapturedGeminiDemoCredentials().key, NONSECRET_MARKER);
     } finally {
       resetGeminiDemoCredentialsForTests();
+      try {
+        fs.rmSync(path.dirname(filePath), { recursive: true, force: true });
+      } catch (err) {
+        // already unlinked
+      }
     }
   });
 
@@ -427,18 +520,24 @@ async function run() {
       PATH: process.env.PATH,
       [GEMINI_DEMO_KEY_ENV]: NONSECRET_MARKER,
       [GEMINI_DEMO_PAID_ENV]: '1',
+      [GEMINI_DEMO_KEY_FILE_ENV]: '/tmp/ms-gemini-path-only',
     };
-    assertEqual(childNamedEnvProbe(snapshot), 'PRESENT');
-    assertEqual(childNamedEnvProbe(sanitizeSpawnEnv(snapshot)), 'ABSENT');
+    assertEqual(childNamedEnvProbe(snapshot, GEMINI_DEMO_KEY_ENV), 'PRESENT');
+    assertEqual(childNamedEnvProbe(sanitizeSpawnEnv(snapshot), GEMINI_DEMO_KEY_ENV), 'ABSENT');
+    assertEqual(childNamedEnvProbe(sanitizeSpawnEnv(snapshot), GEMINI_DEMO_PAID_ENV), 'ABSENT');
+    assertEqual(childNamedEnvProbe(sanitizeSpawnEnv(snapshot), GEMINI_DEMO_KEY_FILE_ENV), 'ABSENT');
+    assertEqual(childEnvValuesContain(sanitizeSpawnEnv(snapshot), NONSECRET_MARKER), 'ABSENT');
     assertFalse(envHasCredentialName(sanitizeSpawnEnv(snapshot), GEMINI_DEMO_KEY_ENV));
   });
 
-  await test('host fetch after capture does not read the key back out of process.env', async () => {
+  await test('host fetch after KEY_FILE capture does not read the key back out of process.env', async () => {
     resetGeminiDemoCredentialsForTests();
-    process.env[GEMINI_DEMO_KEY_ENV] = NONSECRET_MARKER;
-    process.env[GEMINI_DEMO_PAID_ENV] = '1';
+    const filePath = writeKeyFile('1', NONSECRET_MARKER);
+    process.env[GEMINI_DEMO_KEY_FILE_ENV] = filePath;
     try {
-      captureAndStripGeminiDemoCredentials();
+      collectLogs(() => {
+        captureAndStripGeminiDemoCredentials();
+      });
       const { fetch, calls } = recordingFetch(jsonFetch(liveOutput));
       const out = await runGeminiDemoQuery(
         { generation: 1, query: 'x', messages: [demoMail()] },
@@ -447,9 +546,47 @@ async function run() {
       requireHostOk(out);
       assertEqual(calls[0].init.headers?.['x-goog-api-key'], NONSECRET_MARKER);
       assertFalse(envHasCredentialName(process.env, GEMINI_DEMO_KEY_ENV));
+      assertFalse(envHasCredentialName(process.env, GEMINI_DEMO_KEY_FILE_ENV));
     } finally {
       resetGeminiDemoCredentialsForTests();
+      try {
+        fs.rmSync(path.dirname(filePath), { recursive: true, force: true });
+      } catch (err) {
+        // already unlinked
+      }
     }
+  });
+
+  await test('KEY_FILE group/other-readable is refused and not captured', () => {
+    resetGeminiDemoCredentialsForTests();
+    const filePath = writeKeyFile('1', NONSECRET_MARKER, 0o644);
+    process.env[GEMINI_DEMO_KEY_FILE_ENV] = filePath;
+    try {
+      const logs = collectLogs(() => {
+        captureAndStripGeminiDemoCredentials();
+      });
+      assertEqual(getCapturedGeminiDemoCredentials().key, '');
+      assertEqual(getGeminiDemoCaptureSource(), 'none');
+      assertTrue(fs.existsSync(filePath));
+      assertContains(logs.join('\n'), '0600 required');
+      assertFalse(logs.join('\n').includes(NONSECRET_MARKER));
+    } finally {
+      resetGeminiDemoCredentialsForTests();
+      fs.rmSync(path.dirname(filePath), { recursive: true, force: true });
+    }
+  });
+
+  await test('wrapper execs Electron with KEY/PAID unset and only KEY_FILE', () => {
+    const wrapper = fs.readFileSync(
+      path.join(__dirname, '../../../scripts/start-demo-gemini.sh'),
+      'utf8'
+    );
+    assertContains(wrapper, 'env -u MAILSPRING_DEMO_GEMINI_API_KEY -u MAILSPRING_DEMO_GEMINI_PAID');
+    assertContains(wrapper, 'Electron.app/Contents/MacOS/Electron');
+    assertContains(wrapper, 'MAILSPRING_DEMO_GEMINI_KEY_FILE');
+    assertContains(wrapper, 'node_modules/.bin/electron');
+    assertFalse(/MAILSPRING_DEMO_GEMINI_API_KEY=/.test(wrapper));
+    assertFalse(/MAILSPRING_DEMO_GEMINI_PAID=/.test(wrapper));
   });
 
   await test('allowLiveSynthetic accepts isMock false only for synthetic sources', () => {
@@ -527,6 +664,9 @@ async function run() {
     );
     assertContains(mainJs, 'captureAndStripGeminiDemoCredentials');
     assertContains(appTs, 'registerGeminiDemoIpcHandlers');
+    assertContains(appTs, 'formatGeminiDemoStatusLog');
+    assertContains(appTs, 'resolveGeminiDemoStatus');
+    assertContains(protocolTs, 'MAILSPRING_DEMO_GEMINI_KEY_FILE');
     assertContains(ipcTs, 'handleFromMailspringWindows');
     assertContains(ipcTs, 'GEMINI_IPC_STATUS');
     assertContains(ipcTs, 'credentials: opts.credentials');
@@ -553,7 +693,17 @@ async function run() {
   await test('docs require paid project, do not promise zero retention or a hard cost cap', () => {
     const guide = fs.readFileSync(path.join(__dirname, 'MAC-BUILD-GUIDE.md'), 'utf8');
     assertContains(guide, 'MAILSPRING_DEMO_GEMINI_API_KEY');
-    assertContains(guide, 'MAILSPRING_DEMO_GEMINI_PAID=1');
+    assertContains(guide, 'MAILSPRING_DEMO_GEMINI_PAID');
+    assertContains(guide, 'MAILSPRING_DEMO_GEMINI_KEY_FILE');
+    assertContains(guide, 'start-demo-gemini.sh');
+    assertContains(guide, 'env -u MAILSPRING_DEMO_GEMINI_API_KEY');
+    assertContains(guide, 'paid=0');
+    assertContains(guide, 'keyPresent=true');
+    assertContains(guide, 'paidAcknowledged=false');
+    assertContains(guide, '33d7f263');
+    assertContains(guide, 'Electron main');
+    assertContains(guide, 'Node launcher');
+    assertContains(guide, 'Mock AI');
     assertContains(guide, 'gemini-3.5-flash-lite');
     assertContains(guide, 'not a consumer Gemini');
     assertContains(guide, 'cannot prove billing');
@@ -565,11 +715,14 @@ async function run() {
     assertContains(guide, 'UNRUN native process-boundary');
     assertFalse(guide.includes('free-tier-only project is enough'));
     assertFalse(guide.toLowerCase().includes('zero retention guaranteed'));
+    assertFalse(
+      guide.includes("MAILSPRING_DEMO_GEMINI_API_KEY='MAILSPRING_DEMO_GEMINI_NONSECRET_MARKER'")
+    );
   });
 
   console.log('\n' + '='.repeat(40));
   console.log(`Results: ${passed} passed, ${failed} failed`);
-  console.log('UNRUN in this cloud agent — expected 22 until local Mac run.');
+  console.log('UNRUN in this cloud agent — expected 25 until local Mac run.');
   console.log('='.repeat(40) + '\n');
   if (failed > 0) process.exit(1);
 }

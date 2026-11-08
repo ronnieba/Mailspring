@@ -19,13 +19,18 @@ export const GEMINI_DEMO_MODEL = 'gemini-3.5-flash-lite';
 export const GEMINI_DEMO_API_REVISION = '2026-05-20';
 
 /**
- * Launch-env name captured into main-process memory then stripped from
- * process.env before Electron children spawn. Never argv, config.json,
- * Keychain, IPC, logs, or renderer environ.
+ * Named OS environment variables that must never appear on Electron main,
+ * the demo launcher, or Chromium helper exec environ. Native 33d7f263:
+ * JS `delete process.env` did not rewrite macOS `ps eww` exec-time environ
+ * on main (PID 71003) or the Node launcher (PID 71001). Delivery is
+ * MAILSPRING_DEMO_GEMINI_KEY_FILE (path to a 0600 file). Never argv,
+ * config.json, Keychain, IPC, logs, or renderer environ.
  */
 export const GEMINI_DEMO_KEY_ENV = 'MAILSPRING_DEMO_GEMINI_API_KEY';
 /** Explicit operator ack that the key belongs to a paid project. Not proof of billing. */
 export const GEMINI_DEMO_PAID_ENV = 'MAILSPRING_DEMO_GEMINI_PAID';
+/** Path-only bootstrap. The file holds `paid=0|1` then the key. Not the secret. */
+export const GEMINI_DEMO_KEY_FILE_ENV = 'MAILSPRING_DEMO_GEMINI_KEY_FILE';
 
 export const GEMINI_IPC_STATUS = 'gemini-demo:status';
 export const GEMINI_IPC_QUERY = 'gemini-demo:query';
