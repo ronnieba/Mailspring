@@ -223,17 +223,17 @@ Parent runs these on Mac from repo root (and once from another cwd with `--prefi
 | `test-demo-sidebar.ts` | 21 |
 | `test-demo-query.ts` | 18 |
 | `test-ai-boundary.ts` | **17** |
-| `test-gemini-demo.ts` | **25** (mocked transport + KEY_FILE bootstrap; launch-env KEY ignored) |
+| `test-gemini-demo.ts` | **31** (mocked transport + KEY_FILE + official Interaction envelope) |
 | `test-demo-cli.ts` | 12 |
-| **prior portable subtotal** | **202** |
+| **prior portable subtotal** | **208** |
 | `test-composer-direction.ts` | 14 |
 | `test-composer-spell.ts` | 21 |
 | `test-demo-composer.ts` | 13 |
 | **composer subtotal (no sidecar)** | **48** |
 | `test-nspell-engine.ts` | **13** (requires sidecar install) |
-| **portable total after sidecar** | **263** |
+| **portable total after sidecar** | **269** |
 
-Without sidecar install: prior **250** + alt-cwd **48** still apply. After `install.sh`: **263** portable (250+13). Composer+engine alt-cwd remains **61** (48+13) unless `test-ai-boundary.ts` / `test-gemini-demo.ts` are included (**+17 / +25**). Do not run these in cloud CI. Preserve 34a90265 layout/AI/isolation. Do not rewrite `app/package-lock.json`.
+Without sidecar install: prior **256** + alt-cwd **48** still apply. After `install.sh`: **269** portable (256+13). Composer+engine alt-cwd remains **61** (48+13) unless `test-ai-boundary.ts` / `test-gemini-demo.ts` are included (**+17 / +31**). Do not run these in cloud CI. Preserve 34a90265 layout/AI/isolation. Do not rewrite `app/package-lock.json`.
 
 **This SHA targeted Mac commands (do not claim f89b4e4b 221+61 / 81 UI):**
 
@@ -241,7 +241,7 @@ Without sidecar install: prior **250** + alt-cwd **48** still apply. After `inst
 npx ts-node --project app/tsconfig.json app/internal_packages/ai-sidebar/test-ai-boundary.ts
 # expected 17 passed, natural exit
 npx ts-node --project app/tsconfig.json app/internal_packages/ai-sidebar/test-gemini-demo.ts
-# expected 25 passed (mocked transport + KEY_FILE bootstrap; launch-env KEY ignored; no live Gemini)
+# expected 31 passed (mocked transport + KEY_FILE + official Interaction envelope; no live Gemini)
 npx ts-node --project app/tsconfig.json app/internal_packages/ai-sidebar/test-demo-query.ts
 # expected 18 passed (explicit exhaustive 2/5/6)
 npx ts-node --project app/tsconfig.json app/internal_packages/ai-sidebar/test-demo-sidebar.ts
@@ -295,7 +295,11 @@ Pinned model: `gemini-3.5-flash-lite` (no auto-substitution). Official Interacti
 
 `POST https://generativelanguage.googleapis.com/v1beta/interactions`
 
-Headers: `x-goog-api-key`, `Content-Type: application/json`, `Api-Revision: 2026-05-20`. Read `output_text`. Sources: https://ai.google.dev/gemini-api/docs/get-started · https://ai.google.dev/gemini-api/docs/pricing · https://ai.google.dev/gemini-api/docs/billing · https://ai.google.dev/gemini-api/terms#data-use-paid
+Headers: `x-goog-api-key`, `Content-Type: application/json`, `Api-Revision: 2026-05-20`. REST body is an Interaction resource: `status` plus `steps[]` (`type=model_output`, `content[].type=text` JSON). `output_text` is an SDK convenience, not a REST field. Also accept `output: [json string]` as observed on a standalone HTTP 200. Distinguish `failed` / `incomplete` / empty from schema failure. Do not mock-fallback or substitute the model.
+
+Native 856fbc6d (existing main 72367, one Send on synthetic `שרשור פגישת צוות (2 הודעות)`): UI `Gemini response missing output_text`. HTTP status/body/tokens were **not captured** — do not infer a native HTTP 200 from that string. No further paid requests until this parser is on the running app.
+
+Sources: https://ai.google.dev/gemini-api/docs/get-started · https://ai.google.dev/gemini-api/docs/pricing · https://ai.google.dev/gemini-api/docs/billing · https://ai.google.dev/gemini-api/terms#data-use-paid
 
 Listed paid price for this model as of 2026-11-08: **$0.30 input / $2.50 output per 1M tokens** (output includes thinking). Parent is researching rates, prepaid amount, and spend controls. App token estimates are **not** a cost ceiling.
 

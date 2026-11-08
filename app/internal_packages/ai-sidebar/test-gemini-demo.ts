@@ -27,6 +27,8 @@ import {
 import {
   GeminiFetch,
   buildUntrustedGeminiInput,
+  classifyGeminiInteractionStatus,
+  extractGeminiInteractionOutput,
   redactSecret,
   resolveGeminiDemoStatus,
   runGeminiDemoQuery,
@@ -190,6 +192,16 @@ function jsonFetch(output: object, usage: object = { total_tokens: 11 }): Gemini
   });
 }
 
+function envelopeFetch(envelope: object): GeminiFetch {
+  return async () => ({
+    ok: true,
+    status: 200,
+    async text() {
+      return JSON.stringify(envelope);
+    },
+  });
+}
+
 function recordingFetch(impl: GeminiFetch) {
   const calls: Array<{ url: string; init: Parameters<GeminiFetch>[1] }> = [];
   const fetch: GeminiFetch = async (url, init) => {
@@ -215,18 +227,79 @@ function hangingFetch(): GeminiFetch {
     });
 }
 
+const liveCitation = {
+  messageId: 'demo-msg-1',
+  threadId: 'demo-thread-1',
+  subject: '🧪 [DEMO] test',
+  from: 'demo-manager@synthetic.test',
+  date: '2024-11-01T00:00:00Z',
+  snippet: 'fixture',
+};
+
 const liveOutput = {
   response: 'DEMO live answer',
-  citations: [
+  citations: [liveCitation],
+};
+
+const HEBREW_SUMMARY = 'מטרת ההודעה היא הזמנה לפגישת דמו שתתקיים ביום שלישי.';
+
+const mailspringSchemaJson = JSON.stringify({
+  response: HEBREW_SUMMARY,
+  citations: [liveCitation],
+});
+
+/** Official REST Interaction resource (docs 2026-11-08). No output_text field. */
+const officialStepsEnvelope = {
+  id: 'v1_fixture',
+  object: 'interaction',
+  status: 'completed',
+  model: GEMINI_DEMO_MODEL,
+  usage: {
+    total_tokens: 159,
+    total_input_tokens: 109,
+    total_output_tokens: 50,
+    total_thought_tokens: 0,
+  },
+  steps: [
+    { type: 'thought', signature: 'fixture-thought' },
     {
-      messageId: 'demo-msg-1',
-      threadId: 'demo-thread-1',
-      subject: '🧪 [DEMO] test',
-      from: 'demo-manager@synthetic.test',
-      date: '2024-11-01T00:00:00Z',
-      snippet: 'fixture',
+      type: 'model_output',
+      content: [{ type: 'text', text: mailspringSchemaJson }],
     },
   ],
+};
+
+/**
+ * Sanitized standalone HTTP 200 envelope (2026-11-08 16:48:30 Asia/Jerusalem).
+ * `output: [json string]`, no `output_text`. Schema is that request's
+ * {answer, source_id}, not Mailspring {response, citations}.
+ */
+const standaloneReportEnvelope = {
+  status: 'completed',
+  model: GEMINI_DEMO_MODEL,
+  service_tier: 'standard',
+  usage: {
+    total_tokens: 159,
+    total_input_tokens: 109,
+    input_tokens_by_modality: [{ modality: 'text', tokens: 109 }],
+    total_cached_tokens: 0,
+    total_output_tokens: 50,
+    total_tool_use_tokens: 0,
+    total_thought_tokens: 0,
+    initial_input_tokens: 109,
+  },
+  output: [`{\n  "answer": "${HEBREW_SUMMARY}",\n  "source_id": "SYNTH-MAIL-001"\n}`],
+};
+
+const outputArrayMailspringEnvelope = {
+  status: 'completed',
+  model: GEMINI_DEMO_MODEL,
+  usage: {
+    total_tokens: 159,
+    total_input_tokens: 109,
+    total_output_tokens: 50,
+  },
+  output: [mailspringSchemaJson],
 };
 
 async function run() {
@@ -404,6 +477,103 @@ async function run() {
       { demoMode: true, env: paidEnv(), fetch }
     );
     assertEqual(requireHostFailure(out).reason, 'invalid-output-json');
+  });
+
+  console.log('\nCategory: official Interaction envelope — no SDK output_text required');
+  await test('REST steps model_output JSON succeeds without output_text', async () => {
+    const extracted = extractGeminiInteractionOutput(officialStepsEnvelope);
+    assertEqual(extracted.status, 'completed');
+    assertTrue(extracted.text.includes(HEBREW_SUMMARY));
+    assertFalse(Object.prototype.hasOwnProperty.call(officialStepsEnvelope, 'output_text'));
+    const out = await runGeminiDemoQuery(
+      { generation: 1, query: 'סכם', messages: [demoMail()] },
+      { demoMode: true, env: paidEnv(), fetch: envelopeFetch(officialStepsEnvelope) }
+    );
+    const ok = requireHostOk(out);
+    assertEqual(ok.payload.isMock, false);
+    assertEqual(ok.payload.response, HEBREW_SUMMARY);
+    assertEqual(ok.payload.tokensUsed, 159);
+  });
+
+  await test('standalone-style output[] with Mailspring schema succeeds', async () => {
+    const extracted = extractGeminiInteractionOutput(outputArrayMailspringEnvelope);
+    assertEqual(extracted.status, 'completed');
+    assertTrue(extracted.text.includes('"response"'));
+    const out = await runGeminiDemoQuery(
+      { generation: 1, query: 'סכם', messages: [demoMail()] },
+      { demoMode: true, env: paidEnv(), fetch: envelopeFetch(outputArrayMailspringEnvelope) }
+    );
+    assertEqual(requireHostOk(out).payload.response, HEBREW_SUMMARY);
+  });
+
+  await test('standalone {answer,source_id} envelope fails closed and is not a mock', async () => {
+    const extracted = extractGeminiInteractionOutput(standaloneReportEnvelope);
+    assertEqual(extracted.status, 'completed');
+    assertContains(extracted.text, 'SYNTH-MAIL-001');
+    const out = await runGeminiDemoQuery(
+      { generation: 1, query: 'סכם', messages: [demoMail()] },
+      { demoMode: true, env: paidEnv(), fetch: envelopeFetch(standaloneReportEnvelope) }
+    );
+    const fail = requireHostFailure(out);
+    assertEqual(fail.reason, 'invalid-schema');
+    assertFalse(fail.message.toLowerCase().includes('mock'));
+    assertFalse(fail.reason === 'missing-output-text');
+  });
+
+  await test('status=failed is distinguished from empty or missing output_text', async () => {
+    const out = await runGeminiDemoQuery(
+      { generation: 1, query: 'x', messages: [demoMail()] },
+      {
+        demoMode: true,
+        env: paidEnv(),
+        fetch: envelopeFetch({ status: 'failed', error: { message: 'upstream' } }),
+      }
+    );
+    const fail = requireHostFailure(out);
+    assertEqual(fail.reason, 'provider-failed');
+    assertContains(fail.message, 'status=failed');
+    assertFalse(fail.message.includes('missing output_text'));
+  });
+
+  await test('status=incomplete and in_progress do not parse partial JSON', async () => {
+    const incomplete = await runGeminiDemoQuery(
+      { generation: 1, query: 'x', messages: [demoMail()] },
+      {
+        demoMode: true,
+        env: paidEnv(),
+        fetch: envelopeFetch({
+          status: 'incomplete',
+          steps: [
+            {
+              type: 'model_output',
+              content: [{ type: 'text', text: '{"response":' }],
+            },
+          ],
+        }),
+      }
+    );
+    assertEqual(requireHostFailure(incomplete).reason, 'incomplete');
+    const pending = await runGeminiDemoQuery(
+      { generation: 1, query: 'x', messages: [demoMail()] },
+      { demoMode: true, env: paidEnv(), fetch: envelopeFetch({ status: 'in_progress' }) }
+    );
+    assertEqual(requireHostFailure(pending).reason, 'incomplete');
+    assertEqual(classifyGeminiInteractionStatus('requires_action')?.reason, 'incomplete');
+  });
+
+  await test('completed empty model output is empty-output, not a mock', async () => {
+    const out = await runGeminiDemoQuery(
+      { generation: 1, query: 'x', messages: [demoMail()] },
+      {
+        demoMode: true,
+        env: paidEnv(),
+        fetch: envelopeFetch({ status: 'completed', steps: [], output: [] }),
+      }
+    );
+    const fail = requireHostFailure(out);
+    assertEqual(fail.reason, 'empty-output');
+    assertFalse(fail.message.includes('missing output_text'));
+    assertFalse(fail.message.toLowerCase().includes('mock'));
   });
 
   await test('redactSecret strips the key from error text', () => {
@@ -676,7 +846,12 @@ async function run() {
     assertContains(protocolTs, GEMINI_DEMO_MODEL);
     assertContains(hostTs, 'GEMINI_DEMO_ENDPOINT');
     assertContains(hostTs, 'GEMINI_DEMO_MODEL');
+    assertContains(hostTs, 'model_output');
+    assertContains(hostTs, 'empty-output');
+    assertContains(hostTs, 'provider-failed');
     assertFalse(hostTs.includes('?key='));
+    assertFalse(hostTs.includes('Gemini response missing output_text'));
+    assertFalse(hostTs.includes('missing-output-text'));
     assertContains(storeTs, 'allowLiveSynthetic');
     assertContains(storeTs, 'areSyntheticDemoSources');
     assertContains(storeTs, 'validated.result.isMock');
@@ -713,6 +888,8 @@ async function run() {
     assertContains(guide, 'MAILSPRING_DEMO_GEMINI_NONSECRET_MARKER');
     assertContains(guide, '--type=renderer');
     assertContains(guide, 'UNRUN native process-boundary');
+    assertContains(guide, 'model_output');
+    assertContains(guide, '856fbc6d');
     assertFalse(guide.includes('free-tier-only project is enough'));
     assertFalse(guide.toLowerCase().includes('zero retention guaranteed'));
     assertFalse(
@@ -722,7 +899,7 @@ async function run() {
 
   console.log('\n' + '='.repeat(40));
   console.log(`Results: ${passed} passed, ${failed} failed`);
-  console.log('UNRUN in this cloud agent — expected 25 until local Mac run.');
+  console.log('UNRUN in this cloud agent — expected 31 until local Mac run.');
   console.log('='.repeat(40) + '\n');
   if (failed > 0) process.exit(1);
 }

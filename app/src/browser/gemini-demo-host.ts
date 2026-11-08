@@ -19,6 +19,7 @@ import {
   GeminiDemoMailRef,
   GeminiDemoQueryInput,
   GeminiDemoStatus,
+  GeminiHostFailure,
   GeminiHostResult,
   NON_SYNTHETIC_SOURCE_REASON,
   areSyntheticDemoMailRefs,
@@ -125,12 +126,160 @@ export function resolveGeminiDemoStatus(opts: {
   };
 }
 
-function fail(reason: string, message: string): GeminiHostResult {
+function fail(reason: string, message: string): GeminiHostFailure {
   return { ok: false, reason, message };
 }
 
 function isRecord(v: unknown): v is Record<string, unknown> {
   return typeof v === 'object' && v !== null && !Array.isArray(v);
+}
+
+/**
+ * REST Interaction resource (docs 2026-11-08): `status` plus `steps`.
+ * SDK `.output_text` is not serialized on the JSON body.
+ *
+ * Native 856fbc6d (main 72367, one Send, synthetic thread
+ * "שרשור פגישת צוות (2 הודעות)"): UI failed because the parser required the
+ * SDK convenience field on the REST JSON. HTTP status, model, body shape,
+ * and tokens were not captured — do not infer a native HTTP 200 from that
+ * parser string. A separate standalone box HTTP 200 (same model) used
+ * `status=completed` and `output: [json]` with no SDK convenience field
+ * (109 in / 50 out).
+ * https://ai.google.dev/gemini-api/docs/get-started
+ * https://aistudio.google.com/api-reference/interactions-api/create-interaction
+ */
+export type GeminiInteractionExtract = {
+  status: string;
+  text: string;
+  parsedObject: unknown | null;
+};
+
+function isTextContentBlock(v: unknown): v is { type: string; text: string } {
+  return isRecord(v) && v.type === 'text' && typeof v.text === 'string';
+}
+
+function collectOutputItems(items: unknown[]): GeminiInteractionExtract {
+  const texts: string[] = [];
+  let parsedObject: unknown | null = null;
+  for (const item of items) {
+    if (typeof item === 'string') {
+      if (item.trim()) {
+        texts.push(item);
+      }
+      continue;
+    }
+    if (isTextContentBlock(item) && item.text.trim()) {
+      texts.push(item.text);
+      continue;
+    }
+    if (isRecord(item) && typeof item.text === 'string' && item.text.trim() && !item.type) {
+      texts.push(item.text);
+      continue;
+    }
+    if (isRecord(item) && item.type !== 'text' && item.type !== 'thought') {
+      parsedObject = item;
+    }
+  }
+  if (texts.length > 0) {
+    return { status: '', text: texts.join('\n').trim(), parsedObject: null };
+  }
+  return { status: '', text: '', parsedObject };
+}
+
+function textFromModelOutputSteps(steps: unknown): string {
+  if (!Array.isArray(steps)) {
+    return '';
+  }
+  const texts: string[] = [];
+  for (const step of steps) {
+    if (!isRecord(step)) {
+      continue;
+    }
+    if (step.type !== 'model_output' && step.type !== 'model_turn') {
+      continue;
+    }
+    if (!Array.isArray(step.content)) {
+      continue;
+    }
+    for (const block of step.content) {
+      if (isTextContentBlock(block) && block.text.trim()) {
+        texts.push(block.text);
+      }
+    }
+  }
+  return texts.join('\n').trim();
+}
+
+export function extractGeminiInteractionOutput(
+  envelope: Record<string, unknown>
+): GeminiInteractionExtract {
+  const status = typeof envelope.status === 'string' ? envelope.status : '';
+  const fromSteps = textFromModelOutputSteps(envelope.steps);
+  if (fromSteps) {
+    return { status, text: fromSteps, parsedObject: null };
+  }
+  if (Array.isArray(envelope.output)) {
+    const fromOutput = collectOutputItems(envelope.output);
+    if (fromOutput.text || fromOutput.parsedObject) {
+      return { status, text: fromOutput.text, parsedObject: fromOutput.parsedObject };
+    }
+  }
+  if (Array.isArray(envelope.outputs)) {
+    const fromOutputs = collectOutputItems(envelope.outputs);
+    if (fromOutputs.text || fromOutputs.parsedObject) {
+      return { status, text: fromOutputs.text, parsedObject: fromOutputs.parsedObject };
+    }
+  }
+  if (typeof envelope.output_text === 'string' && envelope.output_text.trim()) {
+    return { status, text: envelope.output_text.trim(), parsedObject: null };
+  }
+  return { status, text: '', parsedObject: null };
+}
+
+export function classifyGeminiInteractionStatus(status: string): GeminiHostFailure | null {
+  if (!status || status === 'completed') {
+    return null;
+  }
+  if (status === 'failed') {
+    return fail('provider-failed', 'Gemini interaction status=failed. No model substitution.');
+  }
+  if (status === 'cancelled') {
+    return fail(
+      'provider-cancelled',
+      'Gemini interaction status=cancelled. No model substitution.'
+    );
+  }
+  if (
+    status === 'incomplete' ||
+    status === 'in_progress' ||
+    status === 'requires_action' ||
+    status === 'requires_continuation'
+  ) {
+    return fail('incomplete', `Gemini interaction status=${status}. No model substitution.`);
+  }
+  return fail('unexpected-status', `Gemini interaction status=${status}. No model substitution.`);
+}
+
+function parseModelJson(
+  extracted: GeminiInteractionExtract
+): { kind: 'ok'; value: unknown } | { kind: 'fail'; failure: GeminiHostFailure } {
+  if (extracted.parsedObject !== null && extracted.parsedObject !== undefined) {
+    return { kind: 'ok', value: extracted.parsedObject };
+  }
+  if (!extracted.text) {
+    return {
+      kind: 'fail',
+      failure: fail('empty-output', 'Gemini interaction completed with empty model output'),
+    };
+  }
+  try {
+    return { kind: 'ok', value: JSON.parse(extracted.text) };
+  } catch {
+    return {
+      kind: 'fail',
+      failure: fail('invalid-output-json', 'Gemini model output was not JSON'),
+    };
+  }
 }
 
 function readTokens(body: Record<string, unknown>): number {
@@ -265,21 +414,23 @@ export async function runGeminiDemoQuery(
     if (!isRecord(envelope)) {
       return fail('invalid-response', 'Gemini response was not an object');
     }
-    if (typeof envelope.output_text !== 'string' || !envelope.output_text.trim()) {
-      return fail('missing-output-text', 'Gemini response missing output_text');
+
+    const extracted = extractGeminiInteractionOutput(envelope);
+    const statusFail = classifyGeminiInteractionStatus(extracted.status);
+    if (statusFail) {
+      return statusFail;
     }
 
-    let modelJson: unknown;
-    try {
-      modelJson = JSON.parse(envelope.output_text);
-    } catch {
-      return fail('invalid-output-json', 'Gemini output_text was not JSON');
+    const parsed = parseModelJson(extracted);
+    if (parsed.kind === 'fail') {
+      return parsed.failure;
     }
+    const modelJson = parsed.value;
     if (!isRecord(modelJson) || typeof modelJson.response !== 'string') {
-      return fail('invalid-schema', 'Gemini output_text.response must be a string');
+      return fail('invalid-schema', 'Gemini model JSON response must be a string');
     }
     if (!Array.isArray(modelJson.citations)) {
-      return fail('invalid-schema', 'Gemini output_text.citations must be an array');
+      return fail('invalid-schema', 'Gemini model JSON citations must be an array');
     }
 
     return {

@@ -4,6 +4,11 @@
  * Endpoint and headers follow the Interactions REST docs (read 2026-11-08):
  * POST https://generativelanguage.googleapis.com/v1beta/interactions
  * x-goog-api-key, Content-Type: application/json, Api-Revision: 2026-05-20
+ * REST Interaction resource: `status` + `steps[]` (`model_output` /
+ * `content[].type=text`). `output_text` is an SDK convenience, not a REST
+ * JSON field. Native 856fbc6d UI failed because the parser required that
+ * SDK field (HTTP body not captured). Standalone HTTP 200 used
+ * `status=completed` and `output: [json]`.
  * https://ai.google.dev/gemini-api/docs/get-started
  *
  * Model is pinned. The host never substitutes another id on 429 or errors.
