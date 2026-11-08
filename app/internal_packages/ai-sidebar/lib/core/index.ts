@@ -27,6 +27,7 @@ export {
 export {
   assertReadOnlyImapCommand,
   estimateArchiveDisk,
+  estimateBaselineAndWorkCopy,
   inventoryFolders,
   plannedImapSnapshotSteps,
   YAHOO_FOLDER_CANDIDATES,

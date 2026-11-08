@@ -6,7 +6,9 @@
  * so flags, deletes, and mailbox mutation cannot happen.
  *
  * Yahoo IMAP is typically imap.mail.yahoo.com:993. App passwords are often
- * required. This SHA does not connect and does not take credentials.
+ * required. The experiment app never imports the snapshotter or takes
+ * credentials. Acquisition is `app/src/offline-snapshot/` (fake-server tests
+ * here; native Yahoo is a parent TTY step, never this cloud agent).
  */
 
 export const YAHOO_IMAP_HOST = 'imap.mail.yahoo.com';
@@ -158,9 +160,21 @@ export function estimateArchiveDisk(sizes: Array<number | null | undefined>): Di
       unknownSizes += 1;
     }
   }
-  // Maildir + manifest + hashes: ~15% overhead, plus 64MiB working margin.
+  // One copy: Maildir + manifest + hashes ~15% overhead, plus 64MiB margin.
   const recommendedFreeBytes = Math.ceil(rfc822Bytes * 1.15) + 64 * 1024 * 1024;
   return { rfc822Bytes, recommendedFreeBytes, messageCount, unknownSizes };
+}
+
+/** Baseline archive plus an independent working copy, then the 64MiB margin. */
+export function estimateBaselineAndWorkCopy(sizes: Array<number | null | undefined>): DiskEstimate {
+  const one = estimateArchiveDisk(sizes);
+  const oneCopy = Math.ceil(one.rfc822Bytes * 1.15);
+  return {
+    rfc822Bytes: one.rfc822Bytes,
+    messageCount: one.messageCount,
+    unknownSizes: one.unknownSizes,
+    recommendedFreeBytes: oneCopy * 2 + 64 * 1024 * 1024,
+  };
 }
 
 export function inventoryFolders(listed: ImapFolderInventory[]): {
@@ -193,7 +207,7 @@ export function snapshotResumeKey(folderPath: string, uidvalidity: number, uid: 
  */
 export function plannedImapSnapshotSteps(): string[] {
   return [
-    `TLS connect ${YAHOO_IMAP_HOST}:${YAHOO_IMAP_PORT} (not performed this SHA)`,
+    `TLS connect ${YAHOO_IMAP_HOST}:${YAHOO_IMAP_PORT} (standalone snapshotter; never this cloud agent)`,
     'CAPABILITY',
     'AUTHENTICATE / LOGIN (user, later; never this cloud agent)',
     'LIST "" "*"',

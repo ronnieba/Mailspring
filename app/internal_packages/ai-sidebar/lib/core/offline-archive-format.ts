@@ -6,6 +6,9 @@
 import * as crypto from 'crypto';
 import * as fs from 'fs';
 import * as path from 'path';
+import { displayFromRfc822 } from './offline-mime-display';
+
+export { stripRemoteHtml } from './offline-mime-display';
 
 export const OFFLINE_ARCHIVE_ACCOUNT_ID = 'offline-archive-account';
 export const OFFLINE_MSG_ID = /^offline-[a-f0-9]{16}$/;
@@ -127,17 +130,6 @@ export function countAttachments(raw: string): number {
   return matches ? matches.length : 0;
 }
 
-export function stripRemoteHtml(html: string): string {
-  return html
-    .replace(/<script\b[^>]*>[\s\S]*?<\/script>/gi, '')
-    .replace(/\son\w+\s*=\s*(['"]).*?\1/gi, '')
-    .replace(
-      /(<(?:img|iframe|video|audio|source|link)\b[^>]*\s(?:src|href|poster|srcset)\s*=\s*)(['"])\s*https?:\/\/[^'"]*\2/gi,
-      '$1$2#$2'
-    )
-    .replace(/url\(\s*['"]?https?:\/\/[^)]+\)/gi, 'url(#)');
-}
-
 export function splitMboxrd(raw: string): string[] {
   const text = raw.replace(/\r\n/g, '\n');
   if (!text.trim()) {
@@ -173,10 +165,8 @@ export function messageFromRfc822(
 ): OfflineArchiveMessage {
   const buf = Buffer.from(raw, 'latin1');
   const sha256 = sha256Hex(buf);
-  const headers = parseRfc822Headers(raw);
-  const bodyRaw = rfc822Body(raw);
-  const stripped = stripRemoteHtml(bodyRaw);
-  const snippet = stripped.replace(/\s+/g, ' ').trim().slice(0, 160);
+  const display = displayFromRfc822(raw);
+  const snippet = display.bodyText.replace(/\s+/g, ' ').trim().slice(0, 160);
   const folderId = folderPath.replace(/[\\/]/g, '-').replace(/[^A-Za-z0-9._-]/g, '_') || 'INBOX';
   return {
     id: offlineMessageIdFromHash(sha256),
@@ -184,14 +174,14 @@ export function messageFromRfc822(
     accountId: OFFLINE_ARCHIVE_ACCOUNT_ID,
     folderId,
     folderPath,
-    subject: headers.subject,
-    from: headers.from,
-    date: headers.date,
+    subject: display.subject,
+    from: display.from,
+    date: display.date,
     snippet,
-    bodyText: stripped.trim(),
+    bodyText: display.bodyText,
     sha256,
     byteLength: buf.length,
-    attachmentCount: countAttachments(raw),
+    attachmentCount: display.attachmentCount,
     sourceRelPath,
   };
 }

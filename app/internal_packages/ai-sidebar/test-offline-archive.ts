@@ -10,6 +10,7 @@ import * as path from 'path';
 import {
   assertReadOnlyImapCommand,
   estimateArchiveDisk,
+  estimateBaselineAndWorkCopy,
   inventoryFolders,
   plannedImapSnapshotSteps,
   YAHOO_FOLDER_CANDIDATES,
@@ -258,14 +259,17 @@ async function run() {
     assertEqual(est.rfc822Bytes, 4000);
     assertEqual(est.unknownSizes, 1);
     assertEqual(est.recommendedFreeBytes, Math.ceil(4000 * 1.15) + 64 * 1024 * 1024);
+    const two = estimateBaselineAndWorkCopy([1000, null, 3000]);
+    assertEqual(two.rfc822Bytes, 4000);
+    assertEqual(two.recommendedFreeBytes, Math.ceil(4000 * 1.15) * 2 + 64 * 1024 * 1024);
   });
 
-  await test('planned steps do not claim this SHA connects', () => {
+  await test('planned steps never claim the cloud agent connects', () => {
     const steps = plannedImapSnapshotSteps().join('\n');
-    assertContains(steps, 'not performed this SHA');
+    assertContains(steps, 'never this cloud agent');
     assertContains(steps, 'EXAMINE');
     assertContains(steps, 'BODY.PEEK[]');
-    assertContains(steps, 'never this cloud agent');
+    assertFalse(steps.includes('openssl s_client'));
   });
 
   console.log('\nCategory: archive format / fixtures');

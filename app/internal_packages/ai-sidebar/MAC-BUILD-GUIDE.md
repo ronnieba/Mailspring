@@ -46,6 +46,7 @@ npx ts-node --project app/tsconfig.json app/internal_packages/ai-sidebar/test-ai
 npx ts-node --project app/tsconfig.json app/internal_packages/ai-sidebar/test-gemini-demo.ts
 npx ts-node --project app/tsconfig.json app/internal_packages/ai-sidebar/test-real-selected-summary.ts
 npx ts-node --project app/tsconfig.json app/internal_packages/ai-sidebar/test-offline-archive.ts
+npx ts-node --project app/tsconfig.json app/internal_packages/ai-sidebar/test-offline-snapshot.ts
 npx ts-node --project app/tsconfig.json app/internal_packages/ai-sidebar/test-demo-cli.ts
 npx ts-node --project app/tsconfig.json app/internal_packages/ai-sidebar/test-composer-direction.ts
 npx ts-node --project app/tsconfig.json app/internal_packages/ai-sidebar/test-composer-spell.ts
@@ -236,16 +237,17 @@ Parent runs these on Mac from repo root (and once from another cwd with `--prefi
 | `test-gemini-demo.ts` | **41** (mocked transport + KEY_FILE + Keychain helper + dummy non-overwrite contract) |
 | `test-real-selected-summary.ts` | **17** (fake ids only; no live mail/keys) |
 | `test-offline-archive.ts` | **19** (fixtures + IMAP plan; no Yahoo / no paid call) |
+| `test-offline-snapshot.ts` | **12** (fake IMAP only; no Yahoo / no credentials / no paid call) |
 | `test-demo-cli.ts` | **16** |
-| **prior portable subtotal** | **276** |
+| **prior portable subtotal** | **288** |
 | `test-composer-direction.ts` | 14 |
 | `test-composer-spell.ts` | 21 |
 | `test-demo-composer.ts` | 13 |
 | **composer subtotal (no sidecar)** | **48** |
 | `test-nspell-engine.ts` | **13** (requires sidecar install) |
-| **portable total after sidecar** | **337** |
+| **portable total after sidecar** | **349** |
 
-Without sidecar install: prior **324** (276+48) + alt-cwd composer **48** still apply. After `install.sh`: **337** portable (324+13). Composer+engine alt-cwd remains **61** (48+13) unless `test-ai-boundary.ts` / `test-gemini-demo.ts` / `test-real-selected-summary.ts` / `test-offline-archive.ts` are included. Do not run these in cloud CI. Preserve 34a90265 layout/AI/isolation. Do not rewrite `app/package-lock.json`.
+Without sidecar install: prior **336** (288+48) + alt-cwd composer **48** still apply. After `install.sh`: **349** portable (336+13). Composer+engine alt-cwd remains **61** (48+13) unless `test-ai-boundary.ts` / `test-gemini-demo.ts` / `test-real-selected-summary.ts` / `test-offline-archive.ts` / `test-offline-snapshot.ts` are included. Do not run these in cloud CI. Preserve 34a90265 layout/AI/isolation. Do not rewrite `app/package-lock.json`.
 
 **This SHA targeted Mac commands (do not claim f89b4e4b 221+61 / 81 UI):**
 
@@ -258,6 +260,8 @@ npx ts-node --project app/tsconfig.json app/internal_packages/ai-sidebar/test-re
 # expected 17 passed (fake test-real-msg-1 only; no live Yahoo / no paid call)
 npx ts-node --project app/tsconfig.json app/internal_packages/ai-sidebar/test-offline-archive.ts
 # expected 19 passed (local fixtures + IMAP plan; no Yahoo / no paid call)
+npx ts-node --project app/tsconfig.json app/internal_packages/ai-sidebar/test-offline-snapshot.ts
+# expected 12 passed (fake IMAP server; no Yahoo / no credentials / no paid call)
 npx ts-node --project app/tsconfig.json app/internal_packages/ai-sidebar/test-demo-query.ts
 # expected 20 passed (exhaustive 2/5/6 + first-selected vs all-selected)
 npx ts-node --project app/tsconfig.json app/internal_packages/ai-sidebar/test-demo-sidebar.ts
@@ -494,39 +498,57 @@ Goal: a **complete local archive** on the Mac, a **read-only backup baseline**, 
 - Built-in folder export (`GetManyRFC2822Task`) needs **live mailsync**, is folder-at-a-time, and skips `drafts` / `starred` / `unread` roles (`EXCLUDED_EXPORT_ROLES`). It is not a full mailbox snapshot and is not a new export UI.
 - `--demo` is synthetic fixtures. `--real-selected-summary` is live Yahoo in Mailspring-dev. Neither is this mode.
 
-### Supported acquisition (later native; not this SHA)
+### Supported acquisition (standalone snapshotter; native Yahoo is parent-only)
 
-User-authorized **read-only IMAP snapshot**. This cloud agent does not connect and does not take credentials.
+Read-only IMAP snapshot lives in `app/src/offline-snapshot/`. The Mailspring-offline experiment app **does not import it** and cannot see Yahoo credentials or open IMAP. This cloud agent does not connect to Yahoo and does not take credentials.
 
-```text
-TLS imap.mail.yahoo.com:993
-LIST "" "*"
-EXAMINE each mailbox (never SELECT)
-UID FETCH 1:* (RFC822.SIZE)     → disk estimate before download
-UID FETCH … BODY.PEEK[]         → immutable .eml + sha256
-LOGOUT
-copy to a disposable working tree; original stays read-only
-```
+Allowlisted commands: `LIST` `EXAMINE` `UID FETCH … (RFC822.SIZE)` `UID FETCH … BODY.PEEK[]`. Forbidden: `STORE` `EXPUNGE` `MOVE` `APPEND` `COPY` `SELECT` `FETCH BODY[]` `FETCH RFC822` (those can set `\Seen` or mutate). Resume key is `folder + UIDVALIDITY + UID`. TLS for Yahoo is `imap.mail.yahoo.com:993` with `rejectUnauthorized: true`. Password is a **hidden Terminal prompt** (never argv, env, or logs). `--secret-from-stdin` is fake-server tests only.
 
-Forbidden: `STORE` `EXPUNGE` `MOVE` `APPEND` `COPY` `SELECT` `FETCH BODY[]` `FETCH RFC822` (those can set `\Seen` or mutate). Resume key is `folder + UIDVALIDITY + UID`.
-
-Script that **refuses to execute** (prints the plan, exit 2):
+No-args still refuses to connect (exit 2):
 
 ```bash
 sh scripts/offline-imap-snapshot.sh
 ```
 
-**Native prerequisites (parent Mac, after this plan):**
+Fake-server unit tests (this SHA; no Yahoo):
 
-1. Yahoo account that can IMAP. **App password is often required**; OAuth IMAP may or may not work. Do not invent an in-app export UI.
-2. Disk check **before** BODY.PEEK: free bytes >= `rfc822Bytes * 1.15 + 64MiB`. Unknown RFC822.SIZE values are counted separately. Parent confirms on the Mac.
-3. Inventory **every** listed mailbox, including Bulk Mail / Spam / Trash / Draft / Starred. Unselectable, empty, examine-failed, and missing typical folders are recorded in the manifest — **no silent exclusions**. Items already deleted on the server cannot be recovered; they must be listed as unavailable.
-4. Write an interoperable tree: Maildir or `.eml` per message (mboxrd also importable). Manifest: counts, sha256, unreadable paths.
-5. Copy to a working tree. Experiments (local delete, Gemini on one message) touch only the copy. Reset = recopy from the original.
+```bash
+npx ts-node --project app/tsconfig.json app/internal_packages/ai-sidebar/test-offline-snapshot.ts
+```
 
-Uncertainties to disclose at acquisition time: exact Yahoo folder names, `\Noselect` mailboxes, IMAP size vs on-disk MIME, already-expunged mail, app-password vs OAuth.
+**Staged native run (parent Mac only; not initiated here):**
 
-### Experiment reader (this SHA; testable on fixtures)
+1. Yahoo IMAP login. **App password is often required.** Do not scrape `/Applications/Mailspring.app`, `Mailspring-dev`, Keychain, or `edgehill.db`. Do not invent an in-app export UI.
+2. Hidden TTY password prompt on the Mac. Refuses `--password`, `YAHOO_IMAP_PASSWORD`, and piped stdin on the Yahoo host.
+3. Preflight (LIST + EXAMINE + SIZE + disk; no BODY.PEEK dest write):
+
+   ```bash
+   sh scripts/offline-imap-snapshot.sh --preflight-only --username 'you@yahoo.com'
+   ```
+
+4. Disk check **before** BODY.PEEK must cover **baseline + independent work copy**, not a single tree: `rfc822Bytes * 1.15 * 2 + 64MiB`. Unknown RFC822.SIZE values are counted and block execute unless you pass `--allow-unknown-sizes` (still disclosed, not skipped).
+5. Inventory is the **server LIST**, including Bulk Mail / Spam / Trash / Draft / Starred / Unicode names. Unselectable, empty, examine-failed, UIDVALIDITY mismatch, UID gaps, messages that arrived during the snapshot, and missing typical folders (e.g. Archive) are recorded in the manifest — **no silent exclusions**. Already-expunged mail cannot be recovered.
+6. Execute to a **new empty** destination (never overwrites a preexisting complete archive). Atomic `{uid}.eml.partial` → `{uid}.eml`. Then copy to a disposable working tree:
+
+   ```bash
+   sh scripts/offline-imap-snapshot.sh \
+     --execute \
+     --username 'you@yahoo.com' \
+     --dest /abs/offline-archive-baseline \
+     --work-copy /abs/offline-archive-work
+   ```
+
+7. Point the experiment reader at the **work copy**, never at credentials:
+
+   ```bash
+   sh scripts/start-offline-archive.sh /abs/offline-archive-work
+   ```
+
+Immutability is **process never writes the baseline after finalize** plus **refuse overwrite** — not a claim that `chmod` made the tree immutable. MIME display decode is **partial** (`display-parse-partial`); nested `message/rfc822` is noted, not expanded. Gemini stays opt-in per selected local message; import does not generate.
+
+Remaining native/auth gates this cloud SHA does **not** perform: Yahoo app-password, TTY prompt, real TLS to `imap.mail.yahoo.com`, actual mailbox bytes, Mac disk confirmation.
+
+### Experiment reader (fixture-testable; no Yahoo)
 
 ```bash
 # Fixture tree (fake @example.test addresses only). Does not touch Yahoo.
@@ -540,4 +562,4 @@ Gemini: one selected local message after Summarize. Not bulk corpus upload. Same
 
 Imported HTML: scripts, `on*` handlers, and remote `https` images are stripped. Original archive files are never written. Local deletion in the working copy cannot reach Yahoo.
 
-Remaining actual export/native gates: user login + disk confirmation + IMAP snapshot on the Mac. This SHA is planning/prep plus a fixture-testable reader.
+Remaining actual export/native gates: user login + disk confirmation + IMAP snapshot on the Mac. This SHA is a fake-server-testable snapshotter plus a fixture-testable reader. Native Yahoo is not initiated here.
