@@ -18,7 +18,9 @@
  * Not "Mailspring Safe Storage" / "Mailspring-demo Safe Storage". Electron
  * demo uses --use-mock-keychain; this helper calls Security.framework
  * SecItemCopyMatching directly and does not go through KeyManager/safeStorage.
- * Save is a one-time local setup (helper stdin). Launch never puts the secret
+ * Save is a one-time local setup (helper stdin, SecItemAdd only — existing
+ * item is a conflict, not a silent replace). Dummy tests use a separate
+ * service/account and helper dummy-* commands. Launch never puts the secret
  * on argv. Denied/locked/cancelled Keychain access is fail-closed: no
  * plaintext fallback and launch-env KEY/PAID names are ignored.
  *
@@ -41,8 +43,11 @@ const KEY_ENV = 'MAILSPRING_DEMO_GEMINI_API_KEY';
 const PAID_ENV = 'MAILSPRING_DEMO_GEMINI_PAID';
 const KEY_FILE_ENV = 'MAILSPRING_DEMO_GEMINI_KEY_FILE';
 const HELPER_ENV = 'MAILSPRING_DEMO_GEMINI_KEYCHAIN_HELPER';
+const NAMESPACE_ENV = 'MAILSPRING_DEMO_GEMINI_KEYCHAIN_NAMESPACE';
 const KEYCHAIN_SERVICE = 'Mailspring-demo Gemini Developer API';
 const KEYCHAIN_ACCOUNT = 'gemini-demo-api-key';
+const KEYCHAIN_DUMMY_SERVICE = 'Mailspring-demo Gemini Developer API (dummy)';
+const KEYCHAIN_DUMMY_ACCOUNT = 'gemini-demo-api-key-dummy';
 
 let capturedKey = '';
 let capturedPaid = false;
@@ -58,7 +63,8 @@ function isStripEnvName(name) {
     lower === KEY_ENV.toLowerCase() ||
     lower === PAID_ENV.toLowerCase() ||
     lower === KEY_FILE_ENV.toLowerCase() ||
-    lower === HELPER_ENV.toLowerCase()
+    lower === HELPER_ENV.toLowerCase() ||
+    lower === NAMESPACE_ENV.toLowerCase()
   );
 }
 
@@ -196,7 +202,7 @@ function defaultKeychainHelperPath() {
   return path.join(__dirname, '../../native/gemini-demo-keychain/gemini-demo-keychain');
 }
 
-function loadFromKeychainHelper(helperPath) {
+function loadFromKeychainHelper(helperPath, namespace) {
   const override = typeof helperPath === 'string' ? helperPath.trim() : '';
   if (override && !path.isAbsolute(override)) {
     console.log('[Gemini DEMO] keychain helper path refused: must be absolute');
@@ -212,6 +218,11 @@ function loadFromKeychainHelper(helperPath) {
       return { ok: false, reason: 'not-electron' };
     }
   }
+  const ns = typeof namespace === 'string' ? namespace.trim() : '';
+  if (ns && ns !== 'dummy') {
+    console.log('[Gemini DEMO] keychain namespace refused (dummy is the only allowed override)');
+    return { ok: false, reason: 'namespace' };
+  }
   const bin = override || defaultKeychainHelperPath();
   try {
     if (!fs.existsSync(bin)) {
@@ -226,8 +237,9 @@ function loadFromKeychainHelper(helperPath) {
     return { ok: false, reason: 'missing-helper' };
   }
 
-  // argv is only `load`. Secret stays on helper stdout, parsed here, never logged.
-  const out = spawnSync(bin, ['load'], {
+  // argv is only `load` or `dummy-load`. Secret stays on helper stdout, parsed here, never logged.
+  const argv = ns === 'dummy' ? ['dummy-load'] : ['load'];
+  const out = spawnSync(bin, argv, {
     encoding: 'utf8',
     timeout: 30000,
     maxBuffer: 16 * 1024,
@@ -288,7 +300,10 @@ function captureAndStripGeminiDemoCredentials(env) {
         captureSource = launchSecretPresent ? 'launch-env-ignored' : 'none';
       }
     } else {
-      const fromKc = loadFromKeychainHelper(envValue(target, HELPER_ENV));
+      const fromKc = loadFromKeychainHelper(
+        envValue(target, HELPER_ENV),
+        envValue(target, NAMESPACE_ENV)
+      );
       if (fromKc.ok) {
         capturedKey = fromKc.key;
         capturedPaid = fromKc.paidAcknowledged;
@@ -330,8 +345,11 @@ module.exports = {
   GEMINI_DEMO_PAID_ENV: PAID_ENV,
   GEMINI_DEMO_KEY_FILE_ENV: KEY_FILE_ENV,
   GEMINI_DEMO_KEYCHAIN_HELPER_ENV: HELPER_ENV,
+  GEMINI_DEMO_KEYCHAIN_NAMESPACE_ENV: NAMESPACE_ENV,
   GEMINI_DEMO_KEYCHAIN_SERVICE: KEYCHAIN_SERVICE,
   GEMINI_DEMO_KEYCHAIN_ACCOUNT: KEYCHAIN_ACCOUNT,
+  GEMINI_DEMO_KEYCHAIN_DUMMY_SERVICE: KEYCHAIN_DUMMY_SERVICE,
+  GEMINI_DEMO_KEYCHAIN_DUMMY_ACCOUNT: KEYCHAIN_DUMMY_ACCOUNT,
   captureAndStripGeminiDemoCredentials,
   getCapturedGeminiDemoCredentials,
   getGeminiDemoCaptureSource,

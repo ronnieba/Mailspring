@@ -42,6 +42,11 @@ export const GEMINI_DEMO_KEYCHAIN_HELPER_ENV = 'MAILSPRING_DEMO_GEMINI_KEYCHAIN_
 /** Isolated DEMO Keychain service. Do not use Mailspring Safe Storage. */
 export const GEMINI_DEMO_KEYCHAIN_SERVICE = 'Mailspring-demo Gemini Developer API';
 export const GEMINI_DEMO_KEYCHAIN_ACCOUNT = 'gemini-demo-api-key';
+/** Selector for the dummy Keychain item. Not a secret. Usual launch leaves this unset. */
+export const GEMINI_DEMO_KEYCHAIN_NAMESPACE_ENV = 'MAILSPRING_DEMO_GEMINI_KEYCHAIN_NAMESPACE';
+/** Isolated dummy-test item. dummy-* helper commands never use the real service/account. */
+export const GEMINI_DEMO_KEYCHAIN_DUMMY_SERVICE = 'Mailspring-demo Gemini Developer API (dummy)';
+export const GEMINI_DEMO_KEYCHAIN_DUMMY_ACCOUNT = 'gemini-demo-api-key-dummy';
 
 export const GEMINI_IPC_STATUS = 'gemini-demo:status';
 export const GEMINI_IPC_QUERY = 'gemini-demo:query';

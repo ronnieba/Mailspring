@@ -15,7 +15,10 @@ import {
   GEMINI_DEMO_KEY_ENV,
   GEMINI_DEMO_KEY_FILE_ENV,
   GEMINI_DEMO_KEYCHAIN_ACCOUNT,
+  GEMINI_DEMO_KEYCHAIN_DUMMY_ACCOUNT,
+  GEMINI_DEMO_KEYCHAIN_DUMMY_SERVICE,
   GEMINI_DEMO_KEYCHAIN_HELPER_ENV,
+  GEMINI_DEMO_KEYCHAIN_NAMESPACE_ENV,
   GEMINI_DEMO_KEYCHAIN_SERVICE,
   GEMINI_DEMO_MODEL,
   GEMINI_DEMO_PAID_ENV,
@@ -42,6 +45,8 @@ import {
   getCapturedGeminiDemoCredentials,
   getGeminiDemoCaptureSource,
   GEMINI_DEMO_KEYCHAIN_ACCOUNT as SECRET_KEYCHAIN_ACCOUNT,
+  GEMINI_DEMO_KEYCHAIN_DUMMY_ACCOUNT as SECRET_DUMMY_ACCOUNT,
+  GEMINI_DEMO_KEYCHAIN_DUMMY_SERVICE as SECRET_DUMMY_SERVICE,
   GEMINI_DEMO_KEYCHAIN_SERVICE as SECRET_KEYCHAIN_SERVICE,
   resetGeminiDemoCredentialsForTests,
   sanitizeSpawnEnv,
@@ -61,6 +66,11 @@ const APP_SRC_ROOT = path.resolve(__dirname, '../../src');
 const FAKE_KEY = 'ms-demo-test-key-not-live';
 /** Public marker used by native e1ec474c. Never a real API key. */
 const NONSECRET_MARKER = 'MAILSPRING_DEMO_GEMINI_NONSECRET_MARKER';
+/** Public stand-in for a preexisting real Keychain blob. Never a live API key. */
+const REAL_SENTINEL = 'MAILSPRING_DEMO_GEMINI_REAL_SENTINEL_NOT_A_KEY';
+const REAL_SENTINEL_BLOB = `paid=1\n${REAL_SENTINEL}\n`;
+const UNKNOWN_DUMMY_BLOB = 'paid=0\nMAILSPRING_DEMO_GEMINI_UNKNOWN_DUMMY_NOT_A_KEY\n';
+const DUMMY_MARKER_BLOB = `paid=0\n${NONSECRET_MARKER}\n`;
 
 function envHasCredentialName(env: NodeJS.ProcessEnv, name: string): boolean {
   const lower = name.toLowerCase();
@@ -97,6 +107,46 @@ function writeKeyFile(paid: '0' | '1', key: string, mode = 0o600): string {
   fs.writeFileSync(filePath, `paid=${paid}\n${key}\n`, { encoding: 'utf8', mode });
   fs.chmodSync(filePath, mode);
   return filePath;
+}
+
+function writeContractStore(initial: Record<string, unknown>): {
+  dir: string;
+  storePath: string;
+  helperPath: string;
+} {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'ms-gemini-kc-store-'));
+  const storePath = path.join(dir, 'store.json');
+  fs.writeFileSync(storePath, JSON.stringify(initial), { encoding: 'utf8', mode: 0o600 });
+  return {
+    dir,
+    storePath,
+    helperPath: path.join(__dirname, 'gemini-demo-keychain-contract-mock.js'),
+  };
+}
+
+function runContract(
+  mock: { helperPath: string; storePath: string },
+  args: string[],
+  stdin?: string
+) {
+  const env = sanitizeSpawnEnv({
+    ...process.env,
+    MAILSPRING_DEMO_GEMINI_MOCK_STORE: mock.storePath,
+  });
+  env.MAILSPRING_DEMO_GEMINI_MOCK_STORE = mock.storePath;
+  return spawnSync(process.execPath, [mock.helperPath, ...args], {
+    env,
+    input: stdin || '',
+    encoding: 'utf8',
+  });
+}
+
+function readContractStore(mock: { storePath: string }): {
+  real?: string | null;
+  dummy?: string | null;
+  failOnce?: string;
+} {
+  return JSON.parse(fs.readFileSync(mock.storePath, 'utf8'));
 }
 
 function writeMockKeychainHelper(opts: { status: number; stdout?: string }): {
@@ -722,6 +772,7 @@ async function run() {
       [GEMINI_DEMO_PAID_ENV]: '1',
       [GEMINI_DEMO_KEY_FILE_ENV]: '/tmp/ms-gemini-path-only',
       [GEMINI_DEMO_KEYCHAIN_HELPER_ENV]: '/tmp/ms-gemini-helper',
+      [GEMINI_DEMO_KEYCHAIN_NAMESPACE_ENV]: 'dummy',
     };
     assertEqual(childNamedEnvProbe(snapshot, GEMINI_DEMO_KEY_ENV), 'PRESENT');
     assertEqual(childNamedEnvProbe(sanitizeSpawnEnv(snapshot), GEMINI_DEMO_KEY_ENV), 'ABSENT');
@@ -729,6 +780,10 @@ async function run() {
     assertEqual(childNamedEnvProbe(sanitizeSpawnEnv(snapshot), GEMINI_DEMO_KEY_FILE_ENV), 'ABSENT');
     assertEqual(
       childNamedEnvProbe(sanitizeSpawnEnv(snapshot), GEMINI_DEMO_KEYCHAIN_HELPER_ENV),
+      'ABSENT'
+    );
+    assertEqual(
+      childNamedEnvProbe(sanitizeSpawnEnv(snapshot), GEMINI_DEMO_KEYCHAIN_NAMESPACE_ENV),
       'ABSENT'
     );
     assertEqual(childEnvValuesContain(sanitizeSpawnEnv(snapshot), NONSECRET_MARKER), 'ABSENT');
@@ -792,6 +847,8 @@ async function run() {
     assertContains(wrapper, 'MAILSPRING_DEMO_GEMINI_KEY_FILE');
     assertContains(wrapper, 'node_modules/.bin/electron');
     assertContains(wrapper, 'gemini-demo-keychain');
+    assertContains(wrapper, '-u MAILSPRING_DEMO_GEMINI_KEYCHAIN_NAMESPACE');
+    assertContains(wrapper, 'MAILSPRING_DEMO_GEMINI_KEYCHAIN_NAMESPACE=dummy');
     assertFalse(/MAILSPRING_DEMO_GEMINI_API_KEY=/.test(wrapper));
     assertFalse(/MAILSPRING_DEMO_GEMINI_PAID=/.test(wrapper));
   });
@@ -905,6 +962,7 @@ async function run() {
       assertEqual(childNamedEnvProbe(process.env, GEMINI_DEMO_PAID_ENV), 'ABSENT');
       assertEqual(childNamedEnvProbe(process.env, GEMINI_DEMO_KEY_FILE_ENV), 'ABSENT');
       assertEqual(childNamedEnvProbe(process.env, GEMINI_DEMO_KEYCHAIN_HELPER_ENV), 'ABSENT');
+      assertEqual(childNamedEnvProbe(process.env, GEMINI_DEMO_KEYCHAIN_NAMESPACE_ENV), 'ABSENT');
       assertEqual(childEnvValuesContain(process.env, NONSECRET_MARKER), 'ABSENT');
     } finally {
       resetGeminiDemoCredentialsForTests();
@@ -927,24 +985,206 @@ async function run() {
     );
     assertContains(swift, GEMINI_DEMO_KEYCHAIN_SERVICE);
     assertContains(swift, GEMINI_DEMO_KEYCHAIN_ACCOUNT);
+    assertContains(swift, GEMINI_DEMO_KEYCHAIN_DUMMY_SERVICE);
+    assertContains(swift, GEMINI_DEMO_KEYCHAIN_DUMMY_ACCOUNT);
     assertContains(swift, 'SecItemAdd');
+    assertContains(swift, 'SecItemUpdate');
     assertContains(swift, 'SecItemCopyMatching');
     assertContains(swift, 'kSecAttrAccessibleWhenUnlockedThisDeviceOnly');
     assertContains(swift, 'readDataToEndOfFile');
+    assertContains(swift, 'dummy-save');
+    assertContains(swift, 'dummy-remove');
+    assertContains(swift, NONSECRET_MARKER);
+    const saveFn = swift.slice(swift.indexOf('func save()'), swift.indexOf('func replace()'));
+    const replaceFn = swift.slice(swift.indexOf('func replace()'), swift.indexOf('func load('));
+    const dummySaveFn = swift.slice(
+      swift.indexOf('func dummySave()'),
+      swift.indexOf('func dummyRemove()')
+    );
+    const dummyRemoveFn = swift.slice(
+      swift.indexOf('func dummyRemove()'),
+      swift.indexOf('let args = Array')
+    );
+    assertFalse(saveFn.includes('SecItemDelete'));
+    assertContains(saveFn, 'errSecDuplicateItem');
+    assertContains(replaceFn, 'updateItem');
+    assertFalse(replaceFn.includes('SecItemDelete'));
+    assertFalse(dummySaveFn.includes('readStdinBlob'));
+    assertFalse(dummySaveFn.includes('realSlot'));
+    assertContains(dummyRemoveFn, 'kSecValueData');
+    assertFalse(dummyRemoveFn.includes('realSlot'));
     assertFalse(swift.includes('kSecTrustedApplication'));
     assertFalse(/let serviceName = "Mailspring Safe Storage"/.test(swift));
     assertFalse(swift.includes('add-generic-password'));
     assertContains(setup, 'stty -echo');
-    assertContains(setup, 'dummy-save');
-    assertContains(setup, NONSECRET_MARKER);
+    assertContains(setup, '"$HELPER" dummy-save');
+    assertContains(setup, '"$HELPER" dummy-remove');
+    assertContains(setup, '"$HELPER" replace');
     assertContains(setup, 'never copies that env into Keychain');
     assertFalse(setup.includes('add-generic-password'));
+    const dummySaveCase = setup.slice(setup.indexOf('dummy-save)'), setup.indexOf('dummy-remove)'));
+    const dummyRemoveCase = setup.slice(
+      setup.indexOf('dummy-remove)'),
+      setup.indexOf('dummy-status)')
+    );
+    assertContains(dummySaveCase, '"$HELPER" dummy-save');
+    assertFalse(dummySaveCase.includes('|'));
+    assertContains(dummyRemoveCase, '"$HELPER" dummy-remove');
+    assertFalse(/\n\s*"\$HELPER" remove\n/.test(dummyRemoveCase));
     assertContains(secretJs, "['load']");
+    assertContains(secretJs, "['dummy-load']");
     assertFalse(secretJs.includes("['save']"));
     assertContains(secretJs, 'Does not auto-save');
     assertEqual(SECRET_KEYCHAIN_SERVICE, GEMINI_DEMO_KEYCHAIN_SERVICE);
     assertEqual(SECRET_KEYCHAIN_ACCOUNT, GEMINI_DEMO_KEYCHAIN_ACCOUNT);
+    assertEqual(SECRET_DUMMY_SERVICE, GEMINI_DEMO_KEYCHAIN_DUMMY_SERVICE);
+    assertEqual(SECRET_DUMMY_ACCOUNT, GEMINI_DEMO_KEYCHAIN_DUMMY_ACCOUNT);
     assertFalse(GEMINI_DEMO_KEYCHAIN_SERVICE.includes('Safe Storage'));
+    assertTrue(GEMINI_DEMO_KEYCHAIN_DUMMY_SERVICE.includes('(dummy)'));
+    assertTrue(GEMINI_DEMO_KEYCHAIN_DUMMY_ACCOUNT.endsWith('-dummy'));
+  });
+
+  await test('dummy-save and dummy-remove leave a real-namespace sentinel untouched', () => {
+    const mock = writeContractStore({ real: REAL_SENTINEL_BLOB, dummy: null });
+    try {
+      const saved = runContract(mock, ['dummy-save']);
+      assertEqual(saved.status, 0);
+      assertFalse((saved.stdout || '').includes(REAL_SENTINEL));
+      assertFalse((saved.stderr || '').includes(REAL_SENTINEL));
+      assertFalse((saved.stdout || '').includes(NONSECRET_MARKER));
+      let store = readContractStore(mock);
+      assertEqual(store.real, REAL_SENTINEL_BLOB);
+      assertEqual(store.dummy, DUMMY_MARKER_BLOB);
+      const removed = runContract(mock, ['dummy-remove']);
+      assertEqual(removed.status, 0);
+      assertFalse((removed.stdout || '').includes(REAL_SENTINEL));
+      store = readContractStore(mock);
+      assertEqual(store.real, REAL_SENTINEL_BLOB);
+      assertEqual(store.dummy, null);
+      const realStatus = runContract(mock, ['status']);
+      assertEqual((realStatus.stdout || '').trim(), 'present=true');
+      const dummyStatus = runContract(mock, ['dummy-status']);
+      assertEqual((dummyStatus.stdout || '').trim(), 'present=false');
+    } finally {
+      fs.rmSync(mock.dir, { recursive: true, force: true });
+    }
+  });
+
+  await test('dummy-save and dummy-remove refuse an unknown dummy-namespace item', () => {
+    const mock = writeContractStore({ real: REAL_SENTINEL_BLOB, dummy: UNKNOWN_DUMMY_BLOB });
+    try {
+      const saved = runContract(mock, ['dummy-save']);
+      assertEqual(saved.status, 4);
+      let store = readContractStore(mock);
+      assertEqual(store.real, REAL_SENTINEL_BLOB);
+      assertEqual(store.dummy, UNKNOWN_DUMMY_BLOB);
+      const removed = runContract(mock, ['dummy-remove']);
+      assertEqual(removed.status, 4);
+      store = readContractStore(mock);
+      assertEqual(store.real, REAL_SENTINEL_BLOB);
+      assertEqual(store.dummy, UNKNOWN_DUMMY_BLOB);
+      assertFalse((saved.stderr || '').includes(REAL_SENTINEL));
+      assertFalse((removed.stderr || '').includes('UNKNOWN_DUMMY'));
+    } finally {
+      fs.rmSync(mock.dir, { recursive: true, force: true });
+    }
+  });
+
+  await test('save refuses an existing item; failed replace retains it; replace updates', () => {
+    const mock = writeContractStore({ real: REAL_SENTINEL_BLOB, dummy: null });
+    try {
+      const conflict = runContract(mock, ['save'], `paid=0\n${NONSECRET_MARKER}\n`);
+      assertEqual(conflict.status, 4);
+      assertEqual(readContractStore(mock).real, REAL_SENTINEL_BLOB);
+      const failReplace = writeContractStore({
+        real: REAL_SENTINEL_BLOB,
+        dummy: null,
+        failOnce: 'replace',
+      });
+      try {
+        const failed = runContract(failReplace, ['replace'], `paid=0\n${NONSECRET_MARKER}\n`);
+        assertEqual(failed.status, 2);
+        assertEqual(readContractStore(failReplace).real, REAL_SENTINEL_BLOB);
+        assertFalse((failed.stdout || '').includes(NONSECRET_MARKER));
+      } finally {
+        fs.rmSync(failReplace.dir, { recursive: true, force: true });
+      }
+      const replaced = runContract(mock, ['replace'], `paid=0\n${NONSECRET_MARKER}\n`);
+      assertEqual(replaced.status, 0);
+      assertEqual(readContractStore(mock).real, DUMMY_MARKER_BLOB);
+      assertFalse((conflict.stdout || '').includes(REAL_SENTINEL));
+      assertFalse((replaced.stdout || '').includes(NONSECRET_MARKER));
+    } finally {
+      fs.rmSync(mock.dir, { recursive: true, force: true });
+    }
+  });
+
+  await test('dummy-save add-race keeps an unknown dummy item; marker dummy-save is idempotent', () => {
+    const race = writeContractStore({
+      real: REAL_SENTINEL_BLOB,
+      dummy: UNKNOWN_DUMMY_BLOB,
+      raceAbsentWhileDummyPresent: true,
+    });
+    try {
+      const out = runContract(race, ['dummy-save']);
+      assertEqual(out.status, 4);
+      const store = readContractStore(race);
+      assertEqual(store.real, REAL_SENTINEL_BLOB);
+      assertEqual(store.dummy, UNKNOWN_DUMMY_BLOB);
+    } finally {
+      fs.rmSync(race.dir, { recursive: true, force: true });
+    }
+    const idem = writeContractStore({ real: REAL_SENTINEL_BLOB, dummy: DUMMY_MARKER_BLOB });
+    try {
+      const out = runContract(idem, ['dummy-save']);
+      assertEqual(out.status, 0);
+      assertEqual(readContractStore(idem).real, REAL_SENTINEL_BLOB);
+      assertEqual(readContractStore(idem).dummy, DUMMY_MARKER_BLOB);
+    } finally {
+      fs.rmSync(idem.dir, { recursive: true, force: true });
+    }
+    const swap = writeContractStore({
+      real: REAL_SENTINEL_BLOB,
+      dummy: DUMMY_MARKER_BLOB,
+      raceDummySwap: UNKNOWN_DUMMY_BLOB,
+    });
+    try {
+      const out = runContract(swap, ['dummy-remove']);
+      assertEqual(out.status, 4);
+      assertEqual(readContractStore(swap).real, REAL_SENTINEL_BLOB);
+      assertEqual(readContractStore(swap).dummy, UNKNOWN_DUMMY_BLOB);
+    } finally {
+      fs.rmSync(swap.dir, { recursive: true, force: true });
+    }
+  });
+
+  await test('NAMESPACE=dummy loads dummy-load, not the real-namespace sentinel', () => {
+    resetGeminiDemoCredentialsForTests();
+    const mock = writeContractStore({ real: REAL_SENTINEL_BLOB, dummy: DUMMY_MARKER_BLOB });
+    const probePath = path.join(mock.dir, 'probe.json');
+    process.env[GEMINI_DEMO_KEYCHAIN_HELPER_ENV] = mock.helperPath;
+    process.env[GEMINI_DEMO_KEYCHAIN_NAMESPACE_ENV] = 'dummy';
+    process.env.MAILSPRING_DEMO_GEMINI_MOCK_STORE = mock.storePath;
+    process.env.MAILSPRING_DEMO_GEMINI_MOCK_PROBE = probePath;
+    try {
+      const logs = collectLogs(() => {
+        captureAndStripGeminiDemoCredentials();
+      });
+      assertEqual(getCapturedGeminiDemoCredentials().key, NONSECRET_MARKER);
+      assertEqual(getCapturedGeminiDemoCredentials().paidAcknowledged, false);
+      assertEqual(getGeminiDemoCaptureSource(), 'keychain');
+      assertFalse(logs.join('\n').includes(REAL_SENTINEL));
+      assertFalse(logs.join('\n').includes(NONSECRET_MARKER));
+      const probe = JSON.parse(fs.readFileSync(probePath, 'utf8'));
+      assertEqual(JSON.stringify(probe.argv), JSON.stringify(['dummy-load']));
+      assertFalse(probe.hasKey);
+      assertEqual(readContractStore(mock).real, REAL_SENTINEL_BLOB);
+    } finally {
+      delete process.env.MAILSPRING_DEMO_GEMINI_MOCK_STORE;
+      delete process.env.MAILSPRING_DEMO_GEMINI_MOCK_PROBE;
+      resetGeminiDemoCredentialsForTests();
+      fs.rmSync(mock.dir, { recursive: true, force: true });
+    }
   });
 
   await test('allowLiveSynthetic accepts isMock false only for synthetic sources', () => {
@@ -1026,6 +1266,7 @@ async function run() {
     assertContains(appTs, 'resolveGeminiDemoStatus');
     assertContains(protocolTs, 'MAILSPRING_DEMO_GEMINI_KEY_FILE');
     assertContains(protocolTs, GEMINI_DEMO_KEYCHAIN_SERVICE);
+    assertContains(protocolTs, GEMINI_DEMO_KEYCHAIN_DUMMY_SERVICE);
     assertContains(protocolTs, 'Mailspring Safe Storage');
     assertContains(ipcTs, 'handleFromMailspringWindows');
     assertContains(ipcTs, 'GEMINI_IPC_STATUS');
@@ -1063,6 +1304,10 @@ async function run() {
     assertContains(guide, 'gemini-demo-keychain.sh');
     assertContains(guide, 'Mailspring-demo Gemini Developer API');
     assertContains(guide, 'dummy-save');
+    assertContains(guide, 'dummy-status');
+    assertContains(guide, 'Mailspring-demo Gemini Developer API (dummy)');
+    assertContains(guide, 'SecItemAdd only');
+    assertContains(guide, 'SecItemUpdate');
     assertContains(guide, 'start-demo-gemini.sh');
     assertContains(guide, 'env -u MAILSPRING_DEMO_GEMINI_API_KEY');
     assertContains(guide, 'paid=0');
@@ -1092,7 +1337,7 @@ async function run() {
 
   console.log('\n' + '='.repeat(40));
   console.log(`Results: ${passed} passed, ${failed} failed`);
-  console.log('UNRUN in this cloud agent — expected 36 until local Mac run.');
+  console.log('UNRUN in this cloud agent — expected 41 until local Mac run.');
   console.log('='.repeat(40) + '\n');
   if (failed > 0) process.exit(1);
 }

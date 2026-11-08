@@ -4,16 +4,20 @@
 # Usual path after one save: sh scripts/start-demo-gemini.sh
 # Explicit KEY_FILE remains a fallback (not the usual launch).
 #
-# The helper uses Security.framework SecItem* and reads the secret from stdin.
-# Never pass the password as a process argument to the security CLI.
-# Does not touch "Mailspring Safe Storage" / "Mailspring-demo Safe Storage".
+# Dummy commands use an isolated Keychain service/account and never
+# call helper save/remove on the real item. dummy-save hardcodes the
+# public marker inside the helper (stdin is not stored). dummy-remove
+# deletes only a dummy-namespace item whose value is that marker.
+#
+# save is create-only (conflict if the real item exists). replace is
+# the deliberate overwrite. Never pass the password as a process
+# argument to the security CLI. Does not touch Mailspring Safe Storage.
 # Does not print the key. Does not scrape process memory or KEY env.
 set -eu
 
 ROOT=$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)
 SRC="$ROOT/app/native/gemini-demo-keychain/main.swift"
 HELPER="$ROOT/app/native/gemini-demo-keychain/gemini-demo-keychain"
-MARKER=MAILSPRING_DEMO_GEMINI_NONSECRET_MARKER
 
 die() {
   echo "gemini-demo-keychain: $*" >&2
@@ -41,36 +45,52 @@ refuse_env_secret() {
   fi
 }
 
+prompt_blob() {
+  [ -t 0 ] || die "$1 requires a Terminal hidden prompt; do not pipe the key onto this script"
+  restore_echo() { stty echo 2>/dev/null || true; }
+  trap restore_echo EXIT INT HUP
+  printf 'Gemini DEMO API key (input hidden, not echoed): ' >&2
+  stty -echo
+  IFS= read -r KEY || true
+  restore_echo
+  trap - EXIT INT HUP
+  printf '\n' >&2
+  [ -n "$KEY" ] || die "empty key"
+  printf 'Paid project ack? type 1 or 0 (not billing proof): ' >&2
+  IFS= read -r PAID || true
+  [ "$PAID" = 0 ] || [ "$PAID" = 1 ] || die "paid ack must be 0 or 1"
+  # Builtin printf → helper stdin. Key is not on helper argv.
+  printf 'paid=%s\n%s\n' "$PAID" "$KEY"
+  KEY=
+  PAID=
+}
+
 cmd=${1:-}
 case "$cmd" in
-  save|replace)
+  save)
     ensure_helper
     refuse_env_secret
-    [ -t 0 ] || die "save requires a Terminal hidden prompt; do not pipe the key onto this script"
-    restore_echo() { stty echo 2>/dev/null || true; }
-    trap restore_echo EXIT INT HUP
-    printf 'Gemini DEMO API key (input hidden, not echoed): ' >&2
-    stty -echo
-    IFS= read -r KEY || true
-    restore_echo
-    trap - EXIT INT HUP
-    printf '\n' >&2
-    [ -n "$KEY" ] || die "empty key"
-    printf 'Paid project ack? type 1 or 0 (not billing proof): ' >&2
-    IFS= read -r PAID || true
-    [ "$PAID" = 0 ] || [ "$PAID" = 1 ] || die "paid ack must be 0 or 1"
-    # Builtin printf → helper stdin. Key is not on helper argv.
-    printf 'paid=%s\n%s\n' "$PAID" "$KEY" | "$HELPER" save
-    KEY=
-    PAID=
+    prompt_blob save | "$HELPER" save
+    ;;
+  replace)
+    ensure_helper
+    refuse_env_secret
+    prompt_blob replace | "$HELPER" replace
     ;;
   dummy-save)
     ensure_helper
     refuse_env_secret
-    # Public marker only. Never a live key.
-    printf 'paid=0\n%s\n' "$MARKER" | "$HELPER" save
+    "$HELPER" dummy-save
     ;;
-  remove|dummy-remove)
+  dummy-remove)
+    ensure_helper
+    "$HELPER" dummy-remove
+    ;;
+  dummy-status)
+    ensure_helper
+    "$HELPER" dummy-status
+    ;;
+  remove)
     ensure_helper
     "$HELPER" remove
     ;;
@@ -83,6 +103,6 @@ case "$cmd" in
     echo "$HELPER"
     ;;
   *)
-    die "usage: gemini-demo-keychain.sh save|replace|remove|status|dummy-save|dummy-remove"
+    die "usage: gemini-demo-keychain.sh save|replace|remove|status|dummy-save|dummy-remove|dummy-status"
     ;;
 esac

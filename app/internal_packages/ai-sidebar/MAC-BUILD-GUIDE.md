@@ -225,17 +225,17 @@ Parent runs these on Mac from repo root (and once from another cwd with `--prefi
 | `test-demo-sidebar.ts` | **23** |
 | `test-demo-query.ts` | **20** |
 | `test-ai-boundary.ts` | **17** |
-| `test-gemini-demo.ts` | **36** (mocked transport + KEY_FILE + Keychain helper + official Interaction envelope) |
+| `test-gemini-demo.ts` | **41** (mocked transport + KEY_FILE + Keychain helper + dummy non-overwrite contract) |
 | `test-demo-cli.ts` | 12 |
-| **prior portable subtotal** | **217** |
+| **prior portable subtotal** | **222** |
 | `test-composer-direction.ts` | 14 |
 | `test-composer-spell.ts` | 21 |
 | `test-demo-composer.ts` | 13 |
 | **composer subtotal (no sidecar)** | **48** |
 | `test-nspell-engine.ts` | **13** (requires sidecar install) |
-| **portable total after sidecar** | **278** |
+| **portable total after sidecar** | **283** |
 
-Without sidecar install: prior **265** + alt-cwd **48** still apply. After `install.sh`: **278** portable (265+13). Composer+engine alt-cwd remains **61** (48+13) unless `test-ai-boundary.ts` / `test-gemini-demo.ts` are included (**+17 / +36**). Do not run these in cloud CI. Preserve 34a90265 layout/AI/isolation. Do not rewrite `app/package-lock.json`.
+Without sidecar install: prior **270** + alt-cwd **48** still apply. After `install.sh`: **283** portable (270+13). Composer+engine alt-cwd remains **61** (48+13) unless `test-ai-boundary.ts` / `test-gemini-demo.ts` are included (**+17 / +41**). Do not run these in cloud CI. Preserve 34a90265 layout/AI/isolation. Do not rewrite `app/package-lock.json`.
 
 **This SHA targeted Mac commands (do not claim f89b4e4b 221+61 / 81 UI):**
 
@@ -243,7 +243,7 @@ Without sidecar install: prior **265** + alt-cwd **48** still apply. After `inst
 npx ts-node --project app/tsconfig.json app/internal_packages/ai-sidebar/test-ai-boundary.ts
 # expected 17 passed, natural exit
 npx ts-node --project app/tsconfig.json app/internal_packages/ai-sidebar/test-gemini-demo.ts
-# expected 36 passed (mocked transport + KEY_FILE + Keychain helper + official Interaction envelope; no live Gemini)
+# expected 41 passed (mocked transport + KEY_FILE + Keychain helper + dummy non-overwrite contract; no live Gemini)
 npx ts-node --project app/tsconfig.json app/internal_packages/ai-sidebar/test-demo-query.ts
 # expected 20 passed (exhaustive 2/5/6 + first-selected vs all-selected)
 npx ts-node --project app/tsconfig.json app/internal_packages/ai-sidebar/test-demo-sidebar.ts
@@ -320,7 +320,7 @@ Paid-tier docs currently say prompts/responses are **not used to improve Google 
 
 Native 33d7f263: JS `delete process.env` contained Chromium children (2 renderers, GPU, utility, Crashpad — 15 absences) but **Electron main** and the **Node** `./node_modules/.bin/electron` **launcher** still exposed `MAILSPRING_DEMO_GEMINI_API_KEY`, the public marker, and `MAILSPRING_DEMO_GEMINI_PAID` in macOS `ps eww` exec-time environ. JS deletion is not OS launch-env secrecy.
 
-Usual delivery: save once into the dedicated DEMO Keychain item, then launch with **no** credential names. `scripts/gemini-demo-keychain.sh save` compiles `app/native/gemini-demo-keychain` with `swiftc -framework Security` if needed, then reads the key from a **hidden Terminal prompt** (`stty -echo`) and pipes `paid=0|1` plus the key to helper **stdin**. The helper calls `SecItemAdd` (replace = delete+add). Never put the secret on process argv (including Keychain CLI password flags). Default item ACL; `kSecAttrAccessibleWhenUnlockedThisDeviceOnly`; not iCloud-syncable; no trusted-app ACL bypass. Denied / locked / cancelled access is fail-closed (no plaintext fallback). OS may prompt Allow.
+Usual delivery: save once into the dedicated DEMO Keychain item, then launch with **no** credential names. `scripts/gemini-demo-keychain.sh save` compiles `app/native/gemini-demo-keychain` with `swiftc -framework Security` if needed, then reads the key from a **hidden Terminal prompt** (`stty -echo`) and pipes `paid=0|1` plus the key to helper **stdin**. `save` is **SecItemAdd only** — if the real item already exists it exits conflict (4) and does **not** delete or overwrite. Deliberate overwrite is `replace` (`SecItemUpdate`; failure leaves the old item). Dummy tests use a **separate** service `Mailspring-demo Gemini Developer API (dummy)` / account `gemini-demo-api-key-dummy`. Never put the secret on process argv (including Keychain CLI password flags). Default item ACL; `kSecAttrAccessibleWhenUnlockedThisDeviceOnly`; not iCloud-syncable; no trusted-app ACL bypass. Denied / locked / cancelled access is fail-closed (no plaintext fallback). OS may prompt Allow.
 
 `paid=1` in the stored blob is an operator ack, not proof of Cloud Billing, and is distinct from `keyPresent=true` and from `billingProven` (always false here). Launch does **not** auto-generate and does **not** copy `MAILSPRING_DEMO_GEMINI_API_KEY` from the environment into Keychain (setup refuses if that name is set).
 
@@ -365,22 +365,28 @@ Do not paste a real key into git, screenshots, argv, renderer UI, or logs. IPC a
 
 Native e1ec474c: renderer PID 70413 inherited the named key. Native 33d7f263: children ABSENT (15 pass); Electron main PID 71003 and Node launcher PID 71001 still true/true/true for key-name, public marker, paid-name. AX collection 30s timeout — `data-gemini-status` UNVERIFIED. Repeat this **boolean** check on the new SHA before any secret-bearing launch. Do **not** print environ. Do **not** use a real key. Close the running demo app before updating this Mac.
 
-**1. Dummy Keychain save / launch / relaunch / delete** (usual path). Public marker only. `dummy-save` never copies `MAILSPRING_DEMO_GEMINI_API_KEY` from the environment.
+**1. Dummy Keychain save / launch / relaunch / delete** (isolated dummy namespace). Public marker only. `dummy-save` / `dummy-remove` never call helper `save`/`remove` and never query the real item. Record real `status` first; it must be unchanged after dummy-save and after dummy-remove. Do **not** run dummy-* on a0427637 (that revision could clobber the real item).
 
 ```bash
-# UNRUN native Keychain dummy. Public marker only. No real key. No argv secret.
+# UNRUN native Keychain dummy. Isolated dummy item. Public marker only. No real key. No argv secret.
 unset MAILSPRING_DEMO_GEMINI_API_KEY MAILSPRING_DEMO_GEMINI_PAID MAILSPRING_DEMO_GEMINI_KEY_FILE
+unset MAILSPRING_DEMO_GEMINI_KEYCHAIN_NAMESPACE
+# Boolean only — do not load/print any value.
+REAL_BEFORE=$(sh scripts/gemini-demo-keychain.sh status)
+echo "real-before $REAL_BEFORE"   # present=true|false only
 sh scripts/gemini-demo-keychain.sh dummy-save
-sh scripts/gemini-demo-keychain.sh status   # present=true
-sh scripts/start-demo-gemini.sh --force-renderer-accessibility
+sh scripts/gemini-demo-keychain.sh dummy-status   # present=true
+sh scripts/gemini-demo-keychain.sh status         # MUST equal $REAL_BEFORE
+MAILSPRING_DEMO_GEMINI_KEYCHAIN_NAMESPACE=dummy sh scripts/start-demo-gemini.sh --force-renderer-accessibility
 # expect: capture source=keychain keyPresent=true paidAcknowledged=false configured=false
-# quit, relaunch without dummy-save — still keyPresent=true
-sh scripts/start-demo-gemini.sh --force-renderer-accessibility
-# absence after delete:
+# quit, relaunch still with NAMESPACE=dummy — still keyPresent=true from dummy item
+MAILSPRING_DEMO_GEMINI_KEYCHAIN_NAMESPACE=dummy sh scripts/start-demo-gemini.sh --force-renderer-accessibility
 sh scripts/gemini-demo-keychain.sh dummy-remove
-sh scripts/gemini-demo-keychain.sh status   # present=false
+sh scripts/gemini-demo-keychain.sh dummy-status   # present=false
+sh scripts/gemini-demo-keychain.sh status         # MUST still equal $REAL_BEFORE
+unset MAILSPRING_DEMO_GEMINI_KEYCHAIN_NAMESPACE
 sh scripts/start-demo-gemini.sh --force-renderer-accessibility
-# expect: keyPresent=false (no plaintext fallback)
+# expect: keyPresent follows the real item (false if REAL_BEFORE was present=false)
 ```
 
 Denied / cancelled Keychain prompt must stay fail-closed (`source=keychain-denied`, Mock AI).
@@ -420,7 +426,7 @@ Stdout (AX-free; 33d7f263 AX 30s timeout left status UNVERIFIED):
 
 KEY_FILE fallback prints `source=key-file` instead. Those lines must not contain the marker. Sidebar **Mock AI** is expected for paid-disabled. Do **not** claim actual live UI until a parent native test with `paid=1` (still synthetic DEMO, still not authorized here).
 
-Portable Node equivalent (already in `test-gemini-demo.ts`): mocked helper capture; denied fail-closed; KEY_FILE capture; launch-env KEY ignored; child spawned after capture prints `ABSENT` for key-name, paid-name, and marker-in-values.
+Portable Node equivalent (already in `test-gemini-demo.ts`): mocked helper capture; denied fail-closed; dummy-save/remove cannot clobber a real-namespace sentinel; save conflict retains; KEY_FILE capture; launch-env KEY ignored; child spawned after capture prints `ABSENT` for key-name, paid-name, and marker-in-values.
 
 **3. Once dummy Keychain tests pass — real-key setup (parent Mac only, never this agent):**
 

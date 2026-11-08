@@ -21,25 +21,48 @@
 #   export MAILSPRING_DEMO_GEMINI_KEY_FILE=/absolute/path/to/0600-file
 #   sh scripts/start-demo-gemini.sh
 #
-# Replace / remove the Keychain item:
+# Replace / remove the real Keychain item (not dummy-*):
 #   sh scripts/gemini-demo-keychain.sh replace
 #   sh scripts/gemini-demo-keychain.sh remove
+#
+# Dummy-namespace Electron launch (isolated test item only):
+#   MAILSPRING_DEMO_GEMINI_KEYCHAIN_NAMESPACE=dummy sh scripts/start-demo-gemini.sh
 set -eu
 
 ROOT=$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)
 KEY_FILE=${MAILSPRING_DEMO_GEMINI_KEY_FILE:-}
+NS=${MAILSPRING_DEMO_GEMINI_KEYCHAIN_NAMESPACE:-}
+
+if [ -n "$NS" ] && [ "$NS" != dummy ]; then
+  echo "start-demo-gemini: MAILSPRING_DEMO_GEMINI_KEYCHAIN_NAMESPACE must be unset or dummy." >&2
+  exit 1
+fi
 
 # If this process inherited the secret names, replace the process image so
 # the running launcher environ is not the original exec snapshot.
 if [ -n "${MAILSPRING_DEMO_GEMINI_API_KEY+x}" ] || [ -n "${MAILSPRING_DEMO_GEMINI_PAID+x}" ]; then
   echo "start-demo-gemini: unsetting MAILSPRING_DEMO_GEMINI_API_KEY / MAILSPRING_DEMO_GEMINI_PAID from launcher environ (values not printed)" >&2
   if [ -n "$KEY_FILE" ]; then
+    if [ "$NS" = dummy ]; then
+      exec env -u MAILSPRING_DEMO_GEMINI_API_KEY -u MAILSPRING_DEMO_GEMINI_PAID \
+        MAILSPRING_DEMO_GEMINI_KEY_FILE="$KEY_FILE" \
+        MAILSPRING_DEMO_GEMINI_KEYCHAIN_NAMESPACE=dummy \
+        "$0" "$@"
+    fi
     exec env -u MAILSPRING_DEMO_GEMINI_API_KEY -u MAILSPRING_DEMO_GEMINI_PAID \
+      -u MAILSPRING_DEMO_GEMINI_KEYCHAIN_NAMESPACE \
       MAILSPRING_DEMO_GEMINI_KEY_FILE="$KEY_FILE" \
+      "$0" "$@"
+  fi
+  if [ "$NS" = dummy ]; then
+    exec env -u MAILSPRING_DEMO_GEMINI_API_KEY -u MAILSPRING_DEMO_GEMINI_PAID \
+      -u MAILSPRING_DEMO_GEMINI_KEY_FILE \
+      MAILSPRING_DEMO_GEMINI_KEYCHAIN_NAMESPACE=dummy \
       "$0" "$@"
   fi
   exec env -u MAILSPRING_DEMO_GEMINI_API_KEY -u MAILSPRING_DEMO_GEMINI_PAID \
     -u MAILSPRING_DEMO_GEMINI_KEY_FILE \
+    -u MAILSPRING_DEMO_GEMINI_KEYCHAIN_NAMESPACE \
     "$0" "$@"
 fi
 
@@ -74,12 +97,29 @@ if [ ! -x "$ELECTRON" ]; then
 fi
 
 # KEY_FILE is a path, not the secret. Usual launch unsets it so main uses Keychain.
+# NAMESPACE=dummy is a selector, not a credential; usual launch unsets it.
 if [ -n "$KEY_FILE" ]; then
+  if [ "$NS" = dummy ]; then
+    exec env -u MAILSPRING_DEMO_GEMINI_API_KEY -u MAILSPRING_DEMO_GEMINI_PAID \
+      MAILSPRING_DEMO_GEMINI_KEY_FILE="$KEY_FILE" \
+      MAILSPRING_DEMO_GEMINI_KEYCHAIN_NAMESPACE=dummy \
+      "$ELECTRON" "$ROOT/app" --enable-logging --dev --demo "$@"
+  fi
   exec env -u MAILSPRING_DEMO_GEMINI_API_KEY -u MAILSPRING_DEMO_GEMINI_PAID \
+    -u MAILSPRING_DEMO_GEMINI_KEYCHAIN_NAMESPACE \
     MAILSPRING_DEMO_GEMINI_KEY_FILE="$KEY_FILE" \
+    "$ELECTRON" "$ROOT/app" --enable-logging --dev --demo "$@"
+fi
+
+if [ "$NS" = dummy ]; then
+  echo "start-demo-gemini: dummy Keychain namespace (isolated test item)" >&2
+  exec env -u MAILSPRING_DEMO_GEMINI_API_KEY -u MAILSPRING_DEMO_GEMINI_PAID \
+    -u MAILSPRING_DEMO_GEMINI_KEY_FILE \
+    MAILSPRING_DEMO_GEMINI_KEYCHAIN_NAMESPACE=dummy \
     "$ELECTRON" "$ROOT/app" --enable-logging --dev --demo "$@"
 fi
 
 exec env -u MAILSPRING_DEMO_GEMINI_API_KEY -u MAILSPRING_DEMO_GEMINI_PAID \
   -u MAILSPRING_DEMO_GEMINI_KEY_FILE \
+  -u MAILSPRING_DEMO_GEMINI_KEYCHAIN_NAMESPACE \
   "$ELECTRON" "$ROOT/app" --enable-logging --dev --demo "$@"
