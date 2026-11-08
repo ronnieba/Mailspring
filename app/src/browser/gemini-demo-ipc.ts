@@ -18,6 +18,7 @@ import { GeminiFetch, resolveGeminiDemoStatus, runGeminiDemoQuery } from './gemi
 export interface GeminiDemoIpcOptions {
   isDemoMode: () => boolean;
   isRealSelectedSummary?: () => boolean;
+  isOfflineArchive?: () => boolean;
   env?: NodeJS.ProcessEnv;
   credentials?: { key: string; paidAcknowledged: boolean };
   fetch?: GeminiFetch;
@@ -62,7 +63,11 @@ function parseQuery(raw: unknown): GeminiDemoQueryInput {
   const query = typeof r.query === 'string' ? r.query : '';
   const timeoutMs = typeof r.timeoutMs === 'number' ? r.timeoutMs : undefined;
   const mode =
-    r.mode === 'real-selected-single' || r.mode === 'demo-synthetic' ? r.mode : undefined;
+    r.mode === 'real-selected-single' ||
+    r.mode === 'demo-synthetic' ||
+    r.mode === 'offline-archive-selected'
+      ? r.mode
+      : undefined;
   const allowedMessageId = typeof r.allowedMessageId === 'string' ? r.allowedMessageId : undefined;
   const snapshotEpoch =
     typeof r.snapshotEpoch === 'number' && Number.isFinite(r.snapshotEpoch)
@@ -90,6 +95,7 @@ export function registerGeminiDemoIpcHandlers(ipcMain: IpcMain, opts: GeminiDemo
     return resolveGeminiDemoStatus({
       demoMode: opts.isDemoMode(),
       realSelectedSummary: opts.isRealSelectedSummary ? opts.isRealSelectedSummary() : false,
+      offlineArchive: opts.isOfflineArchive ? opts.isOfflineArchive() : false,
       env: opts.env,
       credentials: opts.credentials,
     });
@@ -100,6 +106,7 @@ export function registerGeminiDemoIpcHandlers(ipcMain: IpcMain, opts: GeminiDemo
     return runGeminiDemoQuery(req, {
       demoMode: opts.isDemoMode(),
       realSelectedSummary: opts.isRealSelectedSummary ? opts.isRealSelectedSummary() : false,
+      offlineArchive: opts.isOfflineArchive ? opts.isOfflineArchive() : false,
       env: opts.env,
       credentials: opts.credentials,
       fetch: fetchImpl,

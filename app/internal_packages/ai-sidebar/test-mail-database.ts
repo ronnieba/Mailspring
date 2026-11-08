@@ -29,6 +29,7 @@ const {
   shouldRebuildMailCacheOnError,
   mailCacheRecoveryAction,
   demoModeFromArgv,
+  offlineArchiveFromArgv,
   simulateMailCacheOpenRecovery,
   demoProfileMailCacheDecision,
   fixtureOnlyQueryResult,
@@ -99,6 +100,22 @@ function run() {
     assertFalse(shouldOpenMailCacheDatabase({ demoMode: true }));
     assertFalse(shouldRebuildMailCacheOnError({ demoMode: true }));
     assertEqual(mailCacheRecoveryAction({ demoMode: true }), 'ignore-keep-running');
+  });
+  test('offline archive never opens, rebuilds, or relaunches the mail cache', () => {
+    assertFalse(shouldOpenMailCacheDatabase({ demoMode: false, offlineArchive: true }));
+    assertFalse(shouldRebuildMailCacheOnError({ demoMode: false, offlineArchive: true }));
+    assertEqual(
+      mailCacheRecoveryAction({ demoMode: false, offlineArchive: true }),
+      'ignore-keep-running'
+    );
+  });
+  test('--offline-archive argv does not open the mail cache; path-only is not the flag', () => {
+    const argv = ['electron', './app', '--dev', '--offline-archive'];
+    const skipped = simulateMailCacheOpenRecovery({ argv, openWouldFail: true });
+    assertEqual(skipped.relaunches, 0);
+    assertEqual(skipped.stoppedBecause, 'did-not-open-mail-cache');
+    assertFalse(offlineArchiveFromArgv(['--offline-archive-path=/tmp/x']));
+    assertTrue(offlineArchiveFromArgv(['--offline-archive']));
   });
   test('open options stay readonly — production mailbox is not made writable', () => {
     assertEqual(MAIL_CACHE_SQLITE_OPEN_OPTIONS.readonly, true);

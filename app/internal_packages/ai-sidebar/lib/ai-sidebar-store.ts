@@ -31,19 +31,27 @@ import {
   isDemoMode,
 } from './synthetic-demo';
 import {
+  formatOfflineArchiveDisclosure,
   formatRealSelectedDisclosure,
   isStaleRealSelectedSnapshot,
   prepareRealSelectedBody,
   REAL_SELECTED_QUERY,
   RealSelectedPreview,
 } from './core/real-selected-mail';
+import { setOfflineArchiveSelected } from './offline-archive-catalog';
 import { isRealSelectedSummaryMode } from '../../../src/real-selected-summary';
+import { isOfflineArchiveMode } from '../../../src/offline-archive';
 import {
   GEMINI_DISPLAY_NAME,
   GeminiDemoStatus,
+  OFFLINE_ARCHIVE_SCOPE_REASON,
   REAL_SELECTED_SCOPE_REASON,
   unconfiguredGeminiStatus,
 } from '../../../src/browser/gemini-demo-protocol';
+
+function isExplicitSelectedSurface(): boolean {
+  return !isDemoMode() && (isRealSelectedSummaryMode() || isOfflineArchiveMode());
+}
 
 const DEFAULT_BUDGET: ProcessingBudget = {
   maxMessages: 100,
@@ -117,7 +125,7 @@ class AISidebarStore extends MailspringStore {
    * Set scope mode and resolve it.
    */
   async setScopeMode(mode: ScopeMode) {
-    if (isRealSelectedSummaryMode() && !isDemoMode() && mode !== 'selected-messages') {
+    if (isExplicitSelectedSurface() && mode !== 'selected-messages') {
       this._state.error = 'Folder and all-mail are disabled for one-selected-message summary';
       this._state.scopeMode = 'selected-messages';
       await this._resolveScope();
@@ -152,7 +160,7 @@ class AISidebarStore extends MailspringStore {
       this._state.geminiStatus = await this._gemini.refreshStatus();
       return;
     }
-    if (isRealSelectedSummaryMode()) {
+    if (isRealSelectedSummaryMode() || isOfflineArchiveMode()) {
       this._state.geminiStatus = await this._gemini.refreshStatus();
       return;
     }
@@ -170,7 +178,7 @@ class AISidebarStore extends MailspringStore {
   }
 
   private async _refreshRealPreview() {
-    if (!isRealSelectedSummaryMode() || isDemoMode()) {
+    if (!isExplicitSelectedSurface()) {
       this._state.realPreview = null;
       return;
     }
@@ -209,7 +217,9 @@ class AISidebarStore extends MailspringStore {
       date: String(ref.date),
       snippet: ref.snippet,
       bodyPreview: prepared.bodyText,
-      disclosure: formatRealSelectedDisclosure(prepared),
+      disclosure: isOfflineArchiveMode()
+        ? formatOfflineArchiveDisclosure(prepared)
+        : formatRealSelectedDisclosure(prepared),
       quotedStripped: prepared.quotedStripped,
       truncated: prepared.truncated,
       attachmentCount: prepared.attachmentCount,
@@ -227,7 +237,7 @@ class AISidebarStore extends MailspringStore {
       sentSnapshot?: { messageId: string; snapshotEpoch: number };
     }
   ) {
-    if (isRealSelectedSummaryMode() && !isDemoMode() && !opts?.allowRealSelected) {
+    if (isExplicitSelectedSurface() && !opts?.allowRealSelected) {
       this._state.error =
         'Use Summarize for the one selected message. Free-form mailbox search is disabled.';
       this.trigger();
@@ -359,9 +369,11 @@ class AISidebarStore extends MailspringStore {
 
       const sourcesAreSynthetic = areSyntheticDemoSources(searchResult.messages);
       const useGeminiDemo = isDemoMode() && this._state.geminiStatus.configured;
-      const useGeminiReal =
-        isRealSelectedSummaryMode() && !isDemoMode() && this._state.geminiStatus.configured;
+      const useGeminiReal = isExplicitSelectedSurface() && this._state.geminiStatus.configured;
       const useGemini = useGeminiDemo || useGeminiReal;
+      const selectedScopeReason = isOfflineArchiveMode()
+        ? OFFLINE_ARCHIVE_SCOPE_REASON
+        : REAL_SELECTED_SCOPE_REASON;
       if (useGeminiDemo && !sourcesAreSynthetic) {
         this._state.error = NON_SYNTHETIC_LIVE_REASON;
         this._state.conversation.push({
@@ -373,11 +385,11 @@ class AISidebarStore extends MailspringStore {
         return;
       }
       if (useGeminiReal && (sourcesAreSynthetic || searchResult.messages.length !== 1)) {
-        this._state.error = REAL_SELECTED_SCOPE_REASON;
+        this._state.error = selectedScopeReason;
         this._state.conversation.push({
           id: `error-${Date.now()}`,
           role: 'system',
-          content: `❌ שגיאה: ${REAL_SELECTED_SCOPE_REASON}`,
+          content: `❌ שגיאה: ${selectedScopeReason}`,
           timestamp: new Date(),
         });
         return;
@@ -388,7 +400,7 @@ class AISidebarStore extends MailspringStore {
         this._gemini.setGeneration(startedGeneration);
         if (useGeminiReal) {
           this._gemini.setQueryExtras({
-            mode: 'real-selected-single',
+            mode: isOfflineArchiveMode() ? 'offline-archive-selected' : 'real-selected-single',
             allowedMessageId: this._inFlightMessageId || searchResult.messages[0].id,
             snapshotEpoch: this._inFlightSnapshotEpoch,
           });
@@ -495,7 +507,7 @@ class AISidebarStore extends MailspringStore {
    * Opt-in one-message summarize. Does not run on load or select. No auto-retry.
    */
   async summarizeSelectedMessage() {
-    if (!isRealSelectedSummaryMode() || isDemoMode()) {
+    if (!isExplicitSelectedSurface()) {
       return;
     }
     if (this._state.isProcessing) {
@@ -517,6 +529,18 @@ class AISidebarStore extends MailspringStore {
       allowRealSelected: true,
       sentSnapshot: { messageId: preview.messageId, snapshotEpoch: preview.snapshotEpoch },
     });
+  }
+
+  selectOfflineArchiveMessage(messageId: string) {
+    if (!isOfflineArchiveMode() || isDemoMode()) {
+      return;
+    }
+    if (!setOfflineArchiveSelected(messageId)) {
+      this._state.error = OFFLINE_ARCHIVE_SCOPE_REASON;
+      this.trigger();
+      return;
+    }
+    void this.refreshScope();
   }
 
   /**
@@ -575,7 +599,7 @@ class AISidebarStore extends MailspringStore {
       }
       return false;
     }
-    if (isRealSelectedSummaryMode()) {
+    if (isRealSelectedSummaryMode() || isOfflineArchiveMode()) {
       const allowed =
         this._state.realPreview?.messageId ||
         this._inFlightMessageId ||
@@ -583,7 +607,9 @@ class AISidebarStore extends MailspringStore {
           ? this._state.resolvedScope.messageIds[0]
           : null);
       if (!allowed || messageId !== allowed) {
-        this._state.error = REAL_SELECTED_SCOPE_REASON;
+        this._state.error = isOfflineArchiveMode()
+          ? OFFLINE_ARCHIVE_SCOPE_REASON
+          : REAL_SELECTED_SCOPE_REASON;
         this.trigger();
         return false;
       }

@@ -34,15 +34,20 @@ function startupFlagsFromArgv(argv) {
   const realSelectedSummary = list.some(
     arg => arg === '--real-selected-summary' || arg.startsWith('--real-selected-summary=')
   );
+  // `--offline-archive-path` is not `--offline-archive` (same class as --demo-delay-ms).
+  const offlineArchive = list.some(
+    arg => arg === '--offline-archive' || arg.startsWith('--offline-archive=')
+  );
   const specMode = hasShort('t', 'test');
   const explicitDev = hasShort('d', 'dev');
   return {
     demoMode,
     realSelectedSummary,
+    offlineArchive,
     specMode,
-    // Force Mailspring-dev isolation even if `--dev` was omitted with the flag.
+    // Force isolated identities even if `--dev` was omitted with these flags.
     // Never treat this as production Mailspring / official app profile.
-    devMode: explicitDev || demoMode || specMode || realSelectedSummary,
+    devMode: explicitDev || demoMode || specMode || realSelectedSummary || offlineArchive,
     configDirPath,
   };
 }
@@ -56,13 +61,22 @@ function identityFromArgv(argv, { developerBuild = false } = {}) {
   const demoMode = !!developerBuild && flags.demoMode;
   const specMode = !!developerBuild && flags.specMode;
   // --demo wins: synthetic Mailspring-demo, not a mailbox profile.
-  const realSelectedSummary = !!developerBuild && flags.realSelectedSummary && !demoMode;
+  const offlineArchive = !!developerBuild && flags.offlineArchive && !demoMode;
+  // Live Yahoo selected-summary is not used when offline-archive is set.
+  const realSelectedSummary =
+    !!developerBuild && flags.realSelectedSummary && !demoMode && !offlineArchive;
   const devMode =
-    !!developerBuild && (flags.devMode || specMode || demoMode || realSelectedSummary);
-  return isolationIdentity({ devMode, specMode, demoMode });
+    !!developerBuild &&
+    (flags.devMode || specMode || demoMode || realSelectedSummary || offlineArchive);
+  return isolationIdentity({ devMode, specMode, demoMode, offlineArchive });
 }
 
-function isolationIdentity({ devMode = false, specMode = false, demoMode = false } = {}) {
+function isolationIdentity({
+  devMode = false,
+  specMode = false,
+  demoMode = false,
+  offlineArchive = false,
+} = {}) {
   if (specMode) {
     return {
       appName: 'Mailspring-spec',
@@ -79,6 +93,18 @@ function isolationIdentity({ devMode = false, specMode = false, demoMode = false
     return {
       appName: 'Mailspring-demo',
       configDirName: 'Mailspring-demo',
+      useMockKeychain: true,
+      skipProtocolRegistration: true,
+      skipSingleInstanceLock: true,
+      skipMailsync: true,
+      skipDefaultClient: true,
+      skipAutoUpdate: true,
+    };
+  }
+  if (offlineArchive) {
+    return {
+      appName: 'Mailspring-offline',
+      configDirName: 'Mailspring-offline',
       useMockKeychain: true,
       skipProtocolRegistration: true,
       skipSingleInstanceLock: true,

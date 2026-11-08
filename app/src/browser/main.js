@@ -184,7 +184,19 @@ const declareOptions = argv => {
     .boolean('real-selected-summary')
     .describe(
       'real-selected-summary',
-      'Dev only, not --demo: opt-in one selected-message summary via native MessageStore. Uses Mailspring-dev, never the official app profile. Ignored on packaged production and when --demo is set.'
+      'Dev only, not --demo: opt-in one selected-message summary via native MessageStore. Uses Mailspring-dev, never the official app profile. Ignored on packaged production, --demo, and --offline-archive.'
+    );
+  options
+    .boolean('offline-archive')
+    .describe(
+      'offline-archive',
+      'Dev only: disconnected experiment reader. Skips mailsync and never opens Yahoo. Reads a local .eml/maildir/mbox archive. Not --demo. Not live --real-selected-summary.'
+    );
+  options
+    .string('offline-archive-path')
+    .describe(
+      'offline-archive-path',
+      'Absolute path to an immutable local mail archive (Maildir, .eml tree, or mbox). Ignored without --offline-archive. Never points at official Mailspring/.'
     );
   return options;
 };
@@ -217,7 +229,11 @@ const parseCommandLine = argv => {
   // Demo is developer-build only. --demo implies isolated synthetic mode and
   // does not enable --dev by itself on a packaged release.
   const demoMode = developerBuild && !!args['demo'];
-  const realSelectedSummary = developerBuild && !!args['real-selected-summary'] && !demoMode;
+  const offlineArchive = developerBuild && !!args['offline-archive'] && !demoMode;
+  const realSelectedSummary =
+    developerBuild && !!args['real-selected-summary'] && !demoMode && !offlineArchive;
+  const offlineArchivePath =
+    offlineArchive && args['offline-archive-path'] ? String(args['offline-archive-path']) : null;
   const demoCapturePath = demoMode && args['demo-capture'] ? args['demo-capture'] : null;
   let demoDelayMs = 0;
   if (demoMode && args['demo-delay-ms'] != null && args['demo-delay-ms'] !== '') {
@@ -267,9 +283,11 @@ const parseCommandLine = argv => {
 
   return {
     version,
-    devMode: devMode || demoMode || realSelectedSummary,
+    devMode: devMode || demoMode || realSelectedSummary || offlineArchive,
     demoMode,
     realSelectedSummary,
+    offlineArchive,
+    offlineArchivePath,
     demoCapturePath,
     demoDelayMs,
     background,
@@ -358,6 +376,9 @@ const start = () => {
   if (identity.appName === 'Mailspring-demo') {
     process.env.MAILSPRING_DEMO = '1';
   }
+  if (identity.appName === 'Mailspring-offline') {
+    process.env.MAILSPRING_OFFLINE_ARCHIVE = '1';
+  }
 
   let options;
   try {
@@ -375,6 +396,12 @@ const start = () => {
     process.env.MAILSPRING_DEMO = '1';
     if (options.demoDelayMs > 0) {
       process.env.MAILSPRING_DEMO_DELAY_MS = String(options.demoDelayMs);
+    }
+  }
+  if (options.offlineArchive) {
+    process.env.MAILSPRING_OFFLINE_ARCHIVE = '1';
+    if (options.offlineArchivePath) {
+      process.env.MAILSPRING_OFFLINE_ARCHIVE_PATH = String(options.offlineArchivePath);
     }
   }
 
@@ -443,7 +470,12 @@ const start = () => {
   // On macOS, setLoginItemSettings doesn't support passing custom args, so we
   // detect login-item launches via wasOpenedAtLogin and start in background.
   // Skip in demo so we never touch login-item / production launch settings.
-  if (process.platform === 'darwin' && !options.background && !options.demoMode) {
+  if (
+    process.platform === 'darwin' &&
+    !options.background &&
+    !options.demoMode &&
+    !options.offlineArchive
+  ) {
     const settings = app.getLoginItemSettings();
     if (settings.wasOpenedAtLogin) {
       options.background = true;

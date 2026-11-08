@@ -46,18 +46,27 @@ export function openMailCacheLikeRenderer(Database: SqliteDatabaseCtor, dbPath: 
   return db;
 }
 
-export function shouldOpenMailCacheDatabase(opts: { demoMode: boolean }): boolean {
-  return !opts.demoMode;
+export function shouldOpenMailCacheDatabase(opts: {
+  demoMode: boolean;
+  offlineArchive?: boolean;
+}): boolean {
+  return !opts.demoMode && !opts.offlineArchive;
 }
 
-export function shouldRebuildMailCacheOnError(opts: { demoMode: boolean }): boolean {
-  return !opts.demoMode;
+export function shouldRebuildMailCacheOnError(opts: {
+  demoMode: boolean;
+  offlineArchive?: boolean;
+}): boolean {
+  return !opts.demoMode && !opts.offlineArchive;
 }
 
 export type MailCacheRecoveryAction = 'rebuild-and-relaunch' | 'ignore-keep-running';
 
-export function mailCacheRecoveryAction(opts: { demoMode: boolean }): MailCacheRecoveryAction {
-  if (opts.demoMode) {
+export function mailCacheRecoveryAction(opts: {
+  demoMode: boolean;
+  offlineArchive?: boolean;
+}): MailCacheRecoveryAction {
+  if (opts.demoMode || opts.offlineArchive) {
     return 'ignore-keep-running';
   }
   return 'rebuild-and-relaunch';
@@ -65,6 +74,10 @@ export function mailCacheRecoveryAction(opts: { demoMode: boolean }): MailCacheR
 
 export function demoModeFromArgv(argv: string[]): boolean {
   return argv.some((arg) => arg === '--demo' || arg.startsWith('--demo='));
+}
+
+export function offlineArchiveFromArgv(argv: string[]): boolean {
+  return argv.some((arg) => arg === '--offline-archive' || arg.startsWith('--offline-archive='));
 }
 
 /**
@@ -82,13 +95,14 @@ export function simulateMailCacheOpenRecovery(opts: {
   let relaunches = 0;
   for (let i = 0; i < maxCycles; i++) {
     const demoMode = demoModeFromArgv(opts.argv);
-    if (!shouldOpenMailCacheDatabase({ demoMode })) {
+    const offlineArchive = offlineArchiveFromArgv(opts.argv);
+    if (!shouldOpenMailCacheDatabase({ demoMode, offlineArchive })) {
       return { relaunches, stoppedBecause: 'did-not-open-mail-cache' };
     }
     if (!opts.openWouldFail) {
       return { relaunches, stoppedBecause: 'open-succeeded' };
     }
-    const action = mailCacheRecoveryAction({ demoMode });
+    const action = mailCacheRecoveryAction({ demoMode, offlineArchive });
     if (action !== 'rebuild-and-relaunch') {
       return { relaunches, stoppedBecause: action };
     }

@@ -10,10 +10,13 @@ The signed `/Applications/Mailspring.app` cannot load this prototype. Use a sour
 | Dev | `npm start` | `Mailspring-dev` | `.../Mailspring-dev/` | `Mailspring-dev Safe Storage` | `Mailspring-dev/Crashpad` |
 | **Demo (required for sidebar without account)** | `npm run start:demo` | `Mailspring-demo` | `.../Mailspring-demo/` | mock keychain (no prompt) | `Mailspring-demo/Crashpad` |
 | **Opt-in one selected message** | `sh scripts/start-real-selected-summary.sh` | `Mailspring-dev` | `.../Mailspring-dev/` | `Mailspring-dev Safe Storage` + existing DEMO Gemini Keychain item | `Mailspring-dev/Crashpad` |
+| **Disconnected local archive (current approved path)** | `sh scripts/start-offline-archive.sh /abs/archive` | `Mailspring-offline` | `.../Mailspring-offline/` | mock keychain + existing DEMO Gemini Keychain item (optional, one-message only) | `Mailspring-offline/Crashpad` |
 
 `--demo` skips onboarding, mailsync, KeyManager/safeStorage, protocol registration, and single-instance lock. It does **not** read the production profile or Yahoo credentials.
 
-`--dev --real-selected-summary` is **not** `--demo`. It keeps mailsync and uses the isolated Mailspring-dev profile (same as `npm start`). It cannot see Yahoo mail that only exists in official `/Applications/Mailspring.app`. Do not copy production userData, Keychain, or account configs. Do not install over the official app. The official app does not load this extension.
+`--dev --offline-archive` is **not** `--demo` and **not** live `--real-selected-summary`. It skips mailsync, does not open `edgehill.db`, and never logs into Yahoo. `--demo` still wins if both flags are present. Live `--real-selected-summary` is retained in code but is **not** the approved experiment path.
+
+`--dev --real-selected-summary` is **not** `--demo`. It keeps mailsync and uses the isolated Mailspring-dev profile (same as `npm start`). It cannot see Yahoo mail that only exists in official `/Applications/Mailspring.app`. Do not copy production userData, Keychain, or account configs. Do not install over the official app. The official app does not load this extension. The official Mailspring cache is **not a complete backup** (bodyProgress, live sync). Do not scrape it.
 
 Electron `--use-mock-keychain` covers **Mailspring-demo Safe Storage** only. The DEMO Gemini API key is a **separate** login-Keychain item: service `Mailspring-demo Gemini Developer API`, account `gemini-demo-api-key`, via `app/native/gemini-demo-keychain` (Security.framework). It is not KeyManager/safeStorage.
 
@@ -42,6 +45,7 @@ npx ts-node --project app/tsconfig.json app/internal_packages/ai-sidebar/test-de
 npx ts-node --project app/tsconfig.json app/internal_packages/ai-sidebar/test-ai-boundary.ts
 npx ts-node --project app/tsconfig.json app/internal_packages/ai-sidebar/test-gemini-demo.ts
 npx ts-node --project app/tsconfig.json app/internal_packages/ai-sidebar/test-real-selected-summary.ts
+npx ts-node --project app/tsconfig.json app/internal_packages/ai-sidebar/test-offline-archive.ts
 npx ts-node --project app/tsconfig.json app/internal_packages/ai-sidebar/test-demo-cli.ts
 npx ts-node --project app/tsconfig.json app/internal_packages/ai-sidebar/test-composer-direction.ts
 npx ts-node --project app/tsconfig.json app/internal_packages/ai-sidebar/test-composer-spell.ts
@@ -223,24 +227,25 @@ Parent runs these on Mac from repo root (and once from another cwd with `--prefi
 | `test-core.ts` | 21 |
 | `test-adapter.ts` | 21 |
 | `test-real-adapter.ts` | **23** |
-| `test-isolation.ts` | **12** |
+| `test-isolation.ts` | **15** |
 | `test-integration.ts` | 18 |
-| `test-mail-database.ts` | 21 |
+| `test-mail-database.ts` | **23** |
 | `test-demo-sidebar.ts` | **23** |
 | `test-demo-query.ts` | **20** |
 | `test-ai-boundary.ts` | **19** |
 | `test-gemini-demo.ts` | **41** (mocked transport + KEY_FILE + Keychain helper + dummy non-overwrite contract) |
 | `test-real-selected-summary.ts` | **17** (fake ids only; no live mail/keys) |
-| `test-demo-cli.ts` | **14** |
-| **prior portable subtotal** | **250** |
+| `test-offline-archive.ts` | **19** (fixtures + IMAP plan; no Yahoo / no paid call) |
+| `test-demo-cli.ts` | **16** |
+| **prior portable subtotal** | **276** |
 | `test-composer-direction.ts` | 14 |
 | `test-composer-spell.ts` | 21 |
 | `test-demo-composer.ts` | 13 |
 | **composer subtotal (no sidecar)** | **48** |
 | `test-nspell-engine.ts` | **13** (requires sidecar install) |
-| **portable total after sidecar** | **283** |
+| **portable total after sidecar** | **337** |
 
-Without sidecar install: prior **298** + alt-cwd **48** still apply. After `install.sh`: **311** portable (298+13). Composer+engine alt-cwd remains **61** (48+13) unless `test-ai-boundary.ts` / `test-gemini-demo.ts` / `test-real-selected-summary.ts` are included. Do not run these in cloud CI. Preserve 34a90265 layout/AI/isolation. Do not rewrite `app/package-lock.json`.
+Without sidecar install: prior **324** (276+48) + alt-cwd composer **48** still apply. After `install.sh`: **337** portable (324+13). Composer+engine alt-cwd remains **61** (48+13) unless `test-ai-boundary.ts` / `test-gemini-demo.ts` / `test-real-selected-summary.ts` / `test-offline-archive.ts` are included. Do not run these in cloud CI. Preserve 34a90265 layout/AI/isolation. Do not rewrite `app/package-lock.json`.
 
 **This SHA targeted Mac commands (do not claim f89b4e4b 221+61 / 81 UI):**
 
@@ -251,6 +256,8 @@ npx ts-node --project app/tsconfig.json app/internal_packages/ai-sidebar/test-ge
 # expected 41 passed (mocked transport + KEY_FILE + Keychain helper + dummy non-overwrite contract; no live Gemini)
 npx ts-node --project app/tsconfig.json app/internal_packages/ai-sidebar/test-real-selected-summary.ts
 # expected 17 passed (fake test-real-msg-1 only; no live Yahoo / no paid call)
+npx ts-node --project app/tsconfig.json app/internal_packages/ai-sidebar/test-offline-archive.ts
+# expected 19 passed (local fixtures + IMAP plan; no Yahoo / no paid call)
 npx ts-node --project app/tsconfig.json app/internal_packages/ai-sidebar/test-demo-query.ts
 # expected 20 passed (exhaustive 2/5/6 + first-selected vs all-selected)
 npx ts-node --project app/tsconfig.json app/internal_packages/ai-sidebar/test-demo-sidebar.ts
@@ -474,3 +481,63 @@ Consequential remaining user step if `~/Library/Application Support/Mailspring-d
 6. Do not paste message content, credentials, or Keychain values into chat/logs.
 
 Known limits: quoted neighboring HTML is stripped (disclosed); attachments are not sent (count disclosed); body truncated at 8000 characters; `--demo` cannot see Yahoo (`skipMailsync`); official app does not load this extension.
+
+**Current user direction supersedes this live login.** Do not continue `--real-selected-summary` onboarding. Use the disconnected archive path below.
+
+## Disconnected Yahoo archive (Mailspring-offline)
+
+Goal: a **complete local archive** on the Mac, a **read-only backup baseline**, and a **disposable working copy** for experiments. No synchronization back to Yahoo. No live account credentials or mailsync in the experiment reader. Gemini remains allowed only for **explicit Summarize of one selected local message**, separately disclosed, never automatic bulk upload.
+
+### What is not the acquisition path
+
+- Official `/Applications/Mailspring.app` profile (`~/Library/Application Support/Mailspring/`, `edgehill.db`, Keychain) is **not a complete backup**. bodyProgress can leave bodies missing. Do not copy, scrape, or point `--user-data-dir` at it.
+- Built-in folder export (`GetManyRFC2822Task`) needs **live mailsync**, is folder-at-a-time, and skips `drafts` / `starred` / `unread` roles (`EXCLUDED_EXPORT_ROLES`). It is not a full mailbox snapshot and is not a new export UI.
+- `--demo` is synthetic fixtures. `--real-selected-summary` is live Yahoo in Mailspring-dev. Neither is this mode.
+
+### Supported acquisition (later native; not this SHA)
+
+User-authorized **read-only IMAP snapshot**. This cloud agent does not connect and does not take credentials.
+
+```text
+TLS imap.mail.yahoo.com:993
+LIST "" "*"
+EXAMINE each mailbox (never SELECT)
+UID FETCH 1:* (RFC822.SIZE)     → disk estimate before download
+UID FETCH … BODY.PEEK[]         → immutable .eml + sha256
+LOGOUT
+copy to a disposable working tree; original stays read-only
+```
+
+Forbidden: `STORE` `EXPUNGE` `MOVE` `APPEND` `COPY` `SELECT` `FETCH BODY[]` `FETCH RFC822` (those can set `\Seen` or mutate). Resume key is `folder + UIDVALIDITY + UID`.
+
+Script that **refuses to execute** (prints the plan, exit 2):
+
+```bash
+sh scripts/offline-imap-snapshot.sh
+```
+
+**Native prerequisites (parent Mac, after this plan):**
+
+1. Yahoo account that can IMAP. **App password is often required**; OAuth IMAP may or may not work. Do not invent an in-app export UI.
+2. Disk check **before** BODY.PEEK: free bytes >= `rfc822Bytes * 1.15 + 64MiB`. Unknown RFC822.SIZE values are counted separately. Parent confirms on the Mac.
+3. Inventory **every** listed mailbox, including Bulk Mail / Spam / Trash / Draft / Starred. Unselectable, empty, examine-failed, and missing typical folders are recorded in the manifest — **no silent exclusions**. Items already deleted on the server cannot be recovered; they must be listed as unavailable.
+4. Write an interoperable tree: Maildir or `.eml` per message (mboxrd also importable). Manifest: counts, sha256, unreadable paths.
+5. Copy to a working tree. Experiments (local delete, Gemini on one message) touch only the copy. Reset = recopy from the original.
+
+Uncertainties to disclose at acquisition time: exact Yahoo folder names, `\Noselect` mailboxes, IMAP size vs on-disk MIME, already-expunged mail, app-password vs OAuth.
+
+### Experiment reader (this SHA; testable on fixtures)
+
+```bash
+# Fixture tree (fake @example.test addresses only). Does not touch Yahoo.
+sh scripts/start-offline-archive.sh \
+  "$PWD/app/internal_packages/ai-sidebar/fixtures/offline-archive"
+```
+
+Identity: **Mailspring-offline**, `skipMailsync`, mock keychain, no `edgehill.db`, `core.reading.autoloadImages=false`, no onboarding. Official app unused. Network is **not** globally blocked (Gemini fetch must still work on explicit Summarize). Yahoo IMAP is not opened at an architecture boundary (`skipMailsync` + catalog import, not a blanket offline firewall).
+
+Gemini: one selected local message after Summarize. Not bulk corpus upload. Same dedicated DEMO Keychain item / KEY_FILE as other launchers; KEY/PAID names stay unset.
+
+Imported HTML: scripts, `on*` handlers, and remote `https` images are stripped. Original archive files are never written. Local deletion in the working copy cannot reach Yahoo.
+
+Remaining actual export/native gates: user login + disk confirmation + IMAP snapshot on the Mac. This SHA is planning/prep plus a fixture-testable reader.

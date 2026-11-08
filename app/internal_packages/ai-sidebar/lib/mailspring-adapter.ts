@@ -22,6 +22,13 @@ import {
 } from './synthetic-demo';
 import { resolveExactSelectedMessage } from './core/real-selected-mail';
 import { isRealSelectedSummaryMode as defaultIsRealSelectedSummaryMode } from '../../../src/real-selected-summary';
+import { isOfflineArchiveMode as defaultIsOfflineArchiveMode } from '../../../src/offline-archive';
+import {
+  getOfflineArchiveAttachmentCount,
+  getOfflineArchiveBody,
+  getOfflineArchiveScope,
+  searchOfflineArchive,
+} from './offline-archive-catalog';
 
 export interface QueryLike<T> {
   where(condition: unknown): QueryLike<T>;
@@ -39,6 +46,7 @@ export interface QueryLike<T> {
 export interface MailAdapterStores {
   isDemoMode: () => boolean;
   isRealSelectedSummaryMode?: () => boolean;
+  isOfflineArchiveMode?: () => boolean;
   focusedThreadMessages?: () => any[];
   messageExpansion?: () => Record<string, 'explicit' | 'default' | undefined>;
   accountIds: () => string[];
@@ -118,6 +126,7 @@ function loadProductionStores(): MailAdapterStores {
   return {
     isDemoMode: defaultIsDemoMode,
     isRealSelectedSummaryMode: defaultIsRealSelectedSummaryMode,
+    isOfflineArchiveMode: defaultIsOfflineArchiveMode,
     focusedThreadMessages: () => {
       const { MessageStore } = require('mailspring-exports');
       return MessageStore.items() || [];
@@ -208,6 +217,9 @@ export class MailspringAdapter implements MailAdapter {
     const s = this.stores();
     if (s.isDemoMode()) {
       return getDemoScope(mode);
+    }
+    if (s.isOfflineArchiveMode && s.isOfflineArchiveMode()) {
+      return getOfflineArchiveScope(mode);
     }
 
     const perspective = s.currentPerspective();
@@ -328,6 +340,24 @@ export class MailspringAdapter implements MailAdapter {
         };
       }
       return searchDemoMessages(scope, query, limit, offset, mode);
+    }
+    if (s.isOfflineArchiveMode && s.isOfflineArchiveMode()) {
+      if (signal?.aborted) {
+        return {
+          messages: [],
+          progress: {
+            totalEligible: 0,
+            processed: 0,
+            withBodies: 0,
+            missingBodies: 0,
+            syncCoverage: 100,
+            isComplete: false,
+            isCancelled: true,
+          },
+          retrievalMode: mode,
+        };
+      }
+      return searchOfflineArchive(scope, query, mode, limit, offset);
     }
 
     const progress: SearchProgress = {
@@ -485,6 +515,9 @@ export class MailspringAdapter implements MailAdapter {
     if (s.isDemoMode()) {
       return 0;
     }
+    if (s.isOfflineArchiveMode && s.isOfflineArchiveMode()) {
+      return getOfflineArchiveAttachmentCount(messageId);
+    }
     const found = s.findMessage(messageId);
     const msg = (await found) as any;
     const files = msg?.files;
@@ -495,6 +528,9 @@ export class MailspringAdapter implements MailAdapter {
     const s = this.stores();
     if (s.isDemoMode()) {
       return getDemoMessageBody(messageId);
+    }
+    if (s.isOfflineArchiveMode && s.isOfflineArchiveMode()) {
+      return getOfflineArchiveBody(messageId);
     }
     const found = s.findMessage(messageId);
     const msg = (await (typeof (found as QueryLike<any>).include === 'function'
@@ -507,6 +543,9 @@ export class MailspringAdapter implements MailAdapter {
     const s = this.stores();
     if (s.isDemoMode()) {
       console.log(`[AI Sidebar Demo] Would navigate to message: ${messageId}`);
+      return false;
+    }
+    if (s.isOfflineArchiveMode && s.isOfflineArchiveMode()) {
       return false;
     }
     if (s.isRealSelectedSummaryMode && s.isRealSelectedSummaryMode()) {
@@ -528,6 +567,13 @@ export class MailspringAdapter implements MailAdapter {
     const s = this.stores();
     if (s.isDemoMode()) {
       return getDemoSyncProgress();
+    }
+    if (s.isOfflineArchiveMode && s.isOfflineArchiveMode()) {
+      const result: { [accountId: string]: number } = {};
+      for (const id of accountIds) {
+        result[id] = 100;
+      }
+      return result;
     }
 
     const result: { [accountId: string]: number } = {};

@@ -14,6 +14,7 @@ import {
   GEMINI_DEMO_MODEL,
   GEMINI_DEMO_PAID_ENV,
   GEMINI_DISPLAY_NAME,
+  GEMINI_OFFLINE_ARCHIVE_SYSTEM_INSTRUCTION,
   GEMINI_REAL_SELECTED_SYSTEM_INSTRUCTION,
   GEMINI_RESPONSE_FORMAT,
   GEMINI_SYSTEM_INSTRUCTION,
@@ -23,9 +24,11 @@ import {
   GeminiHostFailure,
   GeminiHostResult,
   NON_SYNTHETIC_SOURCE_REASON,
+  OFFLINE_ARCHIVE_SCOPE_REASON,
   REAL_SELECTED_SCOPE_REASON,
   areSyntheticDemoMailRefs,
   isAllowedGeminiEndpoint,
+  isOfflineArchiveMailRef,
   isSyntheticDemoMailRef,
   unconfiguredGeminiStatus,
 } from './gemini-demo-protocol';
@@ -46,6 +49,7 @@ export type GeminiFetch = (
 export interface GeminiDemoHostDeps {
   demoMode: boolean;
   realSelectedSummary?: boolean;
+  offlineArchive?: boolean;
   env?: NodeJS.ProcessEnv;
   credentials?: { key: string; paidAcknowledged: boolean };
   fetch?: GeminiFetch;
@@ -92,6 +96,7 @@ export function redactSecret(text: string, secret: string): string {
 export function resolveGeminiDemoStatus(opts: {
   demoMode: boolean;
   realSelectedSummary?: boolean;
+  offlineArchive?: boolean;
   env?: NodeJS.ProcessEnv;
   credentials?: { key: string; paidAcknowledged: boolean };
 }): GeminiDemoStatus {
@@ -99,9 +104,10 @@ export function resolveGeminiDemoStatus(opts: {
   const keyPresent = key.length > 0;
   // --demo always wins so the synthetic default cannot become a mailbox path.
   const demoMode = !!opts.demoMode;
-  const realSelectedSummary = !demoMode && !!opts.realSelectedSummary;
+  const offlineArchive = !demoMode && !!opts.offlineArchive;
+  const realSelectedSummary = !demoMode && !offlineArchive && !!opts.realSelectedSummary;
 
-  if (!demoMode && !realSelectedSummary) {
+  if (!demoMode && !realSelectedSummary && !offlineArchive) {
     return unconfiguredGeminiStatus(false, 'Gemini DEMO host is --demo only', {
       keyPresent,
       paidAcknowledged,
@@ -111,23 +117,26 @@ export function resolveGeminiDemoStatus(opts: {
     return unconfiguredGeminiStatus(
       demoMode,
       `Missing ${GEMINI_DEMO_KEY_ENV}. Official paid Gemini Developer API key required (not a consumer Gemini subscription).`,
-      { keyPresent, paidAcknowledged, realSelectedSummary }
+      { keyPresent, paidAcknowledged, realSelectedSummary, offlineArchive }
     );
   }
   if (!paidAcknowledged) {
     return unconfiguredGeminiStatus(
       demoMode,
       `Missing ${GEMINI_DEMO_PAID_ENV}=1. Explicit paid-project ack required. A key string does not prove Cloud Billing.`,
-      { keyPresent, paidAcknowledged, realSelectedSummary }
+      { keyPresent, paidAcknowledged, realSelectedSummary, offlineArchive }
     );
   }
   return {
     configured: true,
     reason: demoMode
       ? 'Key and paid-project ack present. Billing is not inferred from the key or model id; live calls stay blocked until parent settles prepaid/budget.'
-      : 'Key and paid-project ack present for opt-in one-selected-message summary. Billing is not inferred from the key or model id.',
+      : offlineArchive
+        ? 'Key and paid-project ack present for explicit one-message analysis of a local archive. Not bulk upload. Yahoo IMAP is not used.'
+        : 'Key and paid-project ack present for opt-in one-selected-message summary. Billing is not inferred from the key or model id.',
     demoMode,
     realSelectedSummary,
+    offlineArchive,
     keyPresent: true,
     paidAcknowledged: true,
     billingProven: false,
@@ -329,6 +338,29 @@ export function buildUntrustedGeminiInput(
   return `<<<QUERY>>>\n${query}\n<<<END_QUERY>>>\n<<<MESSAGES>>>\n${serialized}\n<<<END_MESSAGES>>>`;
 }
 
+function admitOfflineArchiveQuery(req: GeminiDemoQueryInput): GeminiHostFailure | null {
+  if (req.mode !== 'offline-archive-selected') {
+    return fail('offline-archive-scope', OFFLINE_ARCHIVE_SCOPE_REASON);
+  }
+  if (!Array.isArray(req.messages) || req.messages.length !== 1) {
+    return fail('offline-archive-scope', OFFLINE_ARCHIVE_SCOPE_REASON);
+  }
+  const message = req.messages[0];
+  if (typeof req.allowedMessageId !== 'string' || req.allowedMessageId !== message.id) {
+    return fail('offline-archive-scope', OFFLINE_ARCHIVE_SCOPE_REASON);
+  }
+  if (typeof req.snapshotEpoch !== 'number' || !Number.isFinite(req.snapshotEpoch)) {
+    return fail('stale-selection', OFFLINE_ARCHIVE_SCOPE_REASON);
+  }
+  if (isSyntheticDemoMailRef(message) || !isOfflineArchiveMailRef(message)) {
+    return fail('offline-archive-scope', OFFLINE_ARCHIVE_SCOPE_REASON);
+  }
+  if (typeof message.bodyText !== 'string' || !message.bodyText.trim()) {
+    return fail('offline-archive-scope', OFFLINE_ARCHIVE_SCOPE_REASON);
+  }
+  return null;
+}
+
 function admitRealSelectedQuery(req: GeminiDemoQueryInput): GeminiHostFailure | null {
   if (req.mode !== 'real-selected-single') {
     return fail('real-selected-scope', REAL_SELECTED_SCOPE_REASON);
@@ -373,16 +405,23 @@ export async function runGeminiDemoQuery(
 ): Promise<GeminiHostResult> {
   const { key, paidAcknowledged } = credentialsOf(deps);
   const demoMode = !!deps.demoMode;
-  const realSelectedSummary = !demoMode && !!deps.realSelectedSummary;
+  const offlineArchive = !demoMode && !!deps.offlineArchive;
+  const realSelectedSummary = !demoMode && !offlineArchive && !!deps.realSelectedSummary;
   const status = resolveGeminiDemoStatus({
     demoMode,
     realSelectedSummary,
+    offlineArchive,
     credentials: { key, paidAcknowledged },
   });
   if (!status.configured) {
     return fail('unconfigured', status.reason);
   }
-  if (realSelectedSummary) {
+  if (offlineArchive) {
+    const scoped = admitOfflineArchiveQuery(req);
+    if (scoped) {
+      return scoped;
+    }
+  } else if (realSelectedSummary) {
     const scoped = admitRealSelectedQuery(req);
     if (scoped) {
       return scoped;
@@ -430,11 +469,13 @@ export async function runGeminiDemoQuery(
 
     const body = JSON.stringify({
       model: GEMINI_DEMO_MODEL,
-      system_instruction: realSelectedSummary
-        ? GEMINI_REAL_SELECTED_SYSTEM_INSTRUCTION
-        : GEMINI_SYSTEM_INSTRUCTION,
+      system_instruction: offlineArchive
+        ? GEMINI_OFFLINE_ARCHIVE_SYSTEM_INSTRUCTION
+        : realSelectedSummary
+          ? GEMINI_REAL_SELECTED_SYSTEM_INSTRUCTION
+          : GEMINI_SYSTEM_INSTRUCTION,
       input: buildUntrustedGeminiInput(req.query, req.messages, {
-        includeBody: realSelectedSummary,
+        includeBody: realSelectedSummary || offlineArchive,
       }),
       response_format: GEMINI_RESPONSE_FORMAT,
     });

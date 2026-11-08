@@ -16,6 +16,7 @@ export {
 } from './ai-boundary';
 export { GeminiDemoProvider } from './gemini-demo-provider';
 export {
+  formatOfflineArchiveDisclosure,
   formatRealSelectedDisclosure,
   htmlToPlainText,
   isStaleRealSelectedSnapshot,
@@ -23,6 +24,21 @@ export {
   REAL_SELECTED_QUERY,
   resolveExactSelectedMessage,
 } from './real-selected-mail';
+export {
+  assertReadOnlyImapCommand,
+  estimateArchiveDisk,
+  inventoryFolders,
+  plannedImapSnapshotSteps,
+  YAHOO_FOLDER_CANDIDATES,
+  YAHOO_IMAP_HOST,
+} from './offline-imap-snapshot-plan';
+export {
+  isForbiddenArchiveRoot,
+  materializeWorkingCopy,
+  originalHashesUnchanged,
+  readOfflineArchive,
+  stripRemoteHtml,
+} from './offline-archive-format';
 export { MOCK_AI_WORKER_PATH, mockAiSpawnPlan, runMockAiSubprocess } from './mock-ai-subprocess';
 export {
   filterMessagesByQuery,

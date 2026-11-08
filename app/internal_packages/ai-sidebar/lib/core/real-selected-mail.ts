@@ -155,6 +155,14 @@ export function formatRealSelectedDisclosure(d: RealSelectedDisclosure): string 
   return parts.join(' ');
 }
 
+export function formatOfflineArchiveDisclosure(d: RealSelectedDisclosure): string {
+  return [
+    'Local disconnected archive. Yahoo is not contacted.',
+    formatRealSelectedDisclosure(d),
+    'Gemini is not bulk-upload; only this one selected local message after Summarize.',
+  ].join(' ');
+}
+
 function decodeEntities(text: string): string {
   return text
     .replace(/&nbsp;/gi, ' ')

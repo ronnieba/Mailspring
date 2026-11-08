@@ -138,6 +138,43 @@ function run() {
     assertEqual(packaged.appName, 'Mailspring');
   });
 
+  test('--offline-archive on a developer build is Mailspring-offline, skipMailsync', () => {
+    const id = identityFromArgv(['electron', './app', '--dev', '--offline-archive'], {
+      developerBuild: true,
+    });
+    assertEqual(id.appName, 'Mailspring-offline');
+    assertEqual(id.configDirName, 'Mailspring-offline');
+    assertTrue(id.useMockKeychain);
+    assertTrue(id.skipMailsync);
+    assertTrue(id.skipAutoUpdate);
+    const flags = startupFlagsFromArgv(['electron', './app', '--offline-archive']);
+    assertTrue(flags.offlineArchive);
+    assertFalse(flags.demoMode);
+    const packaged = identityFromArgv(['electron', './app', '--offline-archive'], {
+      developerBuild: false,
+    });
+    assertEqual(packaged.appName, 'Mailspring');
+  });
+
+  test('--offline-archive-path is not --offline-archive', () => {
+    const flags = startupFlagsFromArgv(['--offline-archive-path=/tmp/mail']);
+    assertFalse(flags.offlineArchive);
+    assertFalse(startupFlagsFromArgv(['--offline-archive-path=/tmp/mail']).demoMode);
+  });
+
+  test('--demo wins over --offline-archive; offline wins over live real-selected', () => {
+    const demo = identityFromArgv(['electron', './app', '--dev', '--demo', '--offline-archive'], {
+      developerBuild: true,
+    });
+    assertEqual(demo.appName, 'Mailspring-demo');
+    const offline = identityFromArgv(
+      ['electron', './app', '--dev', '--offline-archive', '--real-selected-summary'],
+      { developerBuild: true }
+    );
+    assertEqual(offline.appName, 'Mailspring-offline');
+    assertTrue(offline.skipMailsync);
+  });
+
   test('--demo wins over --real-selected-summary so synthetic isolation stays default', () => {
     const id = identityFromArgv(
       ['electron', './app', '--dev', '--demo', '--real-selected-summary'],

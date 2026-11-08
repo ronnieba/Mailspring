@@ -22,7 +22,7 @@ export function createGeminiIpcTransport(): GeminiDemoTransport {
       query: string;
       messages: MessageRef[];
       timeoutMs?: number;
-      mode?: 'demo-synthetic' | 'real-selected-single';
+      mode?: 'demo-synthetic' | 'real-selected-single' | 'offline-archive-selected';
       allowedMessageId?: string;
       snapshotEpoch?: number;
     }): Promise<GeminiHostResult> {

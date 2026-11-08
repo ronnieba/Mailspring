@@ -78,6 +78,7 @@
     "start:demo": "electron ./app --enable-logging --dev --demo",
     "start:demo:gemini": "sh scripts/start-demo-gemini.sh",
     "start:real-selected-summary": "sh scripts/start-real-selected-summary.sh",
+    "start:offline-archive": "sh scripts/start-offline-archive.sh",
     "gemini-demo-keychain": "sh scripts/gemini-demo-keychain.sh",
     "build:fm-helper": "swift build -c release --arch arm64 --package-path app/native/mailspring-fm",
     "lint": "eslint --fix -c .eslintrc \"app/src/**/*.{ts,tsx}\" \"app/internal_packages/**/*.{ts,tsx}\"",

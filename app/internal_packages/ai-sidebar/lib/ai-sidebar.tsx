@@ -10,9 +10,15 @@ import { ScopeMode, RetrievalMode, ConversationMessage, Citation } from './core/
 import { DemoMessagePreview, isDemoMode } from './synthetic-demo';
 import { GEMINI_DISPLAY_NAME, GeminiDemoStatus } from '../../../src/browser/gemini-demo-protocol';
 import { isRealSelectedSummaryMode } from '../../../src/real-selected-summary';
+import { isOfflineArchiveMode } from '../../../src/offline-archive';
 import { RealSelectedPreview } from './core/real-selected-mail';
+import { getOfflineArchiveCatalog, getOfflineArchiveManifest } from './offline-archive-catalog';
 import DemoComposer from './demo-composer';
 import classNames from 'classnames';
+
+function isSelectedSummarySurface(): boolean {
+  return isRealSelectedSummaryMode() || isOfflineArchiveMode();
+}
 
 interface AISidebarState {
   scopeMode: ScopeMode;
@@ -92,6 +98,9 @@ class AISidebarInner extends React.Component<Record<string, never>, AISidebarSta
         // Node tests / no Flux
       }
     }
+    if (isOfflineArchiveMode()) {
+      void AISidebarStore.refreshScope();
+    }
 
     if (isDemoMode()) {
       (window as any).__mailspringDemoSidebar = {
@@ -148,7 +157,7 @@ class AISidebarInner extends React.Component<Record<string, never>, AISidebarSta
   };
 
   _onSubmit = () => {
-    if (isRealSelectedSummaryMode()) {
+    if (isSelectedSummarySurface()) {
       return;
     }
     const query = this.state.inputValue.trim();
@@ -178,6 +187,7 @@ class AISidebarInner extends React.Component<Record<string, never>, AISidebarSta
   _renderMockWarning() {
     const inDemoMode = isDemoMode();
     const realSelected = isRealSelectedSummaryMode();
+    const offlineArchive = isOfflineArchiveMode();
     const geminiConfigured = !!this.state.geminiStatus?.configured;
     const geminiStatus = geminiConfigured ? 'configured' : 'unconfigured';
 
@@ -199,6 +209,23 @@ class AISidebarInner extends React.Component<Record<string, never>, AISidebarSta
               🧪 מצב DEMO - נתונים סינתטיים
               <br />
               <small>MOCK AI · synthetic fixtures · no account · no Keychain</small>
+            </>
+          ) : offlineArchive && geminiConfigured ? (
+            <>
+              ארכיון מקומי מנותק — Gemini על הודעה נבחרת בלבד
+              <br />
+              <small>
+                Disconnected local archive · no Yahoo · no mailsync · Gemini is not bulk-upload
+              </small>
+            </>
+          ) : offlineArchive ? (
+            <>
+              ארכיון מקומי מנותק — מפתח Gemini לא מוכן
+              <br />
+              <small>
+                Pick one local message, then Summarize. Yahoo is not contacted. Nothing is sent on
+                load.
+              </small>
             </>
           ) : realSelected && geminiConfigured ? (
             <>
@@ -228,6 +255,13 @@ class AISidebarInner extends React.Component<Record<string, never>, AISidebarSta
   }
 
   _renderScopeSelector() {
+    if (isOfflineArchiveMode()) {
+      return (
+        <div className="ai-sidebar-scope" data-offline-archive-scope="true">
+          <span className="scope-label">טווח: הודעה אחת מהארכיון המקומי (מנותק)</span>
+        </div>
+      );
+    }
     if (isRealSelectedSummaryMode()) {
       return (
         <div className="ai-sidebar-scope" data-real-selected-scope="true">
@@ -369,8 +403,8 @@ class AISidebarInner extends React.Component<Record<string, never>, AISidebarSta
                 key={`${citation.messageId}-${i}`}
                 className="citation-btn"
                 onClick={() => this._onCitationClick(citation)}
-                title={`${isRealSelectedSummaryMode() ? 'Selected' : 'DEMO'} ${citation.messageId}\nמ: ${citation.from}\n${citation.snippet}`}
-                aria-label={`${isRealSelectedSummaryMode() ? 'מקור' : 'מקור DEMO'} ${citation.messageId}: ${citation.subject}`}
+                title={`${isSelectedSummarySurface() ? 'Selected' : 'DEMO'} ${citation.messageId}\nמ: ${citation.from}\n${citation.snippet}`}
+                aria-label={`${isSelectedSummarySurface() ? 'מקור' : 'מקור DEMO'} ${citation.messageId}: ${citation.subject}`}
                 data-message-id={citation.messageId}
               >
                 <span className="citation-index">[{i + 1}]</span>
@@ -386,9 +420,11 @@ class AISidebarInner extends React.Component<Record<string, never>, AISidebarSta
         {msg.isMock && <div className="mock-indicator">🔧 Mock Response</div>}
         {msg.role === 'assistant' && msg.isMock === false && (
           <div className="live-indicator">
-            {isRealSelectedSummaryMode()
-              ? 'Gemini Developer API · one selected message · paid project required'
-              : 'Gemini Developer API · DEMO synthetic · paid project required'}
+            {isOfflineArchiveMode()
+              ? 'Gemini Developer API · one local archive message · not bulk upload · paid project required'
+              : isRealSelectedSummaryMode()
+                ? 'Gemini Developer API · one selected message · paid project required'
+                : 'Gemini Developer API · DEMO synthetic · paid project required'}
           </div>
         )}
       </div>
@@ -428,16 +464,73 @@ class AISidebarInner extends React.Component<Record<string, never>, AISidebarSta
     );
   }
 
+  _renderOfflineArchivePicker() {
+    if (!isOfflineArchiveMode()) return null;
+    const catalog = getOfflineArchiveCatalog();
+    const manifest = getOfflineArchiveManifest();
+    const selected = this.state.realPreview?.messageId;
+    const folderSummary = manifest
+      ? Object.entries(manifest.folderCounts)
+          .map(([name, n]) => `${name}: ${n}`)
+          .join(' · ')
+      : catalog.length
+        ? `${catalog.length} messages`
+        : 'empty archive';
+    const missing =
+      manifest && manifest.emptyFolders.length ? manifest.emptyFolders.join(', ') : '';
+    const unreadable =
+      manifest && manifest.unreadable.length
+        ? manifest.unreadable.map((u) => u.path).join(', ')
+        : '';
+    return (
+      <div className="ai-sidebar-real-preview" data-offline-archive-list="true">
+        <div className="demo-preview-banner">ארכיון מקומי מנותק — Yahoo לא בשימוש</div>
+        <p className="real-disclosure">{folderSummary}</p>
+        {missing ? <p className="real-disclosure">Empty folders: {missing}</p> : null}
+        {unreadable ? <p className="real-disclosure">Unreadable: {unreadable}</p> : null}
+        {catalog.length === 0 ? (
+          <p>No local archive loaded. Pass --offline-archive-path to an .eml/maildir/mbox tree.</p>
+        ) : (
+          <div role="list" aria-label="Local archive messages">
+            {catalog.map((m) => (
+              <button
+                key={m.id}
+                type="button"
+                className={classNames('citation-btn', { active: m.id === selected })}
+                data-offline-archive-pick={m.id}
+                aria-label={`Select local archive message ${m.subject}`}
+                onClick={() => AISidebarStore.selectOfflineArchiveMessage(m.id)}
+              >
+                <span className="citation-subject">{m.folderPath}</span>
+                <span className="citation-id">{m.subject}</span>
+              </button>
+            ))}
+          </div>
+        )}
+      </div>
+    );
+  }
+
   _renderRealSelectionPreview() {
     const preview = this.state.realPreview;
-    if (!isRealSelectedSummaryMode()) return null;
+    if (!isSelectedSummarySurface()) return null;
+    const offline = isOfflineArchiveMode();
     if (!preview) {
       return (
-        <div className="ai-sidebar-real-preview" data-real-selected-empty="true">
-          <p>בחר הודעה אחת בשרשור. סיכום נשלח רק אחרי לחיצה על Summarize.</p>
+        <div
+          className="ai-sidebar-real-preview"
+          data-real-selected-empty="true"
+          data-offline-archive-empty={offline ? 'true' : undefined}
+        >
           <p>
-            Select exactly one message. Nothing is sent until you click Summarize. Attachments and
-            other mail stay local.
+            {offline
+              ? 'בחר הודעה אחת מהארכיון המקומי. סיכום נשלח רק אחרי Summarize.'
+              : 'בחר הודעה אחת בשרשור. סיכום נשלח רק אחרי לחיצה על Summarize.'}
+          </p>
+          <p>
+            {offline
+              ? 'Disconnected local archive. Yahoo is not contacted. Attachments stay local.'
+              : 'Select exactly one message. Nothing is sent until you click Summarize. Attachments and other mail stay local.'}
           </p>
         </div>
       );
@@ -449,8 +542,13 @@ class AISidebarInner extends React.Component<Record<string, never>, AISidebarSta
         aria-label="Selected message disclosure"
         data-real-selected-id={preview.messageId}
         data-real-selected-epoch={String(preview.snapshotEpoch)}
+        data-offline-archive-id={offline ? preview.messageId : undefined}
       >
-        <div className="demo-preview-banner">הודעה נבחרת — תישלח ל-Gemini רק אחרי Summarize</div>
+        <div className="demo-preview-banner">
+          {offline
+            ? 'הודעה מארכיון מקומי — תישלח ל-Gemini רק אחרי Summarize'
+            : 'הודעה נבחרת — תישלח ל-Gemini רק אחרי Summarize'}
+        </div>
         <dl className="demo-preview-meta">
           <dt>מזהה</dt>
           <dd>{preview.messageId}</dd>
@@ -473,18 +571,21 @@ class AISidebarInner extends React.Component<Record<string, never>, AISidebarSta
     const preview = this.state.demoPreview;
     if (!preview) return null;
     const realSelected = isRealSelectedSummaryMode();
+    const offline = isOfflineArchiveMode();
 
     return (
       <div
         className="ai-sidebar-demo-preview"
         role="region"
-        aria-label={realSelected ? 'Selected message preview' : 'DEMO source preview'}
+        aria-label={realSelected || offline ? 'Selected message preview' : 'DEMO source preview'}
         data-demo-preview={preview.messageId}
       >
         <div className="demo-preview-banner">
-          {realSelected
-            ? 'תצוגת אותה הודעה נבחרת — לא סומן כנקרא'
-            : '🧪 DEMO מקור סינתטי — לא תיבת דואר אמיתית'}
+          {offline
+            ? 'תצוגת אותה הודעה מארכיון מקומי — Yahoo לא בשימוש'
+            : realSelected
+              ? 'תצוגת אותה הודעה נבחרת — לא סומן כנקרא'
+              : '🧪 DEMO מקור סינתטי — לא תיבת דואר אמיתית'}
         </div>
         <dl className="demo-preview-meta">
           <dt>מזהה</dt>
@@ -511,17 +612,23 @@ class AISidebarInner extends React.Component<Record<string, never>, AISidebarSta
   }
 
   _renderInput() {
-    if (isRealSelectedSummaryMode()) {
+    if (isSelectedSummarySurface()) {
       const { isProcessing, realPreview, geminiStatus } = this.state;
       const ready = !!realPreview && !!geminiStatus?.configured;
+      const offline = isOfflineArchiveMode();
       return (
-        <div className="ai-sidebar-input" data-real-selected-actions="true">
+        <div
+          className="ai-sidebar-input"
+          data-real-selected-actions="true"
+          data-offline-archive-actions={offline ? 'true' : undefined}
+        >
           <button
             className="submit-btn"
             onClick={this._onSummarizeSelected}
             disabled={isProcessing || !ready}
             aria-label="Summarize selected message"
             data-real-selected-summarize="true"
+            data-offline-archive-summarize={offline ? 'true' : undefined}
           >
             Summarize
           </button>
@@ -579,6 +686,7 @@ class AISidebarInner extends React.Component<Record<string, never>, AISidebarSta
   render() {
     const demo = isDemoMode();
     const realSelected = isRealSelectedSummaryMode();
+    const offline = isOfflineArchiveMode();
     const composerTab = demo && this.state.demoTab === 'composer';
     return (
       <div
@@ -586,6 +694,7 @@ class AISidebarInner extends React.Component<Record<string, never>, AISidebarSta
         dir="rtl"
         data-demo-ready={demo ? 'true' : undefined}
         data-real-selected-summary={realSelected ? 'true' : undefined}
+        data-offline-archive={offline ? 'true' : undefined}
       >
         <div className="ai-sidebar-header">
           <h2>🤖 עוזר AI</h2>
@@ -626,6 +735,7 @@ class AISidebarInner extends React.Component<Record<string, never>, AISidebarSta
         ) : (
           <>
             <div className="ai-sidebar-body" data-ai-scrollport="true">
+              {this._renderOfflineArchivePicker()}
               {this._renderRealSelectionPreview()}
               {this._renderDemoPreview()}
               {this._renderConversation()}

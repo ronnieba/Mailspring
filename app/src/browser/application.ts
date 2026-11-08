@@ -112,6 +112,8 @@ export default class Application extends EventEmitter {
   _pendingUrls: string[] = [];
   demoMode: boolean;
   realSelectedSummary: boolean;
+  offlineArchive: boolean;
+  offlineArchivePath: string | null;
   demoCapturePath: string | null;
 
   async start(options) {
@@ -124,6 +126,8 @@ export default class Application extends EventEmitter {
       safeMode,
       demoMode,
       realSelectedSummary,
+      offlineArchive,
+      offlineArchivePath,
       demoCapturePath,
     } = options;
 
@@ -138,7 +142,10 @@ export default class Application extends EventEmitter {
     this.safeMode = safeMode;
     // Demo is developer-build only (parsed in main.js). Never on packaged production.
     this.demoMode = !!demoMode;
-    this.realSelectedSummary = !this.demoMode && !!realSelectedSummary;
+    this.offlineArchive = !this.demoMode && !!offlineArchive;
+    this.offlineArchivePath =
+      this.offlineArchive && offlineArchivePath ? String(offlineArchivePath) : null;
+    this.realSelectedSummary = !this.demoMode && !this.offlineArchive && !!realSelectedSummary;
     this.demoCapturePath = demoCapturePath || null;
 
     this.fileListCache = new FileListCache();
@@ -157,6 +164,19 @@ export default class Application extends EventEmitter {
             `[Demo Mode] Mock query delay ${process.env.MAILSPRING_DEMO_DELAY_MS}ms (Cancel testing only)`
           );
         }
+      } else if (this.offlineArchive) {
+        console.log(
+          '[Offline archive] Skipping mailsync — disconnected experiment. Official /Applications/Mailspring.app is unused. Yahoo IMAP is not opened. Gemini is not bulk-upload; only explicit Summarize of one selected local message.'
+        );
+        console.log(
+          formatGeminiDemoStatusLog(
+            resolveGeminiDemoStatus({
+              demoMode: false,
+              realSelectedSummary: false,
+              offlineArchive: true,
+            })
+          )
+        );
       } else {
         if (this.realSelectedSummary) {
           console.log(
@@ -225,13 +245,17 @@ export default class Application extends EventEmitter {
       initializeInBackground = false;
     }
 
-    if (!this.demoMode) {
+    if (!this.demoMode && !this.offlineArchive) {
       await this.oneTimeMoveToApplications();
       await this.oneTimeAddToDock();
     }
 
     guardAuxiliaryWindowNavigation();
-    this.autoUpdateManager = new AutoUpdateManager(version, config, specMode || this.demoMode);
+    this.autoUpdateManager = new AutoUpdateManager(
+      version,
+      config,
+      specMode || this.demoMode || this.offlineArchive
+    );
     this.applicationMenu = new ApplicationMenu(version);
     this.windowManager = new WindowManager({
       resourcePath: this.resourcePath,
@@ -427,6 +451,19 @@ export default class Application extends EventEmitter {
         behavior
       );
       this._scheduleDemoWindowCapture();
+    } else if (this.offlineArchive) {
+      console.log('[Offline archive] Opening main window from local archive (no Yahoo)');
+      this.config.set('core.workspace.mode', 'split');
+      this.config.set('core.messageListSidebar.panel', 'ai-sidebar');
+      this.config.set('core.reading.autoloadImages', false);
+      this.windowManager.ensureWindow(
+        WindowManager.MAIN_WINDOW,
+        {
+          ...this._mainWindowOptions(),
+          title: 'Mailspring Offline Archive (disconnected — no Yahoo)',
+        },
+        behavior
+      );
     } else if (hasAccount) {
       this.windowManager.ensureWindow(
         WindowManager.MAIN_WINDOW,
@@ -440,6 +477,14 @@ export default class Application extends EventEmitter {
   }
 
   _mainWindowOptions() {
+    if (this.offlineArchive) {
+      return {
+        windowProps: {
+          offlineArchive: true,
+          offlineArchivePath: this.offlineArchivePath,
+        },
+      };
+    }
     if (this.realSelectedSummary) {
       return { windowProps: { realSelectedSummary: true } };
     }
@@ -1217,6 +1262,7 @@ export default class Application extends EventEmitter {
     registerGeminiDemoIpcHandlers(ipcMain, {
       isDemoMode: () => this.demoMode,
       isRealSelectedSummary: () => this.realSelectedSummary,
+      isOfflineArchive: () => this.offlineArchive,
     });
   }
 

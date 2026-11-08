@@ -11,6 +11,7 @@ import MailspringStore from '../../global/mailspring-store';
 import * as Utils from '../models/utils';
 import Query from '../models/query';
 import { isDemoMode } from '../../demo-mode';
+import { isOfflineArchiveMode } from '../../offline-archive';
 import { sanitizeSpawnEnv } from '../../browser/gemini-demo-secret';
 import {
   shouldOpenMailCacheDatabase,
@@ -161,19 +162,30 @@ class DatabaseStore extends MailspringStore {
     if (AppEnv.inSpecMode()) {
       return;
     }
-    if (!shouldOpenMailCacheDatabase({ demoMode: isDemoMode() })) {
+    if (
+      !shouldOpenMailCacheDatabase({
+        demoMode: isDemoMode(),
+        offlineArchive: isOfflineArchiveMode(),
+      })
+    ) {
       // Fixture-only: do not open edgehill.db. Readonly+WAL on a missing or
       // stub file is SqliteError SQLITE_READONLY and a rebuild loop.
       this._fixtureOnly = true;
       this._open = true;
-      console.log('[Demo Mode] DatabaseStore: mail cache not opened (fixtures only)');
+      console.log('[DatabaseStore] mail cache not opened (fixtures / offline archive)');
       return;
     }
     this.open();
   }
 
   async open() {
-    if (this._fixtureOnly || !shouldOpenMailCacheDatabase({ demoMode: isDemoMode() })) {
+    if (
+      this._fixtureOnly ||
+      !shouldOpenMailCacheDatabase({
+        demoMode: isDemoMode(),
+        offlineArchive: isOfflineArchiveMode(),
+      })
+    ) {
       this._fixtureOnly = true;
       this._open = true;
       return;

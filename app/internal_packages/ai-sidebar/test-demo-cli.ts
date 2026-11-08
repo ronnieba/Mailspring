@@ -164,6 +164,36 @@ function run() {
     assertContains(mainJs, 'realSelectedSummary');
   });
 
+  test('--offline-archive developer build uses Mailspring-offline not production', () => {
+    const argv = [
+      'electron',
+      './app',
+      '--enable-logging',
+      '--dev',
+      '--offline-archive',
+      '--offline-archive-path=/tmp/archive',
+    ];
+    const flags = startupFlagsFromArgv(argv);
+    assertTrue(flags.offlineArchive);
+    assertFalse(flags.demoMode);
+    const id = identityFromArgv(argv, { developerBuild: true });
+    assertEqual(id.appName, 'Mailspring-offline');
+    assertTrue(id.skipMailsync);
+    const paths = isolatedPaths('/Users/d623300/Library/Application Support', id);
+    assertEqual(paths.userData, '/Users/d623300/Library/Application Support/Mailspring-offline');
+    assertFalse(paths.userData.endsWith(`${path.sep}Mailspring`));
+    assertContains(mainJs, "boolean('offline-archive')");
+    assertContains(mainJs, 'offlineArchive');
+    assertContains(mainJs, 'MAILSPRING_OFFLINE_ARCHIVE');
+  });
+
+  test('--demo --offline-archive stays Mailspring-demo', () => {
+    const argv = ['electron', './app', '--dev', '--demo', '--offline-archive'];
+    const id = identityFromArgv(argv, { developerBuild: true });
+    assertEqual(id.appName, 'Mailspring-demo');
+    assertTrue(id.skipMailsync);
+  });
+
   test('--demo --real-selected-summary stays Mailspring-demo', () => {
     const argv = ['electron', './app', '--dev', '--demo', '--real-selected-summary'];
     const id = identityFromArgv(argv, { developerBuild: true });
