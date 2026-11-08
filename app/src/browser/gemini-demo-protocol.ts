@@ -27,15 +27,21 @@ export const GEMINI_DEMO_API_REVISION = '2026-05-20';
  * Named OS environment variables that must never appear on Electron main,
  * the demo launcher, or Chromium helper exec environ. Native 33d7f263:
  * JS `delete process.env` did not rewrite macOS `ps eww` exec-time environ
- * on main (PID 71003) or the Node launcher (PID 71001). Delivery is
- * MAILSPRING_DEMO_GEMINI_KEY_FILE (path to a 0600 file). Never argv,
- * config.json, Keychain, IPC, logs, or renderer environ.
+ * on main (PID 71003) or the Node launcher (PID 71001). Usual delivery is
+ * the dedicated demo Keychain item (not Mailspring Safe Storage). Explicit
+ * fallback is MAILSPRING_DEMO_GEMINI_KEY_FILE (path to a 0600 file). Never
+ * argv, config.json, IPC, logs, renderer environ, or launch-env KEY/PAID.
  */
 export const GEMINI_DEMO_KEY_ENV = 'MAILSPRING_DEMO_GEMINI_API_KEY';
 /** Explicit operator ack that the key belongs to a paid project. Not proof of billing. */
 export const GEMINI_DEMO_PAID_ENV = 'MAILSPRING_DEMO_GEMINI_PAID';
 /** Path-only bootstrap. The file holds `paid=0|1` then the key. Not the secret. */
 export const GEMINI_DEMO_KEY_FILE_ENV = 'MAILSPRING_DEMO_GEMINI_KEY_FILE';
+/** Test/override path to the native helper. A filesystem path, not the secret. */
+export const GEMINI_DEMO_KEYCHAIN_HELPER_ENV = 'MAILSPRING_DEMO_GEMINI_KEYCHAIN_HELPER';
+/** Isolated DEMO Keychain service. Do not use Mailspring Safe Storage. */
+export const GEMINI_DEMO_KEYCHAIN_SERVICE = 'Mailspring-demo Gemini Developer API';
+export const GEMINI_DEMO_KEYCHAIN_ACCOUNT = 'gemini-demo-api-key';
 
 export const GEMINI_IPC_STATUS = 'gemini-demo:status';
 export const GEMINI_IPC_QUERY = 'gemini-demo:query';

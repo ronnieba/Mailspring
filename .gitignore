@@ -85,3 +85,6 @@ client_secret.json
 # Private Hunspell WASM evaluation: AGPL-3.0 aff/dic must not be committed
 app/src/spellcheck/offline-prototype/node_modules/
 app/src/spellcheck/offline-prototype/package-lock.json
+
+# Compiled DEMO Gemini Keychain helper (source is committed; build on Mac)
+/app/native/gemini-demo-keychain/gemini-demo-keychain

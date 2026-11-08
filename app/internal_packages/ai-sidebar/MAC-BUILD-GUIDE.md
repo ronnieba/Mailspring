@@ -12,7 +12,9 @@ The signed `/Applications/Mailspring.app` cannot load this prototype. Use a sour
 
 `--demo` skips onboarding, mailsync, KeyManager/safeStorage, protocol registration, and single-instance lock. It does **not** read the production profile or Yahoo credentials.
 
-If a Keychain dialog names **Mailspring Safe Storage**, deny it — that is the production item. Demo must not request it.
+Electron `--use-mock-keychain` covers **Mailspring-demo Safe Storage** only. The DEMO Gemini API key is a **separate** login-Keychain item: service `Mailspring-demo Gemini Developer API`, account `gemini-demo-api-key`, via `app/native/gemini-demo-keychain` (Security.framework). It is not KeyManager/safeStorage.
+
+If a Keychain dialog names **Mailspring Safe Storage**, deny it — that is the production item. Demo must not request it. A dialog for **Mailspring-demo Gemini Developer API** is the intended DEMO secret prompt (Allow / Deny). Deny is fail-closed (no plaintext fallback).
 
 ## Launch (accountless sidebar)
 
@@ -223,17 +225,17 @@ Parent runs these on Mac from repo root (and once from another cwd with `--prefi
 | `test-demo-sidebar.ts` | **23** |
 | `test-demo-query.ts` | **20** |
 | `test-ai-boundary.ts` | **17** |
-| `test-gemini-demo.ts` | **31** (mocked transport + KEY_FILE + official Interaction envelope) |
+| `test-gemini-demo.ts` | **36** (mocked transport + KEY_FILE + Keychain helper + official Interaction envelope) |
 | `test-demo-cli.ts` | 12 |
-| **prior portable subtotal** | **212** |
+| **prior portable subtotal** | **217** |
 | `test-composer-direction.ts` | 14 |
 | `test-composer-spell.ts` | 21 |
 | `test-demo-composer.ts` | 13 |
 | **composer subtotal (no sidecar)** | **48** |
 | `test-nspell-engine.ts` | **13** (requires sidecar install) |
-| **portable total after sidecar** | **273** |
+| **portable total after sidecar** | **278** |
 
-Without sidecar install: prior **260** + alt-cwd **48** still apply. After `install.sh`: **273** portable (260+13). Composer+engine alt-cwd remains **61** (48+13) unless `test-ai-boundary.ts` / `test-gemini-demo.ts` are included (**+17 / +31**). Do not run these in cloud CI. Preserve 34a90265 layout/AI/isolation. Do not rewrite `app/package-lock.json`.
+Without sidecar install: prior **265** + alt-cwd **48** still apply. After `install.sh`: **278** portable (265+13). Composer+engine alt-cwd remains **61** (48+13) unless `test-ai-boundary.ts` / `test-gemini-demo.ts` are included (**+17 / +36**). Do not run these in cloud CI. Preserve 34a90265 layout/AI/isolation. Do not rewrite `app/package-lock.json`.
 
 **This SHA targeted Mac commands (do not claim f89b4e4b 221+61 / 81 UI):**
 
@@ -241,7 +243,7 @@ Without sidecar install: prior **260** + alt-cwd **48** still apply. After `inst
 npx ts-node --project app/tsconfig.json app/internal_packages/ai-sidebar/test-ai-boundary.ts
 # expected 17 passed, natural exit
 npx ts-node --project app/tsconfig.json app/internal_packages/ai-sidebar/test-gemini-demo.ts
-# expected 31 passed (mocked transport + KEY_FILE + official Interaction envelope; no live Gemini)
+# expected 36 passed (mocked transport + KEY_FILE + Keychain helper + official Interaction envelope; no live Gemini)
 npx ts-node --project app/tsconfig.json app/internal_packages/ai-sidebar/test-demo-query.ts
 # expected 20 passed (exhaustive 2/5/6 + first-selected vs all-selected)
 npx ts-node --project app/tsconfig.json app/internal_packages/ai-sidebar/test-demo-sidebar.ts
@@ -276,7 +278,7 @@ stat ~/Library/Application\ Support/Mailspring
 
 Helper `--user-data-dir` must contain `Mailspring-demo`.
 `chrome_crashpad_handler` database path must contain `Mailspring-demo/Crashpad`, not `Mailspring/Crashpad`.
-No Keychain dialog for `Mailspring Safe Storage`.
+No Keychain dialog for `Mailspring Safe Storage`. A dialog for `Mailspring-demo Gemini Developer API` is the dedicated DEMO Gemini item (not Safe Storage).
 After dictionary add: `Mailspring-demo/spell-personal-dictionary.json` exists; `~/Library/Spelling` and `.../Mailspring/` (production) are not written.
 
 Quit with Cmd+Q.
@@ -289,7 +291,7 @@ Apple Silicon, Node 24 at `/opt/homebrew/bin` is fine. Leave `/Applications/Mail
 
 ## Official paid Gemini Developer API (DEMO synthetic only)
 
-This is the **Gemini Developer API** billed through AI Studio / Cloud Billing. It is **not a consumer Gemini** app subscription (Google AI Pro / Gemini in a browser). An API key or the model id **cannot prove billing** is linked. Do not treat a key as a free-tier-only project prerequisite — live execution requires an explicitly configured **paid** project/key plus `MAILSPRING_DEMO_GEMINI_PAID=1`.
+This is the **Gemini Developer API** billed through AI Studio / Cloud Billing. It is **not a consumer Gemini** app subscription (Google AI Pro / Gemini in a browser). An API key or the model id **cannot prove billing** is linked. Do not treat a key as a free-tier-only project prerequisite — live execution requires an explicitly configured **paid** project/key plus `paid=1` in the Keychain blob (or KEY_FILE). Launch-env `MAILSPRING_DEMO_GEMINI_PAID` is ignored and is not billing proof.
 
 Pinned model: `gemini-3.5-flash-lite` (no auto-substitution). Official Interactions REST:
 
@@ -314,18 +316,32 @@ Paid-tier docs currently say prompts/responses are **not used to improve Google 
 - Spend caps are **not** a true real-time hard stop: billing can lag about **10 minute**s and overshoot a cap or a $0 prepay balance. Batch/agent jobs can overshoot further.
 - Linking billing and issuing live generations is **not authorized** until the parent settles price/budget/key.
 
-### Local env (KEY_FILE bootstrap — not launch-env KEY/PAID)
+### Local env (Keychain usual launch — not launch-env KEY/PAID)
 
 Native 33d7f263: JS `delete process.env` contained Chromium children (2 renderers, GPU, utility, Crashpad — 15 absences) but **Electron main** and the **Node** `./node_modules/.bin/electron` **launcher** still exposed `MAILSPRING_DEMO_GEMINI_API_KEY`, the public marker, and `MAILSPRING_DEMO_GEMINI_PAID` in macOS `ps eww` exec-time environ. JS deletion is not OS launch-env secrecy.
 
-Supported delivery: a **0600** file whose **first line** is `paid=0` or `paid=1` and whose remainder is the key. Parent CopyFromBox (or equivalent) into a temp path **outside** the repo and `Mailspring-demo` profile. The path must not contain the key or `MAILSPRING_DEMO_GEMINI_NONSECRET_MARKER`. Then launch with **only** `MAILSPRING_DEMO_GEMINI_KEY_FILE` after unsetting the secret names. `scripts/start-demo-gemini.sh` execs `Electron.app/Contents/MacOS/Electron` (not the Node shim) with `env -u MAILSPRING_DEMO_GEMINI_API_KEY -u MAILSPRING_DEMO_GEMINI_PAID`. Main reads the file into private runtime memory and unlinks it. Unlink is not a disk-wipe or OS-memory-erasure guarantee.
+Usual delivery: save once into the dedicated DEMO Keychain item, then launch with **no** credential names. `scripts/gemini-demo-keychain.sh save` compiles `app/native/gemini-demo-keychain` with `swiftc -framework Security` if needed, then reads the key from a **hidden Terminal prompt** (`stty -echo`) and pipes `paid=0|1` plus the key to helper **stdin**. The helper calls `SecItemAdd` (replace = delete+add). Never put the secret on process argv (including Keychain CLI password flags). Default item ACL; `kSecAttrAccessibleWhenUnlockedThisDeviceOnly`; not iCloud-syncable; no trusted-app ACL bypass. Denied / locked / cancelled access is fail-closed (no plaintext fallback). OS may prompt Allow.
 
-Do not paste a real key into git, screenshots, argv, renderer UI, or logs. IPC and stdout status report booleans only.
+`paid=1` in the stored blob is an operator ack, not proof of Cloud Billing, and is distinct from `keyPresent=true` and from `billingProven` (always false here). Launch does **not** auto-generate and does **not** copy `MAILSPRING_DEMO_GEMINI_API_KEY` from the environment into Keychain (setup refuses if that name is set).
 
 ```bash
-# Do not paste a real key into git, screenshots, or argv.
-# paid=1 is an operator ack, not proof of Cloud Billing.
-# Native OS-env proof must invoke the script directly (not npm) after unset.
+# Close the demo app first. Hidden prompt on this Mac — do not paste a real key
+# into git, screenshots, argv, chat, or this cloud agent.
+unset MAILSPRING_DEMO_GEMINI_API_KEY MAILSPRING_DEMO_GEMINI_PAID MAILSPRING_DEMO_GEMINI_KEY_FILE
+sh scripts/gemini-demo-keychain.sh save
+# prompt: key (hidden), then paid ack 0 or 1
+sh scripts/gemini-demo-keychain.sh status   # present=true|false only
+sh scripts/start-demo-gemini.sh
+# later launches: sh scripts/start-demo-gemini.sh
+# replace / remove:
+# sh scripts/gemini-demo-keychain.sh replace
+# sh scripts/gemini-demo-keychain.sh remove
+```
+
+Explicit KEY_FILE fallback remains: a **0600** file whose **first line** is `paid=0` or `paid=1` and whose remainder is the key, launched with **only** `MAILSPRING_DEMO_GEMINI_KEY_FILE`. Main unlinks the file after read. Unlink is not a disk-wipe or OS-memory-erasure guarantee. If KEY_FILE is set, Keychain is not consulted.
+
+```bash
+# Explicit KEY_FILE fallback — not the usual launch.
 unset MAILSPRING_DEMO_GEMINI_API_KEY MAILSPRING_DEMO_GEMINI_PAID
 umask 077
 cat > /tmp/ms-gemini-cred <<'EOF'
@@ -337,16 +353,41 @@ export MAILSPRING_DEMO_GEMINI_KEY_FILE=/tmp/ms-gemini-cred
 sh scripts/start-demo-gemini.sh
 ```
 
-Without a readable 0600 KEY_FILE the sidebar stays mock. `paid=0` is **configured key, paid-disabled**: stdout `[Gemini DEMO] status keyPresent=true paidAcknowledged=false configured=false billingProven=false (credential value not logged)` and the UI stays **Mock AI**. That is expected. A Gemini error must not fall back to mock fixtures. Local Cancel/timeout abort the process fetch; they do **not** guarantee the provider stopped a billed generation.
+`scripts/start-demo-gemini.sh` execs `Electron.app/Contents/MacOS/Electron` (not the Node shim) with `env -u MAILSPRING_DEMO_GEMINI_API_KEY -u MAILSPRING_DEMO_GEMINI_PAID`. Usual launch also unsets `MAILSPRING_DEMO_GEMINI_KEY_FILE`.
+
+`paid=0` is **configured key, paid-disabled**: stdout `[Gemini DEMO] status keyPresent=true paidAcknowledged=false configured=false billingProven=false (credential value not logged)` and the UI stays **Mock AI**. That is expected. A Gemini error must not fall back to mock fixtures. Local Cancel/timeout abort the process fetch; they do **not** guarantee the provider stopped a billed generation.
 
 Do **not** launch with `MAILSPRING_DEMO_GEMINI_API_KEY=… MAILSPRING_DEMO_GEMINI_PAID=1 electron ./app` or `node ./node_modules/.bin/electron`. That is the 33d7f263 failing recipe. Main ignores those names if present; `ps eww` on main/launcher still shows the original exec environ.
 
+Do not paste a real key into git, screenshots, argv, renderer UI, or logs. IPC and stdout status report booleans only.
+
 ### UNRUN native process-boundary (NONSECRET marker — never a real key)
 
-Native e1ec474c: renderer PID 70413 inherited the named key. Native 33d7f263: children ABSENT (15 pass); Electron main PID 71003 and Node launcher PID 71001 still true/true/true for key-name, public marker, paid-name. AX collection 30s timeout — `data-gemini-status` UNVERIFIED. Repeat this **boolean** check on the new SHA before any secret-bearing launch. Do **not** print environ. Do **not** use a real key. File `paid=0` (paid-disabled). Isolated synthetic UI only.
+Native e1ec474c: renderer PID 70413 inherited the named key. Native 33d7f263: children ABSENT (15 pass); Electron main PID 71003 and Node launcher PID 71001 still true/true/true for key-name, public marker, paid-name. AX collection 30s timeout — `data-gemini-status` UNVERIFIED. Repeat this **boolean** check on the new SHA before any secret-bearing launch. Do **not** print environ. Do **not** use a real key. Close the running demo app before updating this Mac.
+
+**1. Dummy Keychain save / launch / relaunch / delete** (usual path). Public marker only. `dummy-save` never copies `MAILSPRING_DEMO_GEMINI_API_KEY` from the environment.
 
 ```bash
-# UNRUN native process-boundary. Public marker only. No real key.
+# UNRUN native Keychain dummy. Public marker only. No real key. No argv secret.
+unset MAILSPRING_DEMO_GEMINI_API_KEY MAILSPRING_DEMO_GEMINI_PAID MAILSPRING_DEMO_GEMINI_KEY_FILE
+sh scripts/gemini-demo-keychain.sh dummy-save
+sh scripts/gemini-demo-keychain.sh status   # present=true
+sh scripts/start-demo-gemini.sh --force-renderer-accessibility
+# expect: capture source=keychain keyPresent=true paidAcknowledged=false configured=false
+# quit, relaunch without dummy-save — still keyPresent=true
+sh scripts/start-demo-gemini.sh --force-renderer-accessibility
+# absence after delete:
+sh scripts/gemini-demo-keychain.sh dummy-remove
+sh scripts/gemini-demo-keychain.sh status   # present=false
+sh scripts/start-demo-gemini.sh --force-renderer-accessibility
+# expect: keyPresent=false (no plaintext fallback)
+```
+
+Denied / cancelled Keychain prompt must stay fail-closed (`source=keychain-denied`, Mock AI).
+
+**2. Optional KEY_FILE dummy** (explicit fallback, not usual launch):
+
+```bash
 unset MAILSPRING_DEMO_GEMINI_API_KEY MAILSPRING_DEMO_GEMINI_PAID
 umask 077
 MARKER_FILE=$(mktemp /tmp/ms-gemini-XXXXXX)
@@ -368,18 +409,28 @@ From another terminal, inspect **own** checkout processes only (`--user-data-dir
 | `--type=utility` | ABSENT | ABSENT |
 | `chrome_crashpad_handler` | ABSENT | ABSENT |
 
-`MAILSPRING_DEMO_GEMINI_KEY_FILE` **may** be present on launcher/main (path only). It must not appear on renderer/gpu/utility/crashpad. Marker must not appear as a **value** anywhere.
+Usual Keychain launch: `MAILSPRING_DEMO_GEMINI_KEY_FILE` **ABSENT** on launcher/main too. KEY_FILE fallback: that name **may** be present on launcher/main (path only). It must not appear on renderer/gpu/utility/crashpad. Marker must not appear as a **value** anywhere.
 
 Stdout (AX-free; 33d7f263 AX 30s timeout left status UNVERIFIED):
 
 ```
-[Gemini DEMO] capture source=key-file keyPresent=true paidAcknowledged=false (credential value not logged)
+[Gemini DEMO] capture source=keychain keyPresent=true paidAcknowledged=false (credential value not logged)
 [Gemini DEMO] status keyPresent=true paidAcknowledged=false configured=false billingProven=false (credential value not logged)
 ```
 
-Those lines must not contain the marker. Sidebar **Mock AI** is expected for paid-disabled. Do **not** claim actual live UI until a parent native test with `paid=1` (still synthetic DEMO, still not authorized here).
+KEY_FILE fallback prints `source=key-file` instead. Those lines must not contain the marker. Sidebar **Mock AI** is expected for paid-disabled. Do **not** claim actual live UI until a parent native test with `paid=1` (still synthetic DEMO, still not authorized here).
 
-Portable Node equivalent (already in `test-gemini-demo.ts`): KEY_FILE capture; launch-env KEY ignored; child spawned after capture prints `ABSENT` for key-name, paid-name, and marker-in-values.
+Portable Node equivalent (already in `test-gemini-demo.ts`): mocked helper capture; denied fail-closed; KEY_FILE capture; launch-env KEY ignored; child spawned after capture prints `ABSENT` for key-name, paid-name, and marker-in-values.
+
+**3. Once dummy Keychain tests pass — real-key setup (parent Mac only, never this agent):**
+
+```bash
+unset MAILSPRING_DEMO_GEMINI_API_KEY MAILSPRING_DEMO_GEMINI_PAID MAILSPRING_DEMO_GEMINI_KEY_FILE
+sh scripts/gemini-demo-keychain.sh save    # hidden prompt; paid ack 0 or 1
+sh scripts/start-demo-gemini.sh
+```
+
+Never place the key on process argv. This SHA does **not** authorize a paid call.
 
 dbagent / Hunspell / mailsync / localAI spawn sanitization remains **UNRUN** natively (JS `sanitizeSpawnEnv` still applied). Not packaging, not real mail.
 
