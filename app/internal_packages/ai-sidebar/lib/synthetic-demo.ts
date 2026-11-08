@@ -5,7 +5,11 @@
  */
 import { MessageRef, ResolvedScope, FolderRef, SearchResult, RetrievalMode } from './core/types';
 import { isDemoMode as isExplicitDemoMode } from '../../../src/demo-mode';
-import { filterMessagesByQuery } from './core/query-filter';
+import {
+  filterMessagesByQuery,
+  queryRequestsFirstSelectedOnly,
+  queryRequestsFullSelectedScan,
+} from './core/query-filter';
 
 export const DEMO_ACCOUNT_ID = 'demo-synthetic-account';
 export const DEMO_FOLDER_ID = 'demo-synthetic-inbox';
@@ -16,6 +20,12 @@ export const DEMO_OUTSIDE_INBOX_QUERY = 'חפש הודעת ארכיון';
 export const DEMO_INVOICE_QUERY = 'חפש חשבוניות';
 export const DEMO_INVOICE_MESSAGE_ID = 'demo-msg-3';
 export const DEMO_MEETING_MESSAGE_ID = 'demo-msg-1';
+export const DEMO_MEETING_REPLY_MESSAGE_ID = 'demo-msg-2';
+/** Native 7c17ae32 Send: first selected only. Ranked 1-processed is honest. */
+export const DEMO_FIRST_SELECTED_QUERY =
+  'סכם בקצרה בעברית את ההודעה הראשונה שנבחרה, וציין את מזהה המקור שלה.';
+/** Explicit all-selected summarization — must scan both meeting fixtures. */
+export const DEMO_ALL_SELECTED_QUERY = 'סכם בעברית את כל ההודעות הנבחרות';
 
 /** Host-calculated exhaustive inventory. Selected 2 / Inbox 5 / All 6. */
 export const DEMO_EXHAUSTIVE_COUNTS: { [K in ResolvedScope['mode']]: number } = {
@@ -218,32 +228,23 @@ export function getDemoScope(
  * fixture and reports that count — it does not claim the whole mailbox
  * when scope is Inbox or Selected.
  */
-export function searchDemoMessages(
-  scope: ResolvedScope,
-  query: string,
-  limit: number,
-  offset: number,
-  mode: RetrievalMode = 'ranked'
-): SearchResult {
-  const inScope = filterDemoMessagesByScope(SYNTHETIC_MESSAGES, scope);
-  const matched = filterMessagesByQuery(inScope, query);
+function exhaustiveResult(inScope: MessageRef[]): SearchResult {
+  return {
+    messages: inScope,
+    progress: {
+      totalEligible: inScope.length,
+      processed: inScope.length,
+      withBodies: inScope.length,
+      missingBodies: 0,
+      syncCoverage: 100,
+      isComplete: true,
+      isCancelled: false,
+    },
+    retrievalMode: 'exhaustive',
+  };
+}
 
-  if (mode === 'exhaustive') {
-    return {
-      messages: inScope,
-      progress: {
-        totalEligible: inScope.length,
-        processed: inScope.length,
-        withBodies: inScope.length,
-        missingBodies: 0,
-        syncCoverage: 100,
-        isComplete: true,
-        isCancelled: false,
-      },
-      retrievalMode: 'exhaustive',
-    };
-  }
-
+function rankedResult(matched: MessageRef[], limit: number, offset: number): SearchResult {
   const paginated = matched.slice(offset, offset + limit);
   return {
     messages: paginated,
@@ -258,6 +259,34 @@ export function searchDemoMessages(
     },
     retrievalMode: 'ranked',
   };
+}
+
+export function searchDemoMessages(
+  scope: ResolvedScope,
+  query: string,
+  limit: number,
+  offset: number,
+  mode: RetrievalMode = 'ranked'
+): SearchResult {
+  const inScope = filterDemoMessagesByScope(SYNTHETIC_MESSAGES, scope);
+
+  // Exhaustive radio always scans the whole in-scope set (Selected=2, not all-mail).
+  if (mode === 'exhaustive') {
+    return exhaustiveResult(inScope);
+  }
+
+  // Explicit "summarize ALL selected" is a full selected scan, not a keyword hit.
+  // Coverage must be exhaustive so we do not print a top-k warning after scanning all.
+  if (scope.mode === 'selected-messages' && queryRequestsFullSelectedScan(query)) {
+    return exhaustiveResult(inScope);
+  }
+
+  // Explicit first-selected request: ranked, one message. Native 7c17ae32.
+  if (scope.mode === 'selected-messages' && queryRequestsFirstSelectedOnly(query)) {
+    return rankedResult(inScope.slice(0, 1), limit, offset);
+  }
+
+  return rankedResult(filterMessagesByQuery(inScope, query), limit, offset);
 }
 
 /**

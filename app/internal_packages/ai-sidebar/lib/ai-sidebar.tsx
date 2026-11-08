@@ -317,7 +317,9 @@ class AISidebarInner extends React.Component<Record<string, never>, AISidebarSta
                 data-message-id={citation.messageId}
               >
                 <span className="citation-index">[{i + 1}]</span>
-                <span className="citation-subject">{citation.subject}</span>
+                <span className="citation-subject" data-citation-wrap="true">
+                  {citation.subject}
+                </span>
                 <span className="citation-id">{citation.messageId}</span>
               </button>
             ))}
@@ -389,7 +391,9 @@ class AISidebarInner extends React.Component<Record<string, never>, AISidebarSta
           <dt>תיקייה</dt>
           <dd>{preview.folderName}</dd>
         </dl>
-        <pre className="demo-preview-body">{preview.body}</pre>
+        <pre className="demo-preview-body" data-preview-wrap="true">
+          {preview.body}
+        </pre>
         <button
           className="demo-preview-close"
           onClick={() => AISidebarStore.closeDemoPreview()}
@@ -488,7 +492,7 @@ class AISidebarInner extends React.Component<Record<string, never>, AISidebarSta
           <DemoComposer />
         ) : (
           <>
-            <div className="ai-sidebar-body">
+            <div className="ai-sidebar-body" data-ai-scrollport="true">
               {this._renderDemoPreview()}
               {this._renderConversation()}
               {this._renderProgress()}

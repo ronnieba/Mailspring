@@ -26,7 +26,10 @@ import {
   DEMO_ARCHIVE_FOLDER_ID,
   DEMO_FOLDER_ID,
   DEMO_INVOICE_MESSAGE_ID,
+  DEMO_ALL_SELECTED_QUERY,
+  DEMO_FIRST_SELECTED_QUERY,
   DEMO_MEETING_MESSAGE_ID,
+  DEMO_MEETING_REPLY_MESSAGE_ID,
   DEMO_OUTSIDE_INBOX_MESSAGE_ID,
   DEMO_OUTSIDE_INBOX_QUERY,
   SYNTHETIC_MESSAGES,
@@ -134,8 +137,54 @@ async function run() {
     const result = exhaustiveOf('selected-messages');
     assertEqual(result.progress.processed, 2);
     assertEqual(result.progress.totalEligible, 2);
+    assertTrue(result.messages.some((m) => m.id === DEMO_MEETING_MESSAGE_ID));
+    assertTrue(result.messages.some((m) => m.id === DEMO_MEETING_REPLY_MESSAGE_ID));
     assertFalse(result.messages.some((m) => m.id === DEMO_INVOICE_MESSAGE_ID));
     assertFalse(result.messages.some((m) => m.id === DEMO_OUTSIDE_INBOX_MESSAGE_ID));
+  });
+
+  await test('ranked first-selected query is top-k 1, not a 2-of-2 completeness claim', () => {
+    const result = searchDemoMessages(
+      getDemoScope('selected-messages'),
+      DEMO_FIRST_SELECTED_QUERY,
+      10,
+      0,
+      'ranked'
+    );
+    assertEqual(result.retrievalMode, 'ranked');
+    assertEqual(result.progress.processed, 1);
+    assertEqual(result.messages.length, 1);
+    assertEqual(result.messages[0].id, DEMO_MEETING_MESSAGE_ID);
+    const text = coverageFor(result);
+    assertContains(text, 'דירוג (top-k)');
+    assertContains(text, 'הודעות שעובדו: 1');
+    assertContains(text, 'לא כל ההודעות נסרקו');
+    assertNotContains(text, 'סריקה מלאה (exhaustive)');
+  });
+
+  await test('explicit all-selected query scans both selected fixtures with exhaustive coverage', () => {
+    const result = searchDemoMessages(
+      getDemoScope('selected-messages'),
+      DEMO_ALL_SELECTED_QUERY,
+      10,
+      0,
+      'ranked'
+    );
+    assertEqual(result.retrievalMode, 'exhaustive');
+    assertEqual(result.progress.processed, 2);
+    assertEqual(result.progress.totalEligible, 2);
+    assertEqual(
+      result.messages
+        .map((m) => m.id)
+        .sort()
+        .join(','),
+      'demo-msg-1,demo-msg-2'
+    );
+    const text = coverageFor(result);
+    assertContains(text, 'סריקה מלאה (exhaustive)');
+    assertContains(text, 'סה"כ בטווח (נסרקו): 2');
+    assertNotContains(text, 'דירוג (top-k)');
+    assertNotContains(text, 'לא כל ההודעות נסרקו');
   });
 
   await test('exhaustive incomplete disclosure still does not claim ranked coverage', () => {
@@ -333,7 +382,7 @@ async function run() {
 
   console.log('\n' + '='.repeat(40));
   console.log(`Results: ${passed} passed, ${failed} failed`);
-  console.log('UNRUN in this cloud agent — expected counts only until local Mac run.');
+  console.log('UNRUN in this cloud agent — expected 20 until local Mac run.');
   console.log('='.repeat(40) + '\n');
   if (failed > 0) process.exit(1);
 }

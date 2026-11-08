@@ -243,6 +243,28 @@ function run() {
     assertContains(storeTs, 'nextQueryGeneration');
     assertContains(mainJs, 'demo-delay-ms');
   });
+  test('narrow ~299pt sidebar answer/source uses an inner wrap/scrollport', () => {
+    const less = fs.readFileSync(path.join(__dirname, 'styles/ai-sidebar.less'), 'utf8');
+    assertContains(sidebarTs, 'data-ai-scrollport');
+    assertContains(sidebarTs, 'data-citation-wrap');
+    assertContains(sidebarTs, 'data-preview-wrap');
+    assertContains(less, '.ai-sidebar-body');
+    assertContains(less, 'overflow-y: auto');
+    assertContains(less, 'overflow-wrap: anywhere');
+    assertContains(less, 'min-height: 32px');
+    assertFalse(less.includes('white-space: nowrap'));
+    assertContains(less, '.column-MessageListSidebar');
+    assertContains(less, 'flex: 1 1 auto');
+  });
+  test('all-selected intent is distinct from ranked first-selected', () => {
+    const synth = fs.readFileSync(path.join(__dirname, 'lib/synthetic-demo.ts'), 'utf8');
+    const filter = fs.readFileSync(path.join(__dirname, 'lib/core/query-filter.ts'), 'utf8');
+    assertContains(synth, 'DEMO_ALL_SELECTED_QUERY');
+    assertContains(synth, 'queryRequestsFullSelectedScan');
+    assertContains(synth, 'queryRequestsFirstSelectedOnly');
+    assertContains(filter, 'כל ההודעות הנבחרות');
+    assertContains(filter, 'ההודעה הראשונה');
+  });
 
   console.log('\n' + '='.repeat(40));
   console.log(`Results: ${passed} passed, ${failed} failed`);

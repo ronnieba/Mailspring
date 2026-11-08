@@ -16,7 +16,13 @@ export {
 } from './ai-boundary';
 export { GeminiDemoProvider } from './gemini-demo-provider';
 export { MOCK_AI_WORKER_PATH, mockAiSpawnPlan, runMockAiSubprocess } from './mock-ai-subprocess';
-export { filterMessagesByQuery, messageMatchesQuery, queryTokens } from './query-filter';
+export {
+  filterMessagesByQuery,
+  messageMatchesQuery,
+  queryRequestsFirstSelectedOnly,
+  queryRequestsFullSelectedScan,
+  queryTokens,
+} from './query-filter';
 export {
   abortableDelay,
   demoQueryDelayFromEnv,

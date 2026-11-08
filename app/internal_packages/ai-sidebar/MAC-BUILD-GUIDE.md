@@ -220,20 +220,20 @@ Parent runs these on Mac from repo root (and once from another cwd with `--prefi
 | `test-isolation.ts` | 10 |
 | `test-integration.ts` | 18 |
 | `test-mail-database.ts` | 21 |
-| `test-demo-sidebar.ts` | 21 |
-| `test-demo-query.ts` | 18 |
+| `test-demo-sidebar.ts` | **23** |
+| `test-demo-query.ts` | **20** |
 | `test-ai-boundary.ts` | **17** |
 | `test-gemini-demo.ts` | **31** (mocked transport + KEY_FILE + official Interaction envelope) |
 | `test-demo-cli.ts` | 12 |
-| **prior portable subtotal** | **208** |
+| **prior portable subtotal** | **212** |
 | `test-composer-direction.ts` | 14 |
 | `test-composer-spell.ts` | 21 |
 | `test-demo-composer.ts` | 13 |
 | **composer subtotal (no sidecar)** | **48** |
 | `test-nspell-engine.ts` | **13** (requires sidecar install) |
-| **portable total after sidecar** | **269** |
+| **portable total after sidecar** | **273** |
 
-Without sidecar install: prior **256** + alt-cwd **48** still apply. After `install.sh`: **269** portable (256+13). Composer+engine alt-cwd remains **61** (48+13) unless `test-ai-boundary.ts` / `test-gemini-demo.ts` are included (**+17 / +31**). Do not run these in cloud CI. Preserve 34a90265 layout/AI/isolation. Do not rewrite `app/package-lock.json`.
+Without sidecar install: prior **260** + alt-cwd **48** still apply. After `install.sh`: **273** portable (260+13). Composer+engine alt-cwd remains **61** (48+13) unless `test-ai-boundary.ts` / `test-gemini-demo.ts` are included (**+17 / +31**). Do not run these in cloud CI. Preserve 34a90265 layout/AI/isolation. Do not rewrite `app/package-lock.json`.
 
 **This SHA targeted Mac commands (do not claim f89b4e4b 221+61 / 81 UI):**
 
@@ -243,9 +243,9 @@ npx ts-node --project app/tsconfig.json app/internal_packages/ai-sidebar/test-ai
 npx ts-node --project app/tsconfig.json app/internal_packages/ai-sidebar/test-gemini-demo.ts
 # expected 31 passed (mocked transport + KEY_FILE + official Interaction envelope; no live Gemini)
 npx ts-node --project app/tsconfig.json app/internal_packages/ai-sidebar/test-demo-query.ts
-# expected 18 passed (explicit exhaustive 2/5/6)
+# expected 20 passed (exhaustive 2/5/6 + first-selected vs all-selected)
 npx ts-node --project app/tsconfig.json app/internal_packages/ai-sidebar/test-demo-sidebar.ts
-# expected 21 passed (store fail-closed + hostCoverageFooter)
+# expected 23 passed (store fail-closed + 299pt scrollport)
 ```
 
 `--demo` does **not** open, migrate, rebuild, or relaunch over `edgehill.db`. A leftover empty stub in `Mailspring-demo/` from an older checkout is ignored; do not delete it. Production `application:reset-database` (Okay → rebuild → relaunch) is unchanged.
