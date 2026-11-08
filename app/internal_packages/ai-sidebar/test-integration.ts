@@ -134,6 +134,10 @@ async function runTests() {
   await test('main.js applies isolationIdentity before setName / paths', () => {
     assertContains(mainJs, 'identityFromArgv');
     assertContains(mainJs, 'startupFlagsFromArgv');
+    assertTrue(
+      mainJs.indexOf("require('./gemini-demo-secret')") < mainJs.indexOf("require('electron')"),
+      'Gemini credential strip must precede require(electron)'
+    );
     assertContains(mainJs, 'app.setName(identity.appName)');
     assertContains(mainJs, "appendSwitch('use-mock-keychain')");
     assertContains(mainJs, "appendSwitch('crash-dumps-dir'");

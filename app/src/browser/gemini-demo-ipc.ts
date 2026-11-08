@@ -1,7 +1,8 @@
 /**
  * Main-process IPC for the DEMO Gemini Developer API host.
- * Keys stay in process.env here. Renderer receives status booleans and
- * payloads, never the key. handleFromMailspringWindows rejects guest frames.
+ * Credentials stay in the main-process secret module (stripped from
+ * process.env). Renderer receives status booleans and payloads, never the
+ * key. handleFromMailspringWindows rejects guest frames.
  */
 import { IpcMain } from 'electron';
 import { handleFromMailspringWindows } from './trusted-ipc';
@@ -17,6 +18,7 @@ import { GeminiFetch, resolveGeminiDemoStatus, runGeminiDemoQuery } from './gemi
 export interface GeminiDemoIpcOptions {
   isDemoMode: () => boolean;
   env?: NodeJS.ProcessEnv;
+  credentials?: { key: string; paidAcknowledged: boolean };
   fetch?: GeminiFetch;
 }
 
@@ -58,7 +60,6 @@ function parseQuery(raw: unknown): GeminiDemoQueryInput {
 }
 
 export function registerGeminiDemoIpcHandlers(ipcMain: IpcMain, opts: GeminiDemoIpcOptions) {
-  const env = opts.env || process.env;
   const fetchImpl =
     opts.fetch ||
     ((typeof globalThis.fetch === 'function'
@@ -66,14 +67,19 @@ export function registerGeminiDemoIpcHandlers(ipcMain: IpcMain, opts: GeminiDemo
       : undefined) as GeminiFetch | undefined);
 
   handleFromMailspringWindows(ipcMain, GEMINI_IPC_STATUS, () => {
-    return resolveGeminiDemoStatus({ demoMode: opts.isDemoMode(), env });
+    return resolveGeminiDemoStatus({
+      demoMode: opts.isDemoMode(),
+      env: opts.env,
+      credentials: opts.credentials,
+    });
   });
 
   handleFromMailspringWindows(ipcMain, GEMINI_IPC_QUERY, async (_event, raw: unknown) => {
     const req = parseQuery(raw);
     return runGeminiDemoQuery(req, {
       demoMode: opts.isDemoMode(),
-      env,
+      env: opts.env,
+      credentials: opts.credentials,
       fetch: fetchImpl,
       registerAbort: (generation, controller) => {
         inflight.set(generation, controller);

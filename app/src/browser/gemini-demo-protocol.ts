@@ -18,7 +18,11 @@ export const GEMINI_DEMO_ENDPOINT_PATH = '/v1beta/interactions';
 export const GEMINI_DEMO_MODEL = 'gemini-3.5-flash-lite';
 export const GEMINI_DEMO_API_REVISION = '2026-05-20';
 
-/** Main-process env only. Never argv, config.json, Keychain, or renderer. */
+/**
+ * Launch-env name captured into main-process memory then stripped from
+ * process.env before Electron children spawn. Never argv, config.json,
+ * Keychain, IPC, logs, or renderer environ.
+ */
 export const GEMINI_DEMO_KEY_ENV = 'MAILSPRING_DEMO_GEMINI_API_KEY';
 /** Explicit operator ack that the key belongs to a paid project. Not proof of billing. */
 export const GEMINI_DEMO_PAID_ENV = 'MAILSPRING_DEMO_GEMINI_PAID';

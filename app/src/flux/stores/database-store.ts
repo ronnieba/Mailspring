@@ -11,6 +11,7 @@ import MailspringStore from '../../global/mailspring-store';
 import * as Utils from '../models/utils';
 import Query from '../models/query';
 import { isDemoMode } from '../../demo-mode';
+import { sanitizeSpawnEnv } from '../../browser/gemini-demo-secret';
 import {
   shouldOpenMailCacheDatabase,
   shouldRebuildMailCacheOnError,
@@ -390,12 +391,11 @@ class DatabaseStore extends MailspringStore {
     if (!this._agent && !this._agentSpawnFailed) {
       this._agentOpenQueries = {};
       try {
-        // Pass a null-prototype copy of the environment so a prototype-pollution
-        // bug elsewhere in the process cannot inject inherited properties into
-        // this forked Node agent's environment. See GHSA-gjr7-3mj2-cr54.
+        // Null-prototype copy (GHSA-gjr7-3mj2-cr54) with Gemini DEMO
+        // credential names stripped so this fork cannot re-inherit them.
         this._agent = childProcess.fork(AGENT_PATH, [], {
           silent: true,
-          env: Object.assign(Object.create(null), process.env),
+          env: sanitizeSpawnEnv(process.env),
         });
         if (this._agent.stdout)
           this._agent.stdout.on('data', (data) => console.log(data.toString()));

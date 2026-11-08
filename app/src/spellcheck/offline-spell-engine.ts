@@ -12,6 +12,7 @@ import { Socket } from 'net';
 import * as path from 'path';
 import { Token, stripNiqqud, tokenize } from './spell-core';
 import { FIXTURE_TYPOS } from './word-lists';
+import { sanitizeSpawnEnv } from '../browser/gemini-demo-secret';
 
 export const OFFLINE_SPELL_NOTICE =
   'hunspell-asm MIT · Hunspell MPL/GPL/LGPL · dictionary-en MIT AND BSD · dictionary-he aff/dic AGPL-3.0 · private local prototype · no auto-correct';
@@ -262,7 +263,7 @@ function spawnWorker(): ChildProcess {
   lastStderr = '';
   const proc = fork(WORKER_JS, [], {
     cwd: SIDECAR,
-    env: { ...process.env, ELECTRON_RUN_AS_NODE: '1' },
+    env: { ...sanitizeSpawnEnv(process.env), ELECTRON_RUN_AS_NODE: '1' },
     execArgv: [],
     stdio: ['ignore', 'ignore', 'pipe', 'ipc'],
   });

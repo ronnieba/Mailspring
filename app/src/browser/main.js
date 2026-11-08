@@ -5,6 +5,11 @@ const util = require('util');
 
 const fs = require('fs');
 
+// Native e1ec474c: renderer PID 70413 inherited MAILSPRING_DEMO_GEMINI_API_KEY
+// from the launch environment. Capture into main-process memory and unsetenv
+// before requiring Electron so Chromium helper spawns cannot inherit it.
+require('./gemini-demo-secret').captureAndStripGeminiDemoCredentials();
+
 // On Linux, writes to process.stdout/stderr use a synchronous fast path when
 // the fd is a pipe or a plain file. If the destination goes away or becomes
 // unwritable — the reader end of a pipe exits (EPIPE), or the fd is backed by

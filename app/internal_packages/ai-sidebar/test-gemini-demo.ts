@@ -7,6 +7,7 @@
  */
 import * as fs from 'fs';
 import * as path from 'path';
+import { spawnSync } from 'child_process';
 import {
   GEMINI_DEMO_API_REVISION,
   GEMINI_DEMO_ENDPOINT,
@@ -29,6 +30,12 @@ import {
   runGeminiDemoQuery,
 } from '../../src/browser/gemini-demo-host';
 import {
+  captureAndStripGeminiDemoCredentials,
+  getCapturedGeminiDemoCredentials,
+  resetGeminiDemoCredentialsForTests,
+  sanitizeSpawnEnv,
+} from '../../src/browser/gemini-demo-secret';
+import {
   isAIBoundaryFailure,
   isAIBoundaryOk,
   validateProviderPayload,
@@ -41,6 +48,26 @@ import {
 
 const APP_SRC_ROOT = path.resolve(__dirname, '../../src');
 const FAKE_KEY = 'ms-demo-test-key-not-live';
+/** Public marker used by native e1ec474c. Never a real API key. */
+const NONSECRET_MARKER = 'MAILSPRING_DEMO_GEMINI_NONSECRET_MARKER';
+
+function envHasCredentialName(env: NodeJS.ProcessEnv, name: string): boolean {
+  const lower = name.toLowerCase();
+  return Object.keys(env).some((k) => k.toLowerCase() === lower);
+}
+
+function childNamedEnvProbe(env: NodeJS.ProcessEnv): string {
+  const script =
+    'process.stdout.write(Object.keys(process.env).some((k)=>k.toLowerCase()==="mailspring_demo_gemini_api_key")?"PRESENT":"ABSENT")';
+  const out = spawnSync(process.execPath, ['-e', script], {
+    env,
+    encoding: 'utf8',
+  });
+  if (out.error) {
+    throw out.error;
+  }
+  return (out.stdout || '').trim();
+}
 
 let passed = 0;
 let failed = 0;
@@ -359,6 +386,72 @@ async function run() {
     assertContains(fail.message, '[redacted-key]');
   });
 
+  console.log('\nCategory: nonsecret marker — main captures, children do not inherit');
+  await test('captureAndStrip removes the named env and keeps the marker only in main memory', () => {
+    resetGeminiDemoCredentialsForTests();
+    process.env[GEMINI_DEMO_KEY_ENV] = NONSECRET_MARKER;
+    process.env[GEMINI_DEMO_PAID_ENV] = '1';
+    try {
+      captureAndStripGeminiDemoCredentials();
+      assertFalse(envHasCredentialName(process.env, GEMINI_DEMO_KEY_ENV));
+      assertFalse(envHasCredentialName(process.env, GEMINI_DEMO_PAID_ENV));
+      const captured = getCapturedGeminiDemoCredentials();
+      assertEqual(captured.key, NONSECRET_MARKER);
+      assertEqual(captured.paidAcknowledged, true);
+      const status = resolveGeminiDemoStatus({ demoMode: true });
+      assertTrue(status.configured);
+      assertTrue(status.keyPresent);
+      assertFalse(status.billingProven);
+      assertFalse(JSON.stringify(status).includes(NONSECRET_MARKER));
+    } finally {
+      resetGeminiDemoCredentialsForTests();
+    }
+  });
+
+  await test('child spawned from stripped process.env does not inherit the named key', () => {
+    resetGeminiDemoCredentialsForTests();
+    process.env[GEMINI_DEMO_KEY_ENV] = NONSECRET_MARKER;
+    process.env[GEMINI_DEMO_PAID_ENV] = '0';
+    try {
+      assertEqual(childNamedEnvProbe({ ...process.env }), 'PRESENT');
+      captureAndStripGeminiDemoCredentials();
+      assertEqual(childNamedEnvProbe(process.env), 'ABSENT');
+      assertEqual(getCapturedGeminiDemoCredentials().key, NONSECRET_MARKER);
+    } finally {
+      resetGeminiDemoCredentialsForTests();
+    }
+  });
+
+  await test('sanitizeSpawnEnv strips a pre-capture snapshot that still had the marker', () => {
+    const snapshot: NodeJS.ProcessEnv = {
+      PATH: process.env.PATH,
+      [GEMINI_DEMO_KEY_ENV]: NONSECRET_MARKER,
+      [GEMINI_DEMO_PAID_ENV]: '1',
+    };
+    assertEqual(childNamedEnvProbe(snapshot), 'PRESENT');
+    assertEqual(childNamedEnvProbe(sanitizeSpawnEnv(snapshot)), 'ABSENT');
+    assertFalse(envHasCredentialName(sanitizeSpawnEnv(snapshot), GEMINI_DEMO_KEY_ENV));
+  });
+
+  await test('host fetch after capture does not read the key back out of process.env', async () => {
+    resetGeminiDemoCredentialsForTests();
+    process.env[GEMINI_DEMO_KEY_ENV] = NONSECRET_MARKER;
+    process.env[GEMINI_DEMO_PAID_ENV] = '1';
+    try {
+      captureAndStripGeminiDemoCredentials();
+      const { fetch, calls } = recordingFetch(jsonFetch(liveOutput));
+      const out = await runGeminiDemoQuery(
+        { generation: 1, query: 'x', messages: [demoMail()] },
+        { demoMode: true, fetch }
+      );
+      requireHostOk(out);
+      assertEqual(calls[0].init.headers?.['x-goog-api-key'], NONSECRET_MARKER);
+      assertFalse(envHasCredentialName(process.env, GEMINI_DEMO_KEY_ENV));
+    } finally {
+      resetGeminiDemoCredentialsForTests();
+    }
+  });
+
   await test('allowLiveSynthetic accepts isMock false only for synthetic sources', () => {
     const payload = {
       isMock: false,
@@ -427,9 +520,17 @@ async function run() {
     );
     const storeTs = fs.readFileSync(path.join(__dirname, 'lib/ai-sidebar-store.ts'), 'utf8');
     const sidebarTs = fs.readFileSync(path.join(__dirname, 'lib/ai-sidebar.tsx'), 'utf8');
+    const mainJs = fs.readFileSync(path.join(APP_SRC_ROOT, 'browser', 'main.js'), 'utf8');
+    assertTrue(
+      mainJs.indexOf("require('./gemini-demo-secret')") < mainJs.indexOf("require('electron')"),
+      'credential capture must run before Electron helper processes spawn'
+    );
+    assertContains(mainJs, 'captureAndStripGeminiDemoCredentials');
     assertContains(appTs, 'registerGeminiDemoIpcHandlers');
     assertContains(ipcTs, 'handleFromMailspringWindows');
     assertContains(ipcTs, 'GEMINI_IPC_STATUS');
+    assertContains(ipcTs, 'credentials: opts.credentials');
+    assertFalse(/opts\.env \|\| process\.env/.test(ipcTs));
     assertContains(protocolTs, 'gemini-demo:status');
     assertContains(protocolTs, GEMINI_DEMO_ENDPOINT);
     assertContains(protocolTs, GEMINI_DEMO_MODEL);
@@ -459,13 +560,16 @@ async function run() {
     assertContains(guide, 'not zero');
     assertContains(guide, '10 minute');
     assertContains(guide, 'auto-reload');
+    assertContains(guide, 'MAILSPRING_DEMO_GEMINI_NONSECRET_MARKER');
+    assertContains(guide, '--type=renderer');
+    assertContains(guide, 'UNRUN native process-boundary');
     assertFalse(guide.includes('free-tier-only project is enough'));
     assertFalse(guide.toLowerCase().includes('zero retention guaranteed'));
   });
 
   console.log('\n' + '='.repeat(40));
   console.log(`Results: ${passed} passed, ${failed} failed`);
-  console.log('UNRUN in this cloud agent — expected 18 until local Mac run.');
+  console.log('UNRUN in this cloud agent — expected 22 until local Mac run.');
   console.log('='.repeat(40) + '\n');
   if (failed > 0) process.exit(1);
 }

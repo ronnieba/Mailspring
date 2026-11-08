@@ -25,6 +25,7 @@ import {
   isAllowedGeminiEndpoint,
   unconfiguredGeminiStatus,
 } from './gemini-demo-protocol';
+import { getCapturedGeminiDemoCredentials } from './gemini-demo-secret';
 
 const DEFAULT_TIMEOUT_MS = 30000;
 
@@ -41,14 +42,11 @@ export type GeminiFetch = (
 export interface GeminiDemoHostDeps {
   demoMode: boolean;
   env?: NodeJS.ProcessEnv;
+  credentials?: { key: string; paidAcknowledged: boolean };
   fetch?: GeminiFetch;
   userSignal?: AbortSignal;
   registerAbort?: (generation: number, controller: AbortController) => void;
   unregisterAbort?: (generation: number) => void;
-}
-
-function envOf(deps: { env?: NodeJS.ProcessEnv }): NodeJS.ProcessEnv {
-  return deps.env || process.env;
 }
 
 function readKey(env: NodeJS.ProcessEnv): string {
@@ -58,6 +56,25 @@ function readKey(env: NodeJS.ProcessEnv): string {
 
 function paidAck(env: NodeJS.ProcessEnv): boolean {
   return env[GEMINI_DEMO_PAID_ENV] === '1';
+}
+
+function credentialsOf(deps: {
+  env?: NodeJS.ProcessEnv;
+  credentials?: { key: string; paidAcknowledged: boolean };
+}): { key: string; paidAcknowledged: boolean } {
+  if (deps.credentials) {
+    return {
+      key: typeof deps.credentials.key === 'string' ? deps.credentials.key.trim() : '',
+      paidAcknowledged: !!deps.credentials.paidAcknowledged,
+    };
+  }
+  if (deps.env) {
+    return {
+      key: readKey(deps.env),
+      paidAcknowledged: paidAck(deps.env),
+    };
+  }
+  return getCapturedGeminiDemoCredentials();
 }
 
 export function redactSecret(text: string, secret: string): string {
@@ -70,10 +87,10 @@ export function redactSecret(text: string, secret: string): string {
 export function resolveGeminiDemoStatus(opts: {
   demoMode: boolean;
   env?: NodeJS.ProcessEnv;
+  credentials?: { key: string; paidAcknowledged: boolean };
 }): GeminiDemoStatus {
-  const env = envOf(opts);
-  const keyPresent = readKey(env).length > 0;
-  const paidAcknowledged = paidAck(env);
+  const { key, paidAcknowledged } = credentialsOf(opts);
+  const keyPresent = key.length > 0;
 
   if (!opts.demoMode) {
     return unconfiguredGeminiStatus(false, 'Gemini DEMO host is --demo only', {
@@ -158,8 +175,11 @@ export async function runGeminiDemoQuery(
   req: GeminiDemoQueryInput,
   deps: GeminiDemoHostDeps
 ): Promise<GeminiHostResult> {
-  const env = envOf(deps);
-  const status = resolveGeminiDemoStatus({ demoMode: deps.demoMode, env });
+  const { key, paidAcknowledged } = credentialsOf(deps);
+  const status = resolveGeminiDemoStatus({
+    demoMode: deps.demoMode,
+    credentials: { key, paidAcknowledged },
+  });
   if (!status.configured) {
     return fail('unconfigured', status.reason);
   }
@@ -170,7 +190,6 @@ export async function runGeminiDemoQuery(
     return fail('empty-query', 'Query is empty');
   }
 
-  const key = readKey(env);
   const fetchImpl = deps.fetch;
   if (!fetchImpl) {
     return fail('no-fetch', 'No fetch implementation (live Gemini is main-process only)');

@@ -223,17 +223,17 @@ Parent runs these on Mac from repo root (and once from another cwd with `--prefi
 | `test-demo-sidebar.ts` | 21 |
 | `test-demo-query.ts` | 18 |
 | `test-ai-boundary.ts` | **17** |
-| `test-gemini-demo.ts` | **18** (mocked transport; no live Gemini) |
+| `test-gemini-demo.ts` | **22** (mocked transport + nonsecret child-env containment) |
 | `test-demo-cli.ts` | 12 |
-| **prior portable subtotal** | **195** |
+| **prior portable subtotal** | **199** |
 | `test-composer-direction.ts` | 14 |
 | `test-composer-spell.ts` | 21 |
 | `test-demo-composer.ts` | 13 |
 | **composer subtotal (no sidecar)** | **48** |
 | `test-nspell-engine.ts` | **13** (requires sidecar install) |
-| **portable total after sidecar** | **256** |
+| **portable total after sidecar** | **260** |
 
-Without sidecar install: prior **243** + alt-cwd **48** still apply. After `install.sh`: **256** portable (243+13). Composer+engine alt-cwd remains **61** (48+13) unless `test-ai-boundary.ts` / `test-gemini-demo.ts` are included (**+17 / +18**). Do not run these in cloud CI. Preserve 34a90265 layout/AI/isolation. Do not rewrite `app/package-lock.json`.
+Without sidecar install: prior **247** + alt-cwd **48** still apply. After `install.sh`: **260** portable (247+13). Composer+engine alt-cwd remains **61** (48+13) unless `test-ai-boundary.ts` / `test-gemini-demo.ts` are included (**+17 / +22**). Do not run these in cloud CI. Preserve 34a90265 layout/AI/isolation. Do not rewrite `app/package-lock.json`.
 
 **This SHA targeted Mac commands (do not claim f89b4e4b 221+61 / 81 UI):**
 
@@ -241,7 +241,7 @@ Without sidecar install: prior **243** + alt-cwd **48** still apply. After `inst
 npx ts-node --project app/tsconfig.json app/internal_packages/ai-sidebar/test-ai-boundary.ts
 # expected 17 passed, natural exit
 npx ts-node --project app/tsconfig.json app/internal_packages/ai-sidebar/test-gemini-demo.ts
-# expected 18 passed (mocked transport only; no live Gemini, no key required)
+# expected 22 passed (mocked transport + NONSECRET child-env containment; no live Gemini)
 npx ts-node --project app/tsconfig.json app/internal_packages/ai-sidebar/test-demo-query.ts
 # expected 18 passed (explicit exhaustive 2/5/6)
 npx ts-node --project app/tsconfig.json app/internal_packages/ai-sidebar/test-demo-sidebar.ts
@@ -310,9 +310,11 @@ Paid-tier docs currently say prompts/responses are **not used to improve Google 
 - Spend caps are **not** a true real-time hard stop: billing can lag about **10 minute**s and overshoot a cap or a $0 prepay balance. Batch/agent jobs can overshoot further.
 - Linking billing and issuing live generations is **not authorized** until the parent settles price/budget/key.
 
-### Local env (main process only — never argv, config.json, Keychain, or UI)
+### Local env (captured in main, stripped before Electron children)
 
-Live path stays **unconfigured** without both variables. Synthetic DEMO fixtures only; real mailbox access is not admitted on this milestone.
+Live path stays **unconfigured** without both variables at **launch**. `app/src/browser/main.js` captures them into main-process memory and **unsets** the names from `process.env` before `require('electron')`. Chromium `--type=renderer` / `--type=gpu-process` / `--type=utility` and `chrome_crashpad_handler` therefore must not inherit the named variable. Native e1ec474c renderer PID 70413 inherited it when this strip was missing.
+
+Do not paste a real key into git, screenshots, argv, renderer UI, or logs. IPC status reports booleans only.
 
 ```bash
 # Do not paste a real key into git, screenshots, or argv.
@@ -325,4 +327,25 @@ electron ./app --enable-logging --dev --demo
 
 Without those env vars the sidebar stays mock. A Gemini error must not fall back to mock fixtures. Local Cancel/timeout abort the process fetch; they do **not** guarantee the provider stopped a billed generation.
 
-Remaining gates before live execution: paid project + key in env, Cloud Billing linked (not inferable from the key), prepaid amount, auto-reload off, budget/cap accepted with overshoot risk, official data-use terms accepted, native mocked-transport tests, then a separate approval to admit real mail.
+### UNRUN native process-boundary (NONSECRET marker — never a real key)
+
+Native e1ec474c: `nonsecret_key_named_environment_inherited=true` on own `--type=renderer` PID 70413. Repeat this **boolean** check on the new SHA before any secret-bearing launch. Do **not** print environ. Do **not** use a real key. `MAILSPRING_DEMO_GEMINI_PAID=0`.
+
+```bash
+# UNRUN native process-boundary. Public marker only.
+MAILSPRING_DEMO_GEMINI_API_KEY='MAILSPRING_DEMO_GEMINI_NONSECRET_MARKER' \
+MAILSPRING_DEMO_GEMINI_PAID=0 \
+./node_modules/.bin/electron ./app --enable-logging --dev --demo --force-renderer-accessibility
+```
+
+From another terminal, inspect **own** checkout Electron children only (`--user-data-dir=.../Mailspring-demo`). Record booleans for whether the **name** `MAILSPRING_DEMO_GEMINI_API_KEY` is present in:
+
+- Electron main (`.../MacOS/Electron ./app`)
+- `--type=renderer` (the e1ec474c failing case)
+- `--type=gpu-process`
+- `--type=utility`
+- `chrome_crashpad_handler`
+
+Expected after this SHA: **all false**. Stdout may include `[Gemini DEMO] provider credential captured in main process memory; stripped from process environment (value not logged)` — that log must not contain the marker value. Portable Node equivalent (already in `test-gemini-demo.ts`): child spawned with stripped `process.env` prints `ABSENT`.
+
+Remaining gates before live execution: this native renderer/helper boolean check passing, paid project + key, Cloud Billing linked (not inferable from the key), prepaid amount, auto-reload off, budget/cap accepted with overshoot risk, official data-use terms accepted, then a separate approval to admit real mail. No live Gemini / billing calls on this SHA.

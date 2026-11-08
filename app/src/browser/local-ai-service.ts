@@ -7,6 +7,7 @@ import {
 } from 'electron';
 import path from 'path';
 import { isMailspringWindowContents } from './mailspring-window';
+import { sanitizeSpawnEnv } from './gemini-demo-secret';
 import { cacheKey, DOWNLOADABLE_MODEL_VERSION, ModelSpec } from './local-ai-model';
 import {
   LocalModelController,
@@ -293,6 +294,7 @@ class LocalAIService {
 
     const worker = utilityProcess.fork(unpacked(path.join(__dirname, 'local-ai-worker.js')), [], {
       serviceName: 'Mailspring Local AI',
+      env: sanitizeSpawnEnv(process.env),
     });
     this.worker = worker;
     worker.on('message', ({ id, result, error }) => {
