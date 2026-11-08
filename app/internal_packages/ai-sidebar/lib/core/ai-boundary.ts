@@ -2,8 +2,9 @@
  * Provider-neutral AI boundary. General live providers stay disabled
  * (`LIVE_AI_PROVIDERS_ENABLED`). The official paid Gemini Developer API is a
  * DEMO-synthetic exception via `allowLiveSynthetic` — not consumer Gemini,
- * not a production mailbox. The host validates every payload and calculates
- * coverage; a worker never owns those.
+ * not a production mailbox. Opt-in `--dev --real-selected-summary` is a
+ * separate one-message exception via `allowLiveRealSelectedSingle`. The host
+ * validates every payload and calculates coverage; a worker never owns those.
  *
  * Local cancel/timeout/stale-generation are host decisions. They are not a
  * completed remote generation and must not be billed or shown as an answer.
@@ -26,6 +27,7 @@ export type AIBoundaryReason =
   | 'not-mock'
   | 'live-disabled'
   | 'non-synthetic-source'
+  | 'real-selected-scope'
   | 'stale-generation'
   | 'cancelled'
   | 'timeout';
@@ -43,6 +45,7 @@ export interface AIValidateContext {
    * production mailbox generation.
    */
   allowLiveSynthetic?: boolean;
+  allowLiveRealSelectedSingle?: boolean;
   sourcesAreSynthetic?: boolean;
 }
 
@@ -168,10 +171,18 @@ export function validateProviderPayload(raw: unknown, ctx: AIValidateContext): A
   }
   const p = raw;
   const liveSynthetic = p.isMock === false && ctx.allowLiveSynthetic === true;
-  if (p.isMock === false && ctx.allowLiveSynthetic !== true) {
+  const liveRealSingle = p.isMock === false && ctx.allowLiveRealSelectedSingle === true;
+  if (liveSynthetic && liveRealSingle) {
+    return fail(
+      'local',
+      'invalid-schema',
+      'allowLiveSynthetic and allowLiveRealSelectedSingle are mutually exclusive'
+    );
+  }
+  if (p.isMock === false && !liveSynthetic && !liveRealSingle) {
     return fail('local', 'live-disabled', LIVE_AI_DISABLED_REASON);
   }
-  if (!liveSynthetic && p.isMock !== true) {
+  if (!liveSynthetic && !liveRealSingle && p.isMock !== true) {
     return fail(
       'local',
       p.isMock === false ? 'not-mock' : 'invalid-schema',
@@ -180,6 +191,22 @@ export function validateProviderPayload(raw: unknown, ctx: AIValidateContext): A
   }
   if (liveSynthetic && ctx.sourcesAreSynthetic !== true) {
     return fail('local', 'non-synthetic-source', NON_SYNTHETIC_LIVE_REASON);
+  }
+  if (liveRealSingle) {
+    if (ctx.sourcesAreSynthetic === true) {
+      return fail(
+        'local',
+        'real-selected-scope',
+        'Real selected-single-message summary rejects synthetic DEMO fixtures'
+      );
+    }
+    if (ctx.allowedSourceIds.size !== 1) {
+      return fail(
+        'local',
+        'real-selected-scope',
+        'Real selected-single-message summary requires exactly one allowed source id'
+      );
+    }
   }
   if (typeof p.response !== 'string') {
     return fail('local', 'invalid-schema', 'payload.response must be a string');
@@ -195,22 +222,23 @@ export function validateProviderPayload(raw: unknown, ctx: AIValidateContext): A
     }
     citations.push(parsed);
   }
+  const live = liveSynthetic || liveRealSingle;
   const mockLabel =
     typeof p.mockLabel === 'string' && p.mockLabel.trim()
       ? p.mockLabel
-      : liveSynthetic
+      : live
         ? 'Gemini Developer API (paid project required)'
         : 'Mock AI (No External Connection)';
   const tokensUsed =
     typeof p.tokensUsed === 'number' && Number.isFinite(p.tokensUsed) ? p.tokensUsed : 0;
   return {
     ok: true,
-    origin: liveSynthetic ? 'live' : 'mock',
+    origin: live ? 'live' : 'mock',
     result: {
       response: p.response,
       citations,
       tokensUsed,
-      isMock: liveSynthetic ? false : true,
+      isMock: live ? false : true,
       mockLabel,
     },
   };

@@ -121,6 +121,34 @@ function run() {
     assertFalse(startupFlagsFromArgv(['--demo-capture=/tmp/x.png']).demoMode);
   });
 
+  test('--real-selected-summary on a developer build is Mailspring-dev, not production or demo', () => {
+    const id = identityFromArgv(['electron', './app', '--dev', '--real-selected-summary'], {
+      developerBuild: true,
+    });
+    assertEqual(id.appName, 'Mailspring-dev');
+    assertEqual(id.configDirName, 'Mailspring-dev');
+    assertFalse(id.useMockKeychain);
+    assertFalse(id.skipMailsync);
+    const flags = startupFlagsFromArgv(['electron', './app', '--real-selected-summary']);
+    assertTrue(flags.realSelectedSummary);
+    assertFalse(flags.demoMode);
+    const packaged = identityFromArgv(['electron', './app', '--real-selected-summary'], {
+      developerBuild: false,
+    });
+    assertEqual(packaged.appName, 'Mailspring');
+  });
+
+  test('--demo wins over --real-selected-summary so synthetic isolation stays default', () => {
+    const id = identityFromArgv(
+      ['electron', './app', '--dev', '--demo', '--real-selected-summary'],
+      { developerBuild: true }
+    );
+    assertEqual(id.appName, 'Mailspring-demo');
+    assertTrue(id.useMockKeychain);
+    assertTrue(id.skipMailsync);
+    assertFalse(startupFlagsFromArgv(['--real-selected-summary']).demoMode);
+  });
+
   test('identityFromArgv isolates demo before CLI parse; packaged stays production', () => {
     const demo = identityFromArgv(['electron', './app', '--dev', '--demo'], {
       developerBuild: true,

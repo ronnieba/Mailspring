@@ -20,6 +20,8 @@ import {
   getDemoSyncProgress,
   getDemoMessageBody,
 } from './synthetic-demo';
+import { resolveExactSelectedMessage } from './core/real-selected-mail';
+import { isRealSelectedSummaryMode as defaultIsRealSelectedSummaryMode } from '../../../src/real-selected-summary';
 
 export interface QueryLike<T> {
   where(condition: unknown): QueryLike<T>;
@@ -36,6 +38,9 @@ export interface QueryLike<T> {
 
 export interface MailAdapterStores {
   isDemoMode: () => boolean;
+  isRealSelectedSummaryMode?: () => boolean;
+  focusedThreadMessages?: () => any[];
+  messageExpansion?: () => Record<string, 'explicit' | 'default' | undefined>;
   accountIds: () => string[];
   currentPerspective: () => {
     accountIds?: string[];
@@ -112,6 +117,15 @@ function loadProductionStores(): MailAdapterStores {
 
   return {
     isDemoMode: defaultIsDemoMode,
+    isRealSelectedSummaryMode: defaultIsRealSelectedSummaryMode,
+    focusedThreadMessages: () => {
+      const { MessageStore } = require('mailspring-exports');
+      return MessageStore.items() || [];
+    },
+    messageExpansion: () => {
+      const { MessageStore } = require('mailspring-exports');
+      return MessageStore.itemsExpandedState() || {};
+    },
     accountIds: () => AccountStore.accountIds(),
     currentPerspective: () => FocusedPerspectiveStore.current(),
     selectedThreads: () => {
@@ -148,6 +162,48 @@ export class MailspringAdapter implements MailAdapter {
     return this._stores;
   }
 
+  private _resolveExactSelectedMessage(s: MailAdapterStores, accountIds: string[]): ResolvedScope {
+    const selectedThreads = s.selectedThreads();
+    const focusedThread = s.focusedThread();
+    const threadIds =
+      selectedThreads.length > 0
+        ? selectedThreads.map((t) => t.id)
+        : focusedThread
+          ? [focusedThread.id]
+          : [];
+    const storeMessages = (s.focusedThreadMessages ? s.focusedThreadMessages() : []).filter(
+      (m) => m && typeof m.id === 'string' && !m.draft
+    );
+    const inSelectedThread =
+      threadIds.length === 1
+        ? storeMessages.filter((m) => m.threadId === threadIds[0])
+        : storeMessages;
+    const expansion = s.messageExpansion ? s.messageExpansion() : {};
+    const eligibility = resolveExactSelectedMessage({
+      threadIds,
+      messages: inSelectedThread,
+      expansion,
+    });
+    if (!eligibility.ok || !eligibility.messageId || !eligibility.threadId) {
+      return {
+        mode: 'selected-messages',
+        threadIds,
+        messageIds: [],
+        accountIds,
+        description: `Cannot summarize: ${eligibility.reason || 'ineligible'}`,
+        isEmpty: true,
+      };
+    }
+    return {
+      mode: 'selected-messages',
+      threadIds: [eligibility.threadId],
+      messageIds: [eligibility.messageId],
+      accountIds,
+      description: `הודעה אחת נבחרת (${eligibility.messageId})`,
+      isEmpty: false,
+    };
+  }
+
   async resolveScope(mode: ScopeMode): Promise<ResolvedScope> {
     const s = this.stores();
     if (s.isDemoMode()) {
@@ -156,9 +212,22 @@ export class MailspringAdapter implements MailAdapter {
 
     const perspective = s.currentPerspective();
     const accountIds = perspective.accountIds || s.accountIds();
+    const realSelected = s.isRealSelectedSummaryMode ? s.isRealSelectedSummaryMode() : false;
+
+    if (realSelected && mode !== 'selected-messages') {
+      return {
+        mode,
+        accountIds,
+        description: 'Folder and all-mail are disabled for one-selected-message summary',
+        isEmpty: true,
+      };
+    }
 
     switch (mode) {
       case 'selected-messages': {
+        if (realSelected) {
+          return this._resolveExactSelectedMessage(s, accountIds);
+        }
         const selectedThreads = s.selectedThreads();
         const focusedThread = s.focusedThread();
 
@@ -279,6 +348,41 @@ export class MailspringAdapter implements MailAdapter {
       };
     }
 
+    const realSelected = s.isRealSelectedSummaryMode ? s.isRealSelectedSummaryMode() : false;
+    if (realSelected) {
+      if (
+        scope.mode !== 'selected-messages' ||
+        !scope.messageIds ||
+        scope.messageIds.length !== 1
+      ) {
+        return {
+          messages: [],
+          progress: { ...progress, isComplete: true, totalEligible: 0 },
+          retrievalMode: mode,
+        };
+      }
+      const dbQuery = s
+        .findAllMessages()
+        .where(s.Message.attributes.id.in(scope.messageIds))
+        .where(s.Message.attributes.draft.equal(false));
+      const exact = (await dbQuery) as any[];
+      const only = exact.filter((m) => m && m.id === scope.messageIds[0]);
+      const refs = only.map(messageToRef);
+      return {
+        messages: refs,
+        progress: {
+          totalEligible: refs.length,
+          processed: refs.length,
+          withBodies: only.filter((m) => m.body !== null && m.body !== undefined).length,
+          missingBodies: only.filter((m) => m.body === null || m.body === undefined).length,
+          syncCoverage: null,
+          isComplete: true,
+          isCancelled: false,
+        },
+        retrievalMode: mode,
+      };
+    }
+
     let messages: any[] = [];
 
     if (scope.mode === 'selected-messages' && scope.messageIds?.length) {
@@ -376,6 +480,17 @@ export class MailspringAdapter implements MailAdapter {
     };
   }
 
+  async getMessageAttachmentCount(messageId: string): Promise<number> {
+    const s = this.stores();
+    if (s.isDemoMode()) {
+      return 0;
+    }
+    const found = s.findMessage(messageId);
+    const msg = (await found) as any;
+    const files = msg?.files;
+    return Array.isArray(files) ? files.length : 0;
+  }
+
   async getMessageBody(messageId: string): Promise<string | null> {
     const s = this.stores();
     if (s.isDemoMode()) {
@@ -392,6 +507,10 @@ export class MailspringAdapter implements MailAdapter {
     const s = this.stores();
     if (s.isDemoMode()) {
       console.log(`[AI Sidebar Demo] Would navigate to message: ${messageId}`);
+      return false;
+    }
+    if (s.isRealSelectedSummaryMode && s.isRealSelectedSummaryMode()) {
+      // Citation preview stays in the sidebar. setFocus on a thread can mark it read.
       return false;
     }
 

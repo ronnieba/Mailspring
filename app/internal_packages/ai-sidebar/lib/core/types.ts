@@ -14,6 +14,8 @@ export interface MessageRef {
   snippet: string;
   /** Demo fixture folder. Production mail omits this. */
   folderId?: string;
+  /** Sanitized body of one selected real message. Demo synthetic path omits this. */
+  bodyText?: string;
 }
 
 /** Thread identity */

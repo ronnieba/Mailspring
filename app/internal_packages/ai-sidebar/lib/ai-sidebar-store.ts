@@ -31,8 +31,17 @@ import {
   isDemoMode,
 } from './synthetic-demo';
 import {
+  formatRealSelectedDisclosure,
+  isStaleRealSelectedSnapshot,
+  prepareRealSelectedBody,
+  REAL_SELECTED_QUERY,
+  RealSelectedPreview,
+} from './core/real-selected-mail';
+import { isRealSelectedSummaryMode } from '../../../src/real-selected-summary';
+import {
   GEMINI_DISPLAY_NAME,
   GeminiDemoStatus,
+  REAL_SELECTED_SCOPE_REASON,
   unconfiguredGeminiStatus,
 } from '../../../src/browser/gemini-demo-protocol';
 
@@ -54,12 +63,14 @@ interface AISidebarState {
   error: string | null;
   abortController: AbortController | null;
   demoPreview: DemoMessagePreview | null;
+  realPreview: RealSelectedPreview | null;
   geminiStatus: GeminiDemoStatus;
 }
 
 class AISidebarStore extends MailspringStore {
   private _state: AISidebarState = {
     // Demo has no real thread selection. all-mail still uses synthetic fixtures.
+    // Real-selected-summary is always selected-messages (exactly one).
     scopeMode: isDemoMode() ? 'all-mail' : 'selected-messages',
     resolvedScope: null,
     retrievalMode: 'ranked',
@@ -69,8 +80,12 @@ class AISidebarStore extends MailspringStore {
     error: null,
     abortController: null,
     demoPreview: null,
+    realPreview: null,
     geminiStatus: unconfiguredGeminiStatus(isDemoMode(), 'Gemini status not refreshed yet'),
   };
+  private _realSnapshotEpoch = 0;
+  private _inFlightMessageId: string | null = null;
+  private _inFlightSnapshotEpoch = 0;
 
   private _provider: AIProvider = mockProvider;
   private _gemini = new GeminiDemoProvider(createGeminiIpcTransport());
@@ -102,6 +117,13 @@ class AISidebarStore extends MailspringStore {
    * Set scope mode and resolve it.
    */
   async setScopeMode(mode: ScopeMode) {
+    if (isRealSelectedSummaryMode() && !isDemoMode() && mode !== 'selected-messages') {
+      this._state.error = 'Folder and all-mail are disabled for one-selected-message summary';
+      this._state.scopeMode = 'selected-messages';
+      await this._resolveScope();
+      this.trigger();
+      return;
+    }
     this._state.scopeMode = mode;
     await this._resolveScope();
     this.trigger();
@@ -120,16 +142,21 @@ class AISidebarStore extends MailspringStore {
    */
   async refreshScope() {
     await this._resolveScope();
+    await this._refreshRealPreview();
     await this.refreshGeminiStatus();
     this.trigger();
   }
 
   async refreshGeminiStatus() {
-    if (!isDemoMode()) {
-      this._state.geminiStatus = unconfiguredGeminiStatus(false, 'Gemini DEMO host is --demo only');
+    if (isDemoMode()) {
+      this._state.geminiStatus = await this._gemini.refreshStatus();
       return;
     }
-    this._state.geminiStatus = await this._gemini.refreshStatus();
+    if (isRealSelectedSummaryMode()) {
+      this._state.geminiStatus = await this._gemini.refreshStatus();
+      return;
+    }
+    this._state.geminiStatus = unconfiguredGeminiStatus(false, 'Gemini DEMO host is --demo only');
   }
 
   private async _resolveScope() {
@@ -142,10 +169,70 @@ class AISidebarStore extends MailspringStore {
     }
   }
 
+  private async _refreshRealPreview() {
+    if (!isRealSelectedSummaryMode() || isDemoMode()) {
+      this._state.realPreview = null;
+      return;
+    }
+    const scope = this._state.resolvedScope;
+    const messageId =
+      scope && !scope.isEmpty && scope.messageIds?.length === 1 ? scope.messageIds[0] : null;
+    if (
+      this._state.isProcessing &&
+      this._inFlightMessageId &&
+      this._inFlightMessageId !== messageId
+    ) {
+      this.cancel();
+    }
+    if (!messageId || !scope) {
+      this._state.realPreview = null;
+      return;
+    }
+    const html = (await mailspringAdapter.getMessageBody(messageId)) || '';
+    const attachmentCount = await mailspringAdapter.getMessageAttachmentCount(messageId);
+    const prepared = prepareRealSelectedBody(html, attachmentCount);
+    const search = await mailspringAdapter.searchMessages(scope, '', 'ranked', 1, 0);
+    const ref = search.messages[0];
+    if (!ref || ref.id !== messageId) {
+      this._state.realPreview = null;
+      return;
+    }
+    if (this._state.realPreview?.messageId !== messageId) {
+      this._realSnapshotEpoch += 1;
+    }
+    this._state.realPreview = {
+      snapshotEpoch: this._realSnapshotEpoch,
+      messageId,
+      threadId: ref.threadId,
+      subject: ref.subject,
+      from: ref.from,
+      date: String(ref.date),
+      snippet: ref.snippet,
+      bodyPreview: prepared.bodyText,
+      disclosure: formatRealSelectedDisclosure(prepared),
+      quotedStripped: prepared.quotedStripped,
+      truncated: prepared.truncated,
+      attachmentCount: prepared.attachmentCount,
+    };
+  }
+
   /**
    * Submit a query to the AI provider.
+   * Real-selected-summary refuses free-form search; use summarizeSelectedMessage.
    */
-  async submitQuery(query: string) {
+  async submitQuery(
+    query: string,
+    opts?: {
+      allowRealSelected?: boolean;
+      sentSnapshot?: { messageId: string; snapshotEpoch: number };
+    }
+  ) {
+    if (isRealSelectedSummaryMode() && !isDemoMode() && !opts?.allowRealSelected) {
+      this._state.error =
+        'Use Summarize for the one selected message. Free-form mailbox search is disabled.';
+      this.trigger();
+      return;
+    }
     if (this._state.isProcessing) {
       return;
     }
@@ -154,8 +241,24 @@ class AISidebarStore extends MailspringStore {
       return;
     }
 
-    // Refresh scope before querying
+    // Refresh scope before querying. Real path also rebuilds the preview; this
+    // does not generate. A changed selection after Summarize is fail-closed.
     await this._resolveScope();
+    if (opts?.allowRealSelected) {
+      await this._refreshRealPreview();
+      const current = this._state.realPreview;
+      if (
+        !opts.sentSnapshot ||
+        isStaleRealSelectedSnapshot(opts.sentSnapshot, {
+          messageId: current?.messageId ?? null,
+          snapshotEpoch: current?.snapshotEpoch ?? -1,
+        })
+      ) {
+        this._state.error = REAL_SELECTED_SCOPE_REASON;
+        this.trigger();
+        return;
+      }
+    }
 
     const scope = this._state.resolvedScope;
     if (!scope) {
@@ -187,6 +290,13 @@ class AISidebarStore extends MailspringStore {
       isComplete: false,
       isCancelled: false,
     };
+    if (opts?.sentSnapshot) {
+      this._inFlightMessageId = opts.sentSnapshot.messageId;
+      this._inFlightSnapshotEpoch = opts.sentSnapshot.snapshotEpoch;
+    } else {
+      this._inFlightMessageId = null;
+      this._inFlightSnapshotEpoch = 0;
+    }
     this.trigger();
 
     const stillCurrent = () =>
@@ -206,6 +316,31 @@ class AISidebarStore extends MailspringStore {
         0,
         this._state.abortController.signal
       );
+      if (opts?.allowRealSelected) {
+        if (
+          searchResult.messages.length !== 1 ||
+          searchResult.messages[0].id !== this._inFlightMessageId
+        ) {
+          this._state.error = REAL_SELECTED_SCOPE_REASON;
+          this._state.conversation.push({
+            id: `error-${Date.now()}`,
+            role: 'system',
+            content: `❌ שגיאה: ${REAL_SELECTED_SCOPE_REASON}`,
+            timestamp: new Date(),
+          });
+          return;
+        }
+        const html = (await mailspringAdapter.getMessageBody(searchResult.messages[0].id)) || '';
+        const attachmentCount = await mailspringAdapter.getMessageAttachmentCount(
+          searchResult.messages[0].id
+        );
+        const prepared = prepareRealSelectedBody(html, attachmentCount);
+        searchResult.messages[0] = {
+          ...searchResult.messages[0],
+          snippet: searchResult.messages[0].snippet,
+          bodyText: prepared.bodyText,
+        };
+      }
 
       if (!stillCurrent()) {
         return;
@@ -223,8 +358,11 @@ class AISidebarStore extends MailspringStore {
       this.trigger();
 
       const sourcesAreSynthetic = areSyntheticDemoSources(searchResult.messages);
-      const useGemini = isDemoMode() && this._state.geminiStatus.configured;
-      if (useGemini && !sourcesAreSynthetic) {
+      const useGeminiDemo = isDemoMode() && this._state.geminiStatus.configured;
+      const useGeminiReal =
+        isRealSelectedSummaryMode() && !isDemoMode() && this._state.geminiStatus.configured;
+      const useGemini = useGeminiDemo || useGeminiReal;
+      if (useGeminiDemo && !sourcesAreSynthetic) {
         this._state.error = NON_SYNTHETIC_LIVE_REASON;
         this._state.conversation.push({
           id: `error-${Date.now()}`,
@@ -234,10 +372,29 @@ class AISidebarStore extends MailspringStore {
         });
         return;
       }
+      if (useGeminiReal && (sourcesAreSynthetic || searchResult.messages.length !== 1)) {
+        this._state.error = REAL_SELECTED_SCOPE_REASON;
+        this._state.conversation.push({
+          id: `error-${Date.now()}`,
+          role: 'system',
+          content: `❌ שגיאה: ${REAL_SELECTED_SCOPE_REASON}`,
+          timestamp: new Date(),
+        });
+        return;
+      }
 
       const provider = useGemini ? this._gemini : this._provider;
       if (useGemini) {
         this._gemini.setGeneration(startedGeneration);
+        if (useGeminiReal) {
+          this._gemini.setQueryExtras({
+            mode: 'real-selected-single',
+            allowedMessageId: this._inFlightMessageId || searchResult.messages[0].id,
+            snapshotEpoch: this._inFlightSnapshotEpoch,
+          });
+        } else {
+          this._gemini.setQueryExtras({});
+        }
       }
       const result = await provider.processQuery(
         query,
@@ -279,7 +436,8 @@ class AISidebarStore extends MailspringStore {
           startedGeneration,
           currentGeneration: this._queryGeneration,
           aborted: !!this._state.abortController?.signal.aborted,
-          allowLiveSynthetic: useGemini,
+          allowLiveSynthetic: useGeminiDemo,
+          allowLiveRealSelectedSingle: useGeminiReal,
           sourcesAreSynthetic,
         }
       );
@@ -334,6 +492,34 @@ class AISidebarStore extends MailspringStore {
   }
 
   /**
+   * Opt-in one-message summarize. Does not run on load or select. No auto-retry.
+   */
+  async summarizeSelectedMessage() {
+    if (!isRealSelectedSummaryMode() || isDemoMode()) {
+      return;
+    }
+    if (this._state.isProcessing) {
+      return;
+    }
+    await this.refreshScope();
+    const preview = this._state.realPreview;
+    if (!preview) {
+      this._state.error = 'Select exactly one message, then Summarize. Nothing was sent.';
+      this.trigger();
+      return;
+    }
+    if (!this._state.geminiStatus.configured) {
+      this._state.error = this._state.geminiStatus.reason;
+      this.trigger();
+      return;
+    }
+    await this.submitQuery(REAL_SELECTED_QUERY, {
+      allowRealSelected: true,
+      sentSnapshot: { messageId: preview.messageId, snapshotEpoch: preview.snapshotEpoch },
+    });
+  }
+
+  /**
    * Cancel ongoing operation. Increments generation so a late mock response
    * cannot attach after Cancel.
    */
@@ -348,6 +534,8 @@ class AISidebarStore extends MailspringStore {
     }
     this._state.isProcessing = false;
     this._state.abortController = null;
+    this._inFlightMessageId = null;
+    this._inFlightSnapshotEpoch = 0;
     this._state.progress = this._state.progress
       ? { ...this._state.progress, isCancelled: true, isComplete: false }
       : null;
@@ -386,6 +574,35 @@ class AISidebarStore extends MailspringStore {
         return true;
       }
       return false;
+    }
+    if (isRealSelectedSummaryMode()) {
+      const allowed =
+        this._state.realPreview?.messageId ||
+        this._inFlightMessageId ||
+        (this._state.resolvedScope?.messageIds?.length === 1
+          ? this._state.resolvedScope.messageIds[0]
+          : null);
+      if (!allowed || messageId !== allowed) {
+        this._state.error = REAL_SELECTED_SCOPE_REASON;
+        this.trigger();
+        return false;
+      }
+      const html = (await mailspringAdapter.getMessageBody(messageId)) || '';
+      const prepared = prepareRealSelectedBody(html, 0);
+      const preview = this._state.realPreview;
+      this._state.demoPreview = {
+        messageId,
+        threadId: preview?.threadId || '',
+        subject: preview?.subject || '(selected message)',
+        from: preview?.from || '',
+        date: preview?.date ? new Date(preview.date) : new Date(0),
+        snippet: preview?.snippet || '',
+        body: prepared.bodyText,
+        folderId: '',
+        folderName: 'Selected message (in-sidebar preview, not marked read)',
+      };
+      this.trigger();
+      return true;
     }
     return mailspringAdapter.navigateToMessage(messageId, true);
   }

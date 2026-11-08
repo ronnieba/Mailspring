@@ -17,6 +17,7 @@ import { GeminiFetch, resolveGeminiDemoStatus, runGeminiDemoQuery } from './gemi
 
 export interface GeminiDemoIpcOptions {
   isDemoMode: () => boolean;
+  isRealSelectedSummary?: () => boolean;
   env?: NodeJS.ProcessEnv;
   credentials?: { key: string; paidAcknowledged: boolean };
   fetch?: GeminiFetch;
@@ -37,7 +38,7 @@ function asMessages(raw: unknown): GeminiDemoMailRef[] {
     if (typeof m.id !== 'string') {
       continue;
     }
-    out.push({
+    const ref: GeminiDemoMailRef = {
       id: m.id,
       threadId: typeof m.threadId === 'string' ? m.threadId : '',
       accountId: typeof m.accountId === 'string' ? m.accountId : '',
@@ -45,7 +46,11 @@ function asMessages(raw: unknown): GeminiDemoMailRef[] {
       from: typeof m.from === 'string' ? m.from : '',
       date: (m.date as GeminiDemoMailRef['date']) || '',
       snippet: typeof m.snippet === 'string' ? m.snippet : '',
-    });
+    };
+    if (typeof m.bodyText === 'string') {
+      ref.bodyText = m.bodyText;
+    }
+    out.push(ref);
   }
   return out;
 }
@@ -56,7 +61,22 @@ function parseQuery(raw: unknown): GeminiDemoQueryInput {
     typeof r.generation === 'number' && Number.isFinite(r.generation) ? r.generation : 0;
   const query = typeof r.query === 'string' ? r.query : '';
   const timeoutMs = typeof r.timeoutMs === 'number' ? r.timeoutMs : undefined;
-  return { generation, query, messages: asMessages(r.messages), timeoutMs };
+  const mode =
+    r.mode === 'real-selected-single' || r.mode === 'demo-synthetic' ? r.mode : undefined;
+  const allowedMessageId = typeof r.allowedMessageId === 'string' ? r.allowedMessageId : undefined;
+  const snapshotEpoch =
+    typeof r.snapshotEpoch === 'number' && Number.isFinite(r.snapshotEpoch)
+      ? r.snapshotEpoch
+      : undefined;
+  return {
+    generation,
+    query,
+    messages: asMessages(r.messages),
+    timeoutMs,
+    mode,
+    allowedMessageId,
+    snapshotEpoch,
+  };
 }
 
 export function registerGeminiDemoIpcHandlers(ipcMain: IpcMain, opts: GeminiDemoIpcOptions) {
@@ -69,6 +89,7 @@ export function registerGeminiDemoIpcHandlers(ipcMain: IpcMain, opts: GeminiDemo
   handleFromMailspringWindows(ipcMain, GEMINI_IPC_STATUS, () => {
     return resolveGeminiDemoStatus({
       demoMode: opts.isDemoMode(),
+      realSelectedSummary: opts.isRealSelectedSummary ? opts.isRealSelectedSummary() : false,
       env: opts.env,
       credentials: opts.credentials,
     });
@@ -78,6 +99,7 @@ export function registerGeminiDemoIpcHandlers(ipcMain: IpcMain, opts: GeminiDemo
     const req = parseQuery(raw);
     return runGeminiDemoQuery(req, {
       demoMode: opts.isDemoMode(),
+      realSelectedSummary: opts.isRealSelectedSummary ? opts.isRealSelectedSummary() : false,
       env: opts.env,
       credentials: opts.credentials,
       fetch: fetchImpl,

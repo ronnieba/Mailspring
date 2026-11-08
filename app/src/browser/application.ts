@@ -111,6 +111,7 @@ export default class Application extends EventEmitter {
   _pendingLaunchOptions: any[] = [];
   _pendingUrls: string[] = [];
   demoMode: boolean;
+  realSelectedSummary: boolean;
   demoCapturePath: string | null;
 
   async start(options) {
@@ -122,6 +123,7 @@ export default class Application extends EventEmitter {
       specMode,
       safeMode,
       demoMode,
+      realSelectedSummary,
       demoCapturePath,
     } = options;
 
@@ -136,6 +138,7 @@ export default class Application extends EventEmitter {
     this.safeMode = safeMode;
     // Demo is developer-build only (parsed in main.js). Never on packaged production.
     this.demoMode = !!demoMode;
+    this.realSelectedSummary = !this.demoMode && !!realSelectedSummary;
     this.demoCapturePath = demoCapturePath || null;
 
     this.fileListCache = new FileListCache();
@@ -155,6 +158,16 @@ export default class Application extends EventEmitter {
           );
         }
       } else {
+        if (this.realSelectedSummary) {
+          console.log(
+            '[Real selected summary] Isolated Mailspring-dev. Official /Applications/Mailspring.app is unused. Do not copy production profile/Keychain. Yahoo in this profile is a separate login. One selected message is sent only after explicit Summarize.'
+          );
+          console.log(
+            formatGeminiDemoStatusLog(
+              resolveGeminiDemoStatus({ demoMode: false, realSelectedSummary: true })
+            )
+          );
+        }
         const mailsync = new MailsyncProcess(options);
         await mailsync.migrate();
       }
@@ -415,11 +428,22 @@ export default class Application extends EventEmitter {
       );
       this._scheduleDemoWindowCapture();
     } else if (hasAccount) {
-      this.windowManager.ensureWindow(WindowManager.MAIN_WINDOW, {}, behavior);
+      this.windowManager.ensureWindow(
+        WindowManager.MAIN_WINDOW,
+        this._mainWindowOptions(),
+        behavior
+      );
     } else {
       const title = localized('Welcome to Mailspring');
       this.windowManager.ensureWindow(WindowManager.ONBOARDING_WINDOW, { title }, behavior);
     }
+  }
+
+  _mainWindowOptions() {
+    if (this.realSelectedSummary) {
+      return { windowProps: { realSelectedSummary: true } };
+    }
+    return {};
   }
 
   /**
@@ -1079,7 +1103,7 @@ export default class Application extends EventEmitter {
     });
 
     onFromMailspringWindows(ipcMain, 'account-setup-successful', () => {
-      this.windowManager.ensureWindow(WindowManager.MAIN_WINDOW);
+      this.windowManager.ensureWindow(WindowManager.MAIN_WINDOW, this._mainWindowOptions());
       const mainWindow = this.windowManager.get(WindowManager.MAIN_WINDOW);
       const onboarding = this.windowManager.get(WindowManager.ONBOARDING_WINDOW);
       if (onboarding) {
@@ -1192,6 +1216,7 @@ export default class Application extends EventEmitter {
     });
     registerGeminiDemoIpcHandlers(ipcMain, {
       isDemoMode: () => this.demoMode,
+      isRealSelectedSummary: () => this.realSelectedSummary,
     });
   }
 

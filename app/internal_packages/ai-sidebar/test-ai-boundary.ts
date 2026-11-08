@@ -358,6 +358,92 @@ async function run() {
     assertEqual(fail.reason, 'stale-generation');
   });
 
+  await test('allowLiveRealSelectedSingle accepts one non-synthetic source', () => {
+    const out = validateProviderPayload(
+      {
+        isMock: false,
+        response: 'one message summary',
+        citations: [
+          {
+            messageId: 'test-real-msg-1',
+            threadId: 'test-real-thread-1',
+            subject: '[TEST] Invoice reminder',
+            from: 'vendor@example.test',
+            date: new Date('2026-01-01T00:00:00Z'),
+            snippet: 'please pay',
+          },
+        ],
+        tokensUsed: 4,
+      },
+      {
+        allowedSourceIds: new Set(['test-real-msg-1']),
+        startedGeneration: 1,
+        currentGeneration: 1,
+        aborted: false,
+        allowLiveRealSelectedSingle: true,
+        sourcesAreSynthetic: false,
+      }
+    );
+    const ok = requireOk(out);
+    assertEqual(ok.origin, 'live');
+    assertEqual(ok.result.isMock, false);
+    assertEqual(ok.result.citations.length, 1);
+    assertEqual(ok.result.citations[0].messageId, 'test-real-msg-1');
+  });
+
+  await test('allowLiveRealSelectedSingle rejects synthetic or multi source', () => {
+    const synthetic = validateProviderPayload(
+      {
+        isMock: false,
+        response: 'nope',
+        citations: [
+          {
+            messageId: 'demo-msg-1',
+            threadId: 'demo-thread-1',
+            subject: '🧪 [DEMO] test',
+            from: 'demo@synthetic.test',
+            date: new Date('2024-11-01T00:00:00Z'),
+            snippet: 'fixture',
+          },
+        ],
+      },
+      {
+        allowedSourceIds: new Set(['demo-msg-1']),
+        startedGeneration: 1,
+        currentGeneration: 1,
+        aborted: false,
+        allowLiveRealSelectedSingle: true,
+        sourcesAreSynthetic: true,
+      }
+    );
+    assertEqual(requireFailure(synthetic).reason, 'real-selected-scope');
+    const multi = validateProviderPayload(
+      {
+        isMock: false,
+        response: 'nope',
+        citations: [
+          {
+            messageId: 'test-real-msg-1',
+            threadId: 'test-real-thread-1',
+            subject: '[TEST] Invoice reminder',
+            from: 'vendor@example.test',
+            date: new Date('2026-01-01T00:00:00Z'),
+            snippet: 'please pay',
+          },
+        ],
+      },
+      {
+        allowedSourceIds: new Set(['test-real-msg-1', 'test-real-msg-2']),
+        startedGeneration: 1,
+        currentGeneration: 1,
+        aborted: false,
+        allowLiveRealSelectedSingle: true,
+        sourcesAreSynthetic: false,
+      }
+    );
+    assertEqual(requireFailure(multi).reason, 'real-selected-scope');
+  });
+
   await test('worker and store keep fail-closed source paths', () => {
     const store = fs.readFileSync(path.join(__dirname, 'lib/ai-sidebar-store.ts'), 'utf8');
     assertContains(store, 'validateProviderPayload');
@@ -373,7 +459,7 @@ async function run() {
 
   console.log('\n' + '='.repeat(40));
   console.log(`Results: ${passed} passed, ${failed} failed`);
-  console.log('UNRUN in this cloud agent — expected 17 until local Mac run.');
+  console.log('UNRUN in this cloud agent — expected 19 until local Mac run.');
   console.log('='.repeat(40) + '\n');
   if (failed > 0) process.exit(1);
 }

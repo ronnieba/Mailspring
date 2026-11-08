@@ -27,6 +27,9 @@ export interface GeminiDemoTransport {
     query: string;
     messages: MessageRef[];
     timeoutMs?: number;
+    mode?: 'demo-synthetic' | 'real-selected-single';
+    allowedMessageId?: string;
+    snapshotEpoch?: number;
   }): Promise<GeminiHostResult>;
   cancel(generation: number): Promise<{ aborted: boolean }>;
 }
@@ -36,6 +39,11 @@ export class GeminiDemoProvider implements AIProvider {
   readonly isMock = false;
   private _configured = false;
   private _generation = 0;
+  private _queryExtras: {
+    mode?: 'demo-synthetic' | 'real-selected-single';
+    allowedMessageId?: string;
+    snapshotEpoch?: number;
+  } = {};
 
   constructor(private readonly transport: GeminiDemoTransport) {}
 
@@ -56,6 +64,14 @@ export class GeminiDemoProvider implements AIProvider {
 
   setGeneration(generation: number) {
     this._generation = generation;
+  }
+
+  setQueryExtras(extras: {
+    mode?: 'demo-synthetic' | 'real-selected-single';
+    allowedMessageId?: string;
+    snapshotEpoch?: number;
+  }) {
+    this._queryExtras = extras;
   }
 
   async cancel(generation: number = this._generation): Promise<void> {
@@ -104,6 +120,7 @@ export class GeminiDemoProvider implements AIProvider {
         query,
         messages,
         timeoutMs: budget.timeoutMs,
+        ...this._queryExtras,
       });
       if (signal?.aborted) {
         throw new Error('Operation cancelled');

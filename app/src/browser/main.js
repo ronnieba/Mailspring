@@ -180,6 +180,12 @@ const declareOptions = argv => {
       'demo-delay-ms',
       'Demo+dev only: delay mock responses by N ms so Cancel can be inspected. Ignored without --demo. Capped at 30000. Not a debug or network endpoint.'
     );
+  options
+    .boolean('real-selected-summary')
+    .describe(
+      'real-selected-summary',
+      'Dev only, not --demo: opt-in one selected-message summary via native MessageStore. Uses Mailspring-dev, never the official app profile. Ignored on packaged production and when --demo is set.'
+    );
   return options;
 };
 
@@ -211,6 +217,7 @@ const parseCommandLine = argv => {
   // Demo is developer-build only. --demo implies isolated synthetic mode and
   // does not enable --dev by itself on a packaged release.
   const demoMode = developerBuild && !!args['demo'];
+  const realSelectedSummary = developerBuild && !!args['real-selected-summary'] && !demoMode;
   const demoCapturePath = demoMode && args['demo-capture'] ? args['demo-capture'] : null;
   let demoDelayMs = 0;
   if (demoMode && args['demo-delay-ms'] != null && args['demo-delay-ms'] !== '') {
@@ -260,8 +267,9 @@ const parseCommandLine = argv => {
 
   return {
     version,
-    devMode: devMode || demoMode,
+    devMode: devMode || demoMode || realSelectedSummary,
     demoMode,
+    realSelectedSummary,
     demoCapturePath,
     demoDelayMs,
     background,

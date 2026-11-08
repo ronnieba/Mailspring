@@ -19,6 +19,9 @@ const data = {
   setFocusCalled: false,
   lastFocus: null as any,
   demo: false,
+  realSelected: false,
+  threadMessages: [] as any[],
+  expansion: {} as Record<string, 'explicit' | 'default' | undefined>,
 };
 
 function reset() {
@@ -32,6 +35,9 @@ function reset() {
   data.setFocusCalled = false;
   data.lastFocus = null;
   data.demo = false;
+  data.realSelected = false;
+  data.threadMessages = [];
+  data.expansion = {};
 }
 
 function matches(row: any, cond: any): boolean {
@@ -118,6 +124,9 @@ const attr = {
 function fakeStores(): MailAdapterStores {
   return {
     isDemoMode: () => data.demo,
+    isRealSelectedSummaryMode: () => data.realSelected,
+    focusedThreadMessages: () => data.threadMessages,
+    messageExpansion: () => data.expansion,
     accountIds: () => data.accounts,
     currentPerspective: () => ({
       accountIds: data.accounts,
@@ -467,6 +476,98 @@ async function run() {
     for (const banned of ['send', 'delete', 'move', 'trash', 'archive', 'star']) {
       assertFalse(names.includes(banned), `must not implement ${banned}`);
     }
+  });
+
+  console.log('\nOpt-in real selected-single-message (fake ids only):');
+  await test('real-selected 1-message thread is exact id, not folder scrape', async () => {
+    reset();
+    data.realSelected = true;
+    data.accounts = ['acc-1'];
+    data.focusedThread = { id: 'test-real-thread-1', accountId: 'acc-1', subject: '[TEST]' };
+    data.threadMessages = [
+      {
+        id: 'test-real-msg-1',
+        threadId: 'test-real-thread-1',
+        accountId: 'acc-1',
+        draft: false,
+      },
+    ];
+    data.messages.set('test-real-msg-1', {
+      id: 'test-real-msg-1',
+      threadId: 'test-real-thread-1',
+      accountId: 'acc-1',
+      draft: false,
+      subject: '[TEST] Invoice reminder',
+      snippet: 'please pay',
+    });
+    data.messages.set('other-folder-msg', {
+      id: 'other-folder-msg',
+      threadId: 'other-thread',
+      accountId: 'acc-1',
+      draft: false,
+      subject: 'should not be in scope',
+    });
+    const scope = await adapter.resolveScope('selected-messages');
+    assertFalse(scope.isEmpty);
+    assertEqual(scope.messageIds?.length, 1);
+    assertEqual(scope.messageIds?.[0], 'test-real-msg-1');
+    const search = await adapter.searchMessages(scope, '', 'ranked', 100, 0);
+    assertEqual(search.messages.length, 1);
+    assertEqual(search.messages[0].id, 'test-real-msg-1');
+  });
+
+  await test('real-selected multi-thread is empty fail-closed', async () => {
+    reset();
+    data.realSelected = true;
+    data.accounts = ['acc-1'];
+    data.selectedThreads = [
+      { id: 't-a', accountId: 'acc-1' },
+      { id: 't-b', accountId: 'acc-1' },
+    ];
+    data.threadMessages = [{ id: 'test-real-msg-1', threadId: 't-a', draft: false }];
+    const scope = await adapter.resolveScope('selected-messages');
+    assertTrue(scope.isEmpty);
+    assertTrue((scope.description || '').includes('multi-thread'));
+  });
+
+  await test('real-selected two default-expanded messages is ambiguous', async () => {
+    reset();
+    data.realSelected = true;
+    data.accounts = ['acc-1'];
+    data.focusedThread = { id: 'test-real-thread-1', accountId: 'acc-1' };
+    data.threadMessages = [
+      { id: 'test-real-msg-1', threadId: 'test-real-thread-1', draft: false },
+      { id: 'test-real-msg-2', threadId: 'test-real-thread-1', draft: false },
+    ];
+    data.expansion = { 'test-real-msg-1': 'default', 'test-real-msg-2': 'default' };
+    const scope = await adapter.resolveScope('selected-messages');
+    assertTrue(scope.isEmpty);
+    assertTrue((scope.description || '').includes('ambiguous-thread'));
+  });
+
+  await test('real-selected navigate never setFocus (would mark read)', async () => {
+    reset();
+    data.realSelected = true;
+    data.messages.set('test-real-msg-1', {
+      id: 'test-real-msg-1',
+      threadId: 'test-real-thread-1',
+      accountId: 'acc-1',
+    });
+    data.threads.set('test-real-thread-1', { id: 'test-real-thread-1', accountId: 'acc-1' });
+    const preserved = await adapter.navigateToMessage('test-real-msg-1', true);
+    assertFalse(data.setFocusCalled);
+    assertFalse(preserved);
+  });
+
+  await test('real-selected folder/all-mail resolve empty', async () => {
+    reset();
+    data.realSelected = true;
+    data.accounts = ['acc-1'];
+    data.categories = [{ id: 'inbox-1', accountId: 'acc-1', displayName: 'Inbox', role: 'inbox' }];
+    const folder = await adapter.resolveScope('current-folder');
+    const all = await adapter.resolveScope('all-mail');
+    assertTrue(folder.isEmpty);
+    assertTrue(all.isEmpty);
   });
 
   console.log('\n' + '='.repeat(40));

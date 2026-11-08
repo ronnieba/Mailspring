@@ -9,6 +9,8 @@ import AISidebarStore from './ai-sidebar-store';
 import { ScopeMode, RetrievalMode, ConversationMessage, Citation } from './core/types';
 import { DemoMessagePreview, isDemoMode } from './synthetic-demo';
 import { GEMINI_DISPLAY_NAME, GeminiDemoStatus } from '../../../src/browser/gemini-demo-protocol';
+import { isRealSelectedSummaryMode } from '../../../src/real-selected-summary';
+import { RealSelectedPreview } from './core/real-selected-mail';
 import DemoComposer from './demo-composer';
 import classNames from 'classnames';
 
@@ -24,6 +26,7 @@ interface AISidebarState {
   providerName: string;
   isMockProvider: boolean;
   demoPreview: DemoMessagePreview | null;
+  realPreview: RealSelectedPreview | null;
   demoTab: 'ai' | 'composer';
   geminiStatus: GeminiDemoStatus | null;
 }
@@ -34,6 +37,8 @@ class AISidebarInner extends React.Component<Record<string, never>, AISidebarSta
   private _inputRef = React.createRef<HTMLTextAreaElement>();
   private _messagesEndRef = React.createRef<HTMLDivElement>();
   private _unsubscribe: (() => void) | null = null;
+  private _unsubFocus: (() => void) | null = null;
+  private _unsubMsg: (() => void) | null = null;
 
   state: AISidebarState = {
     scopeMode: isDemoMode() ? 'all-mail' : 'selected-messages',
@@ -47,6 +52,7 @@ class AISidebarInner extends React.Component<Record<string, never>, AISidebarSta
     providerName: AISidebarStore.getProvider().name,
     isMockProvider: AISidebarStore.getProvider().isMock,
     demoPreview: null,
+    realPreview: AISidebarStore.getState().realPreview,
     demoTab: 'ai',
     geminiStatus: AISidebarStore.getState().geminiStatus,
   };
@@ -66,12 +72,26 @@ class AISidebarInner extends React.Component<Record<string, never>, AISidebarSta
         providerName: storeState.geminiStatus.configured ? GEMINI_DISPLAY_NAME : provider.name,
         isMockProvider: storeState.geminiStatus.configured ? false : provider.isMock,
         demoPreview: storeState.demoPreview,
+        realPreview: storeState.realPreview,
         geminiStatus: storeState.geminiStatus,
       });
     });
 
-    // Initial scope resolution
+    // Initial scope resolution — preview only, never generates.
     AISidebarStore.refreshScope();
+
+    if (isRealSelectedSummaryMode()) {
+      try {
+        const { FocusedContentStore, MessageStore } = require('mailspring-exports');
+        const refresh = () => {
+          void AISidebarStore.refreshScope();
+        };
+        this._unsubFocus = FocusedContentStore.listen(refresh);
+        this._unsubMsg = MessageStore.listen(refresh);
+      } catch {
+        // Node tests / no Flux
+      }
+    }
 
     if (isDemoMode()) {
       (window as any).__mailspringDemoSidebar = {
@@ -92,6 +112,12 @@ class AISidebarInner extends React.Component<Record<string, never>, AISidebarSta
   componentWillUnmount() {
     if (this._unsubscribe) {
       this._unsubscribe();
+    }
+    if (this._unsubFocus) {
+      this._unsubFocus();
+    }
+    if (this._unsubMsg) {
+      this._unsubMsg();
     }
     if ((window as any).__mailspringDemoSidebar) {
       delete (window as any).__mailspringDemoSidebar;
@@ -122,11 +148,19 @@ class AISidebarInner extends React.Component<Record<string, never>, AISidebarSta
   };
 
   _onSubmit = () => {
+    if (isRealSelectedSummaryMode()) {
+      return;
+    }
     const query = this.state.inputValue.trim();
     if (!query || this.state.isProcessing) return;
 
     this.setState({ inputValue: '' });
     AISidebarStore.submitQuery(query);
+  };
+
+  _onSummarizeSelected = () => {
+    if (this.state.isProcessing) return;
+    void AISidebarStore.summarizeSelectedMessage();
   };
 
   _onCancel = () => {
@@ -143,6 +177,7 @@ class AISidebarInner extends React.Component<Record<string, never>, AISidebarSta
 
   _renderMockWarning() {
     const inDemoMode = isDemoMode();
+    const realSelected = isRealSelectedSummaryMode();
     const geminiConfigured = !!this.state.geminiStatus?.configured;
     const geminiStatus = geminiConfigured ? 'configured' : 'unconfigured';
 
@@ -165,6 +200,21 @@ class AISidebarInner extends React.Component<Record<string, never>, AISidebarSta
               <br />
               <small>MOCK AI · synthetic fixtures · no account · no Keychain</small>
             </>
+          ) : realSelected && geminiConfigured ? (
+            <>
+              הודעה אחת נבחרת — Gemini Developer API
+              <br />
+              <small>
+                Opt-in one selected message · Mailspring-dev · not the official app · no mailbox
+                mutation
+              </small>
+            </>
+          ) : realSelected ? (
+            <>
+              הודעה אחת נבחרת — מפתח Gemini לא מוכן
+              <br />
+              <small>Select one message, then Summarize. Nothing is sent on load.</small>
+            </>
           ) : this.state.isMockProvider ? (
             <>
               מצב Mock - אין חיבור ל-AI
@@ -178,6 +228,13 @@ class AISidebarInner extends React.Component<Record<string, never>, AISidebarSta
   }
 
   _renderScopeSelector() {
+    if (isRealSelectedSummaryMode()) {
+      return (
+        <div className="ai-sidebar-scope" data-real-selected-scope="true">
+          <span className="scope-label">טווח: הודעה אחת נבחרת בלבד</span>
+        </div>
+      );
+    }
     const { scopeMode, resolvedScope } = this.state;
 
     return (
@@ -312,8 +369,8 @@ class AISidebarInner extends React.Component<Record<string, never>, AISidebarSta
                 key={`${citation.messageId}-${i}`}
                 className="citation-btn"
                 onClick={() => this._onCitationClick(citation)}
-                title={`DEMO ${citation.messageId}\nמ: ${citation.from}\n${citation.snippet}`}
-                aria-label={`מקור DEMO ${citation.messageId}: ${citation.subject}`}
+                title={`${isRealSelectedSummaryMode() ? 'Selected' : 'DEMO'} ${citation.messageId}\nמ: ${citation.from}\n${citation.snippet}`}
+                aria-label={`${isRealSelectedSummaryMode() ? 'מקור' : 'מקור DEMO'} ${citation.messageId}: ${citation.subject}`}
                 data-message-id={citation.messageId}
               >
                 <span className="citation-index">[{i + 1}]</span>
@@ -329,7 +386,9 @@ class AISidebarInner extends React.Component<Record<string, never>, AISidebarSta
         {msg.isMock && <div className="mock-indicator">🔧 Mock Response</div>}
         {msg.role === 'assistant' && msg.isMock === false && (
           <div className="live-indicator">
-            Gemini Developer API · DEMO synthetic · paid project required
+            {isRealSelectedSummaryMode()
+              ? 'Gemini Developer API · one selected message · paid project required'
+              : 'Gemini Developer API · DEMO synthetic · paid project required'}
           </div>
         )}
       </div>
@@ -369,18 +428,64 @@ class AISidebarInner extends React.Component<Record<string, never>, AISidebarSta
     );
   }
 
+  _renderRealSelectionPreview() {
+    const preview = this.state.realPreview;
+    if (!isRealSelectedSummaryMode()) return null;
+    if (!preview) {
+      return (
+        <div className="ai-sidebar-real-preview" data-real-selected-empty="true">
+          <p>בחר הודעה אחת בשרשור. סיכום נשלח רק אחרי לחיצה על Summarize.</p>
+          <p>
+            Select exactly one message. Nothing is sent until you click Summarize. Attachments and
+            other mail stay local.
+          </p>
+        </div>
+      );
+    }
+    return (
+      <div
+        className="ai-sidebar-real-preview"
+        role="region"
+        aria-label="Selected message disclosure"
+        data-real-selected-id={preview.messageId}
+        data-real-selected-epoch={String(preview.snapshotEpoch)}
+      >
+        <div className="demo-preview-banner">הודעה נבחרת — תישלח ל-Gemini רק אחרי Summarize</div>
+        <dl className="demo-preview-meta">
+          <dt>מזהה</dt>
+          <dd>{preview.messageId}</dd>
+          <dt>נושא</dt>
+          <dd>{preview.subject}</dd>
+          <dt>מאת</dt>
+          <dd>{preview.from}</dd>
+          <dt>תאריך</dt>
+          <dd>{preview.date}</dd>
+        </dl>
+        <pre className="demo-preview-body" data-preview-wrap="true">
+          {preview.bodyPreview}
+        </pre>
+        <p className="real-disclosure">{preview.disclosure}</p>
+      </div>
+    );
+  }
+
   _renderDemoPreview() {
     const preview = this.state.demoPreview;
     if (!preview) return null;
+    const realSelected = isRealSelectedSummaryMode();
 
     return (
       <div
         className="ai-sidebar-demo-preview"
         role="region"
-        aria-label="DEMO source preview"
+        aria-label={realSelected ? 'Selected message preview' : 'DEMO source preview'}
         data-demo-preview={preview.messageId}
       >
-        <div className="demo-preview-banner">🧪 DEMO מקור סינתטי — לא תיבת דואר אמיתית</div>
+        <div className="demo-preview-banner">
+          {realSelected
+            ? 'תצוגת אותה הודעה נבחרת — לא סומן כנקרא'
+            : '🧪 DEMO מקור סינתטי — לא תיבת דואר אמיתית'}
+        </div>
         <dl className="demo-preview-meta">
           <dt>מזהה</dt>
           <dd>{preview.messageId}</dd>
@@ -406,6 +511,28 @@ class AISidebarInner extends React.Component<Record<string, never>, AISidebarSta
   }
 
   _renderInput() {
+    if (isRealSelectedSummaryMode()) {
+      const { isProcessing, realPreview, geminiStatus } = this.state;
+      const ready = !!realPreview && !!geminiStatus?.configured;
+      return (
+        <div className="ai-sidebar-input" data-real-selected-actions="true">
+          <button
+            className="submit-btn"
+            onClick={this._onSummarizeSelected}
+            disabled={isProcessing || !ready}
+            aria-label="Summarize selected message"
+            data-real-selected-summarize="true"
+          >
+            Summarize
+          </button>
+          {this.state.conversation.length > 0 && (
+            <button className="clear-btn" onClick={this._onClear} aria-label="נקה">
+              נקה
+            </button>
+          )}
+        </div>
+      );
+    }
     const { isProcessing, resolvedScope } = this.state;
     const isDisabled = isProcessing || (resolvedScope && resolvedScope.isEmpty);
 
@@ -451,9 +578,15 @@ class AISidebarInner extends React.Component<Record<string, never>, AISidebarSta
 
   render() {
     const demo = isDemoMode();
+    const realSelected = isRealSelectedSummaryMode();
     const composerTab = demo && this.state.demoTab === 'composer';
     return (
-      <div className="ai-sidebar" dir="rtl" data-demo-ready={demo ? 'true' : undefined}>
+      <div
+        className="ai-sidebar"
+        dir="rtl"
+        data-demo-ready={demo ? 'true' : undefined}
+        data-real-selected-summary={realSelected ? 'true' : undefined}
+      >
         <div className="ai-sidebar-header">
           <h2>🤖 עוזר AI</h2>
           <span className="provider-badge">{this.state.providerName}</span>
@@ -493,6 +626,7 @@ class AISidebarInner extends React.Component<Record<string, never>, AISidebarSta
         ) : (
           <>
             <div className="ai-sidebar-body" data-ai-scrollport="true">
+              {this._renderRealSelectionPreview()}
               {this._renderDemoPreview()}
               {this._renderConversation()}
               {this._renderProgress()}

@@ -9,8 +9,11 @@ The signed `/Applications/Mailspring.app` cannot load this prototype. Use a sour
 | Production | `/Applications/Mailspring.app` | `Mailspring` | `~/Library/Application Support/Mailspring/` | `Mailspring Safe Storage` | `Mailspring/Crashpad` |
 | Dev | `npm start` | `Mailspring-dev` | `.../Mailspring-dev/` | `Mailspring-dev Safe Storage` | `Mailspring-dev/Crashpad` |
 | **Demo (required for sidebar without account)** | `npm run start:demo` | `Mailspring-demo` | `.../Mailspring-demo/` | mock keychain (no prompt) | `Mailspring-demo/Crashpad` |
+| **Opt-in one selected message** | `sh scripts/start-real-selected-summary.sh` | `Mailspring-dev` | `.../Mailspring-dev/` | `Mailspring-dev Safe Storage` + existing DEMO Gemini Keychain item | `Mailspring-dev/Crashpad` |
 
 `--demo` skips onboarding, mailsync, KeyManager/safeStorage, protocol registration, and single-instance lock. It does **not** read the production profile or Yahoo credentials.
+
+`--dev --real-selected-summary` is **not** `--demo`. It keeps mailsync and uses the isolated Mailspring-dev profile (same as `npm start`). It cannot see Yahoo mail that only exists in official `/Applications/Mailspring.app`. Do not copy production userData, Keychain, or account configs. Do not install over the official app. The official app does not load this extension.
 
 Electron `--use-mock-keychain` covers **Mailspring-demo Safe Storage** only. The DEMO Gemini API key is a **separate** login-Keychain item: service `Mailspring-demo Gemini Developer API`, account `gemini-demo-api-key`, via `app/native/gemini-demo-keychain` (Security.framework). It is not KeyManager/safeStorage.
 
@@ -38,6 +41,7 @@ npx ts-node --project app/tsconfig.json app/internal_packages/ai-sidebar/test-de
 npx ts-node --project app/tsconfig.json app/internal_packages/ai-sidebar/test-demo-query.ts
 npx ts-node --project app/tsconfig.json app/internal_packages/ai-sidebar/test-ai-boundary.ts
 npx ts-node --project app/tsconfig.json app/internal_packages/ai-sidebar/test-gemini-demo.ts
+npx ts-node --project app/tsconfig.json app/internal_packages/ai-sidebar/test-real-selected-summary.ts
 npx ts-node --project app/tsconfig.json app/internal_packages/ai-sidebar/test-demo-cli.ts
 npx ts-node --project app/tsconfig.json app/internal_packages/ai-sidebar/test-composer-direction.ts
 npx ts-node --project app/tsconfig.json app/internal_packages/ai-sidebar/test-composer-spell.ts
@@ -218,16 +222,17 @@ Parent runs these on Mac from repo root (and once from another cwd with `--prefi
 |------|----------|
 | `test-core.ts` | 21 |
 | `test-adapter.ts` | 21 |
-| `test-real-adapter.ts` | 18 |
-| `test-isolation.ts` | 10 |
+| `test-real-adapter.ts` | **23** |
+| `test-isolation.ts` | **12** |
 | `test-integration.ts` | 18 |
 | `test-mail-database.ts` | 21 |
 | `test-demo-sidebar.ts` | **23** |
 | `test-demo-query.ts` | **20** |
-| `test-ai-boundary.ts` | **17** |
+| `test-ai-boundary.ts` | **19** |
 | `test-gemini-demo.ts` | **41** (mocked transport + KEY_FILE + Keychain helper + dummy non-overwrite contract) |
-| `test-demo-cli.ts` | 12 |
-| **prior portable subtotal** | **222** |
+| `test-real-selected-summary.ts` | **17** (fake ids only; no live mail/keys) |
+| `test-demo-cli.ts` | **14** |
+| **prior portable subtotal** | **250** |
 | `test-composer-direction.ts` | 14 |
 | `test-composer-spell.ts` | 21 |
 | `test-demo-composer.ts` | 13 |
@@ -235,15 +240,17 @@ Parent runs these on Mac from repo root (and once from another cwd with `--prefi
 | `test-nspell-engine.ts` | **13** (requires sidecar install) |
 | **portable total after sidecar** | **283** |
 
-Without sidecar install: prior **270** + alt-cwd **48** still apply. After `install.sh`: **283** portable (270+13). Composer+engine alt-cwd remains **61** (48+13) unless `test-ai-boundary.ts` / `test-gemini-demo.ts` are included (**+17 / +41**). Do not run these in cloud CI. Preserve 34a90265 layout/AI/isolation. Do not rewrite `app/package-lock.json`.
+Without sidecar install: prior **298** + alt-cwd **48** still apply. After `install.sh`: **311** portable (298+13). Composer+engine alt-cwd remains **61** (48+13) unless `test-ai-boundary.ts` / `test-gemini-demo.ts` / `test-real-selected-summary.ts` are included. Do not run these in cloud CI. Preserve 34a90265 layout/AI/isolation. Do not rewrite `app/package-lock.json`.
 
 **This SHA targeted Mac commands (do not claim f89b4e4b 221+61 / 81 UI):**
 
 ```bash
 npx ts-node --project app/tsconfig.json app/internal_packages/ai-sidebar/test-ai-boundary.ts
-# expected 17 passed, natural exit
+# expected 19 passed, natural exit
 npx ts-node --project app/tsconfig.json app/internal_packages/ai-sidebar/test-gemini-demo.ts
 # expected 41 passed (mocked transport + KEY_FILE + Keychain helper + dummy non-overwrite contract; no live Gemini)
+npx ts-node --project app/tsconfig.json app/internal_packages/ai-sidebar/test-real-selected-summary.ts
+# expected 17 passed (fake test-real-msg-1 only; no live Yahoo / no paid call)
 npx ts-node --project app/tsconfig.json app/internal_packages/ai-sidebar/test-demo-query.ts
 # expected 20 passed (exhaustive 2/5/6 + first-selected vs all-selected)
 npx ts-node --project app/tsconfig.json app/internal_packages/ai-sidebar/test-demo-sidebar.ts
@@ -441,3 +448,29 @@ Never place the key on process argv. This SHA does **not** authorize a paid call
 dbagent / Hunspell / mailsync / localAI spawn sanitization remains **UNRUN** natively (JS `sanitizeSpawnEnv` still applied). Not packaging, not real mail.
 
 Remaining gates before live execution: this native main+launcher+child boolean check passing, paid project + key, Cloud Billing linked (not inferable from the key), prepaid amount, auto-reload off, budget/cap accepted with overshoot risk, official data-use terms accepted, then a separate approval to admit real mail. No live Gemini / billing calls on this SHA.
+
+## Opt-in one selected Yahoo message (Mailspring-dev only)
+
+User approval covers **one selected message** the user picks, sent only after **Summarize**. It is not broad mailbox access and not a profile migration.
+
+**Safe launch (parent Mac; leave the currently running DEMO window alone until closure coordination):**
+
+```bash
+# From the source checkout. Never --user-data-dir at production Mailspring/.
+# Never copy official profile/Keychain/account configs.
+unset MAILSPRING_DEMO_GEMINI_API_KEY MAILSPRING_DEMO_GEMINI_PAID MAILSPRING_DEMO_GEMINI_KEY_FILE
+sh scripts/start-real-selected-summary.sh
+```
+
+Consequential remaining user step if `~/Library/Application Support/Mailspring-dev/` has no account: onboarding asks for a **separate** Yahoo login into Mailspring-dev. That is a new OAuth + local cache, not a copy of the official app. If Mailspring-dev already has a Yahoo from a prior `npm start`, use that. Do not log in from this cloud agent.
+
+**Staged native validation (parent only; no cloud mail/keys):**
+
+1. Confirm `/Applications/Mailspring.app` is still the official build and still running its own profile. This source Electron must show app name / userData **Mailspring-dev**.
+2. Confirm `--demo` is **not** on the argv. Synthetic DEMO remains the default via `start-demo-gemini.sh`.
+3. Pick **exactly one** message (one-message thread, or expand exactly one message in a thread). Preview identity + disclosure must appear **before** Summarize. Load/select must not generate.
+4. Click **Summarize** once. No automatic retry. Host must reject multi-select, folder/all-mail, and a changed selection.
+5. Citations open an in-sidebar preview of **that same message**. Unread state must not change; the AI feature must not send/delete/move.
+6. Do not paste message content, credentials, or Keychain values into chat/logs.
+
+Known limits: quoted neighboring HTML is stripped (disclosed); attachments are not sent (count disclosed); body truncated at 8000 characters; `--demo` cannot see Yahoo (`skipMailsync`); official app does not load this extension.

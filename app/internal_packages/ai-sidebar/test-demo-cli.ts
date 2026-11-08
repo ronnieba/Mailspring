@@ -149,6 +149,28 @@ function run() {
     assertEqual(paths.userData, '/Users/d623300/Library/Application Support/Mailspring');
   });
 
+  test('--real-selected-summary developer build uses Mailspring-dev not production', () => {
+    const argv = ['electron', './app', '--enable-logging', '--dev', '--real-selected-summary'];
+    const flags = startupFlagsFromArgv(argv);
+    assertTrue(flags.realSelectedSummary);
+    assertFalse(flags.demoMode);
+    const id = identityFromArgv(argv, { developerBuild: true });
+    assertEqual(id.appName, 'Mailspring-dev');
+    assertFalse(id.skipMailsync);
+    const paths = isolatedPaths('/Users/d623300/Library/Application Support', id);
+    assertEqual(paths.userData, '/Users/d623300/Library/Application Support/Mailspring-dev');
+    assertFalse(paths.userData.endsWith(`${path.sep}Mailspring`));
+    assertContains(mainJs, "boolean('real-selected-summary')");
+    assertContains(mainJs, 'realSelectedSummary');
+  });
+
+  test('--demo --real-selected-summary stays Mailspring-demo', () => {
+    const argv = ['electron', './app', '--dev', '--demo', '--real-selected-summary'];
+    const id = identityFromArgv(argv, { developerBuild: true });
+    assertEqual(id.appName, 'Mailspring-demo');
+    assertTrue(id.skipMailsync);
+  });
+
   test('plain production argv uses Mailspring paths', () => {
     const id = identityFromArgv(['/Applications/Mailspring.app/Contents/MacOS/Mailspring'], {
       developerBuild: false,

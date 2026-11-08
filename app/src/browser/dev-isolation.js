@@ -31,12 +31,18 @@ function startupFlagsFromArgv(argv) {
   }
 
   const demoMode = list.some(arg => arg === '--demo' || arg.startsWith('--demo='));
+  const realSelectedSummary = list.some(
+    arg => arg === '--real-selected-summary' || arg.startsWith('--real-selected-summary=')
+  );
   const specMode = hasShort('t', 'test');
   const explicitDev = hasShort('d', 'dev');
   return {
     demoMode,
+    realSelectedSummary,
     specMode,
-    devMode: explicitDev || demoMode || specMode,
+    // Force Mailspring-dev isolation even if `--dev` was omitted with the flag.
+    // Never treat this as production Mailspring / official app profile.
+    devMode: explicitDev || demoMode || specMode || realSelectedSummary,
     configDirPath,
   };
 }
@@ -49,7 +55,10 @@ function identityFromArgv(argv, { developerBuild = false } = {}) {
   const flags = startupFlagsFromArgv(argv);
   const demoMode = !!developerBuild && flags.demoMode;
   const specMode = !!developerBuild && flags.specMode;
-  const devMode = !!developerBuild && (flags.devMode || specMode || demoMode);
+  // --demo wins: synthetic Mailspring-demo, not a mailbox profile.
+  const realSelectedSummary = !!developerBuild && flags.realSelectedSummary && !demoMode;
+  const devMode =
+    !!developerBuild && (flags.devMode || specMode || demoMode || realSelectedSummary);
   return isolationIdentity({ devMode, specMode, demoMode });
 }
 

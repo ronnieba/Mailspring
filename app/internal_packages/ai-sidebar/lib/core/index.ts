@@ -15,6 +15,14 @@ export {
   validateProviderPayload,
 } from './ai-boundary';
 export { GeminiDemoProvider } from './gemini-demo-provider';
+export {
+  formatRealSelectedDisclosure,
+  htmlToPlainText,
+  isStaleRealSelectedSnapshot,
+  prepareRealSelectedBody,
+  REAL_SELECTED_QUERY,
+  resolveExactSelectedMessage,
+} from './real-selected-mail';
 export { MOCK_AI_WORKER_PATH, mockAiSpawnPlan, runMockAiSubprocess } from './mock-ai-subprocess';
 export {
   filterMessagesByQuery,

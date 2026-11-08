@@ -14,6 +14,7 @@ import {
   GEMINI_DEMO_MODEL,
   GEMINI_DEMO_PAID_ENV,
   GEMINI_DISPLAY_NAME,
+  GEMINI_REAL_SELECTED_SYSTEM_INSTRUCTION,
   GEMINI_RESPONSE_FORMAT,
   GEMINI_SYSTEM_INSTRUCTION,
   GeminiDemoMailRef,
@@ -22,8 +23,10 @@ import {
   GeminiHostFailure,
   GeminiHostResult,
   NON_SYNTHETIC_SOURCE_REASON,
+  REAL_SELECTED_SCOPE_REASON,
   areSyntheticDemoMailRefs,
   isAllowedGeminiEndpoint,
+  isSyntheticDemoMailRef,
   unconfiguredGeminiStatus,
 } from './gemini-demo-protocol';
 import { getCapturedGeminiDemoCredentials } from './gemini-demo-secret';
@@ -42,6 +45,7 @@ export type GeminiFetch = (
 
 export interface GeminiDemoHostDeps {
   demoMode: boolean;
+  realSelectedSummary?: boolean;
   env?: NodeJS.ProcessEnv;
   credentials?: { key: string; paidAcknowledged: boolean };
   fetch?: GeminiFetch;
@@ -87,13 +91,17 @@ export function redactSecret(text: string, secret: string): string {
 
 export function resolveGeminiDemoStatus(opts: {
   demoMode: boolean;
+  realSelectedSummary?: boolean;
   env?: NodeJS.ProcessEnv;
   credentials?: { key: string; paidAcknowledged: boolean };
 }): GeminiDemoStatus {
   const { key, paidAcknowledged } = credentialsOf(opts);
   const keyPresent = key.length > 0;
+  // --demo always wins so the synthetic default cannot become a mailbox path.
+  const demoMode = !!opts.demoMode;
+  const realSelectedSummary = !demoMode && !!opts.realSelectedSummary;
 
-  if (!opts.demoMode) {
+  if (!demoMode && !realSelectedSummary) {
     return unconfiguredGeminiStatus(false, 'Gemini DEMO host is --demo only', {
       keyPresent,
       paidAcknowledged,
@@ -101,23 +109,25 @@ export function resolveGeminiDemoStatus(opts: {
   }
   if (!keyPresent) {
     return unconfiguredGeminiStatus(
-      true,
+      demoMode,
       `Missing ${GEMINI_DEMO_KEY_ENV}. Official paid Gemini Developer API key required (not a consumer Gemini subscription).`,
-      { keyPresent, paidAcknowledged }
+      { keyPresent, paidAcknowledged, realSelectedSummary }
     );
   }
   if (!paidAcknowledged) {
     return unconfiguredGeminiStatus(
-      true,
+      demoMode,
       `Missing ${GEMINI_DEMO_PAID_ENV}=1. Explicit paid-project ack required. A key string does not prove Cloud Billing.`,
-      { keyPresent, paidAcknowledged }
+      { keyPresent, paidAcknowledged, realSelectedSummary }
     );
   }
   return {
     configured: true,
-    reason:
-      'Key and paid-project ack present. Billing is not inferred from the key or model id; live calls stay blocked until parent settles prepaid/budget.',
-    demoMode: true,
+    reason: demoMode
+      ? 'Key and paid-project ack present. Billing is not inferred from the key or model id; live calls stay blocked until parent settles prepaid/budget.'
+      : 'Key and paid-project ack present for opt-in one-selected-message summary. Billing is not inferred from the key or model id.',
+    demoMode,
+    realSelectedSummary,
     keyPresent: true,
     paidAcknowledged: true,
     billingProven: false,
@@ -295,14 +305,51 @@ function readTokens(body: Record<string, unknown>): number {
   return input + output;
 }
 
-export function buildUntrustedGeminiInput(query: string, messages: GeminiDemoMailRef[]): string {
+export function buildUntrustedGeminiInput(
+  query: string,
+  messages: GeminiDemoMailRef[],
+  opts?: { includeBody?: boolean }
+): string {
+  const includeBody = opts?.includeBody === true;
   const serialized = messages
-    .map(
-      (m) =>
-        `id=${m.id}\nfrom=${m.from}\nsubject=${m.subject}\ndate=${String(m.date)}\nsnippet=${m.snippet}`
-    )
+    .map((m) => {
+      const lines = [
+        `id=${m.id}`,
+        `from=${m.from}`,
+        `subject=${m.subject}`,
+        `date=${String(m.date)}`,
+        `snippet=${m.snippet}`,
+      ];
+      if (includeBody && typeof m.bodyText === 'string') {
+        lines.push(`body=${m.bodyText}`);
+      }
+      return lines.join('\n');
+    })
     .join('\n---\n');
   return `<<<QUERY>>>\n${query}\n<<<END_QUERY>>>\n<<<MESSAGES>>>\n${serialized}\n<<<END_MESSAGES>>>`;
+}
+
+function admitRealSelectedQuery(req: GeminiDemoQueryInput): GeminiHostFailure | null {
+  if (req.mode !== 'real-selected-single') {
+    return fail('real-selected-scope', REAL_SELECTED_SCOPE_REASON);
+  }
+  if (!Array.isArray(req.messages) || req.messages.length !== 1) {
+    return fail('real-selected-scope', REAL_SELECTED_SCOPE_REASON);
+  }
+  const message = req.messages[0];
+  if (typeof req.allowedMessageId !== 'string' || req.allowedMessageId !== message.id) {
+    return fail('real-selected-scope', REAL_SELECTED_SCOPE_REASON);
+  }
+  if (typeof req.snapshotEpoch !== 'number' || !Number.isFinite(req.snapshotEpoch)) {
+    return fail('stale-selection', REAL_SELECTED_SCOPE_REASON);
+  }
+  if (isSyntheticDemoMailRef(message)) {
+    return fail('real-selected-scope', REAL_SELECTED_SCOPE_REASON);
+  }
+  if (typeof message.bodyText !== 'string' || !message.bodyText.trim()) {
+    return fail('real-selected-scope', REAL_SELECTED_SCOPE_REASON);
+  }
+  return null;
 }
 
 function combineAbort(controllers: AbortSignal[]): AbortSignal {
@@ -325,14 +372,22 @@ export async function runGeminiDemoQuery(
   deps: GeminiDemoHostDeps
 ): Promise<GeminiHostResult> {
   const { key, paidAcknowledged } = credentialsOf(deps);
+  const demoMode = !!deps.demoMode;
+  const realSelectedSummary = !demoMode && !!deps.realSelectedSummary;
   const status = resolveGeminiDemoStatus({
-    demoMode: deps.demoMode,
+    demoMode,
+    realSelectedSummary,
     credentials: { key, paidAcknowledged },
   });
   if (!status.configured) {
     return fail('unconfigured', status.reason);
   }
-  if (!Array.isArray(req.messages) || !areSyntheticDemoMailRefs(req.messages)) {
+  if (realSelectedSummary) {
+    const scoped = admitRealSelectedQuery(req);
+    if (scoped) {
+      return scoped;
+    }
+  } else if (!Array.isArray(req.messages) || !areSyntheticDemoMailRefs(req.messages)) {
     return fail('non-synthetic-source', NON_SYNTHETIC_SOURCE_REASON);
   }
   if (typeof req.query !== 'string' || !req.query.trim()) {
@@ -375,8 +430,12 @@ export async function runGeminiDemoQuery(
 
     const body = JSON.stringify({
       model: GEMINI_DEMO_MODEL,
-      system_instruction: GEMINI_SYSTEM_INSTRUCTION,
-      input: buildUntrustedGeminiInput(req.query, req.messages),
+      system_instruction: realSelectedSummary
+        ? GEMINI_REAL_SELECTED_SYSTEM_INSTRUCTION
+        : GEMINI_SYSTEM_INSTRUCTION,
+      input: buildUntrustedGeminiInput(req.query, req.messages, {
+        includeBody: realSelectedSummary,
+      }),
       response_format: GEMINI_RESPONSE_FORMAT,
     });
 
