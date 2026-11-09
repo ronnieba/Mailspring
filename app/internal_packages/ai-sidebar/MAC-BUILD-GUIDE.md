@@ -237,17 +237,17 @@ Parent runs these on Mac from repo root (and once from another cwd with `--prefi
 | `test-gemini-demo.ts` | **41** (mocked transport + KEY_FILE + Keychain helper + dummy non-overwrite contract) |
 | `test-real-selected-summary.ts` | **17** (fake ids only; no live mail/keys) |
 | `test-offline-archive.ts` | **19** (fixtures + IMAP plan; no Yahoo / no paid call) |
-| `test-offline-snapshot.ts` | **12** (fake IMAP only; no Yahoo / no credentials / no paid call) |
+| `test-offline-snapshot.ts` | **22** (fake IMAP only; retry/hash/verify/keychain; no Yahoo / no credentials / no paid call) |
 | `test-demo-cli.ts` | **16** |
-| **prior portable subtotal** | **288** |
+| **prior portable subtotal** | **298** |
 | `test-composer-direction.ts` | 14 |
 | `test-composer-spell.ts` | 21 |
 | `test-demo-composer.ts` | 13 |
 | **composer subtotal (no sidecar)** | **48** |
 | `test-nspell-engine.ts` | **13** (requires sidecar install) |
-| **portable total after sidecar** | **349** |
+| **portable total after sidecar** | **359** |
 
-Without sidecar install: prior **336** (288+48) + alt-cwd composer **48** still apply. After `install.sh`: **349** portable (336+13). Composer+engine alt-cwd remains **61** (48+13) unless `test-ai-boundary.ts` / `test-gemini-demo.ts` / `test-real-selected-summary.ts` / `test-offline-archive.ts` / `test-offline-snapshot.ts` are included. Do not run these in cloud CI. Preserve 34a90265 layout/AI/isolation. Do not rewrite `app/package-lock.json`.
+Without sidecar install: prior **346** (298+48) + alt-cwd composer **48** still apply. After `install.sh`: **359** portable (346+13). Composer+engine alt-cwd remains **61** (48+13) unless `test-ai-boundary.ts` / `test-gemini-demo.ts` / `test-real-selected-summary.ts` / `test-offline-archive.ts` / `test-offline-snapshot.ts` are included. Do not run these in cloud CI. Preserve 34a90265 layout/AI/isolation. Do not rewrite `app/package-lock.json`.
 
 **This SHA targeted Mac commands (do not claim f89b4e4b 221+61 / 81 UI):**
 
@@ -261,7 +261,7 @@ npx ts-node --project app/tsconfig.json app/internal_packages/ai-sidebar/test-re
 npx ts-node --project app/tsconfig.json app/internal_packages/ai-sidebar/test-offline-archive.ts
 # expected 19 passed (local fixtures + IMAP plan; no Yahoo / no paid call)
 npx ts-node --project app/tsconfig.json app/internal_packages/ai-sidebar/test-offline-snapshot.ts
-# expected 12 passed (fake IMAP server; no Yahoo / no credentials / no paid call)
+# expected 22 passed (fake IMAP retry/hash/verify/keychain; no Yahoo / no credentials / no paid call)
 npx ts-node --project app/tsconfig.json app/internal_packages/ai-sidebar/test-demo-query.ts
 # expected 20 passed (exhaustive 2/5/6 + first-selected vs all-selected)
 npx ts-node --project app/tsconfig.json app/internal_packages/ai-sidebar/test-demo-sidebar.ts
@@ -502,7 +502,7 @@ Goal: a **complete local archive** on the Mac, a **read-only backup baseline**, 
 
 Read-only IMAP snapshot lives in `app/src/offline-snapshot/`. The Mailspring-offline experiment app **does not import it** and cannot see Yahoo credentials or open IMAP. This cloud agent does not connect to Yahoo and does not take credentials.
 
-Allowlisted commands: `LIST` `EXAMINE` `UID FETCH … (RFC822.SIZE)` `UID FETCH … BODY.PEEK[]`. Forbidden: `STORE` `EXPUNGE` `MOVE` `APPEND` `COPY` `SELECT` `FETCH BODY[]` `FETCH RFC822` (those can set `\Seen` or mutate). Resume key is `folder + UIDVALIDITY + UID`. TLS for Yahoo is `imap.mail.yahoo.com:993` with `rejectUnauthorized: true`. Password is a **hidden Terminal prompt** (never argv, env, or logs). `--secret-from-stdin` is fake-server tests only.
+Allowlisted commands: `LIST` `EXAMINE` `UID FETCH … (RFC822.SIZE)` `UID FETCH … BODY.PEEK[]`. Forbidden: `STORE` `EXPUNGE` `MOVE` `APPEND` `COPY` `SELECT` `FETCH BODY[]` `FETCH RFC822` (those can set `\Seen` or mutate). Resume key is `folder + UIDVALIDITY + UID`. TLS for Yahoo is `imap.mail.yahoo.com:993` with `rejectUnauthorized: true`. Password default is a **hidden Terminal prompt**. Non-TTY execute is `--password-from-keychain` only (login generic password, service `Mailspring-offline Yahoo IMAP`, account = `--username`; never argv, env, or logs). `--secret-from-stdin` is fake-server tests only.
 
 No-args still refuses to connect (exit 2):
 
@@ -528,12 +528,43 @@ npx ts-node --project app/tsconfig.json app/internal_packages/ai-sidebar/test-of
 
 4. Disk check **before** BODY.PEEK must cover **baseline + independent work copy**, not a single tree: `rfc822Bytes * 1.15 * 2 + 64MiB`. Unknown RFC822.SIZE values are counted and block execute unless you pass `--allow-unknown-sizes` (still disclosed, not skipped).
 5. Inventory is the **server LIST**, including Bulk Mail / Spam / Trash / Draft / Starred / Unicode names. Unselectable, empty, examine-failed, UIDVALIDITY mismatch, UID gaps, messages that arrived during the snapshot, and missing typical folders (e.g. Archive) are recorded in the manifest — **no silent exclusions**. Already-expunged mail cannot be recovered.
-6. Execute to a **new empty** destination (never overwrites a preexisting complete archive). Atomic `{uid}.eml.partial` → `{uid}.eml`. Then copy to a disposable working tree:
+6. Execute to a **new empty** destination (never overwrites a preexisting complete archive). Atomic `{uid}.eml.partial` → `{uid}.eml`. Transient IMAP/network failures reconnect (fresh TLS, in-memory password, re-EXAMINE, UIDVALIDITY must match) with bounded backoff. Resume of an existing partial dest is the **same** `--execute --dest` (55bab0ba `snapshot-state.json` shape). Then copy to a disposable working tree.
+
+   Hidden TTY prompt is the default. For a **non-TTY / background bot** (no Terminal), store the Yahoo app password once in the login Keychain (`security add-generic-password … -T '' -w`; first access may prompt Allow), then:
+
+   ```bash
+   # Non-interactive resume/execute (no Terminal). Password from Keychain only.
+   mkdir -p /abs/offline-archive-baseline
+   nohup sh scripts/offline-imap-snapshot.sh \
+     --execute \
+     --username 'you@yahoo.com' \
+     --dest /abs/offline-archive-baseline \
+     --work-copy /abs/offline-archive-work \
+     --password-from-keychain \
+     >/abs/offline-archive-baseline/snapshot-console.log 2>&1 &
+
+   # Monitor (counts only; no secrets):
+   tail -f /abs/offline-archive-baseline/snapshot-progress.log
+   cat /abs/offline-archive-baseline/snapshot-status.json
+   ```
+
+   Same command resumes a partial dest. Keychain denied/locked/missing is fail-closed (no argv/env/stdin fallback). Optional `--keychain-service` overrides the default service `Mailspring-offline Yahoo IMAP` (account is `--username`).
+
+   Interactive Terminal (hidden prompt, no Keychain):
 
    ```bash
    sh scripts/offline-imap-snapshot.sh \
      --execute \
      --username 'you@yahoo.com' \
+     --dest /abs/offline-archive-baseline \
+     --work-copy /abs/offline-archive-work
+   ```
+
+   Whole-archive `sha256` covers every finalized `.eml` on disk (including prior resume runs). Offline check (no network, no password):
+
+   ```bash
+   sh scripts/offline-imap-snapshot.sh \
+     --verify \
      --dest /abs/offline-archive-baseline \
      --work-copy /abs/offline-archive-work
    ```

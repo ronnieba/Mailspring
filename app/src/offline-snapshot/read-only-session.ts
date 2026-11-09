@@ -18,20 +18,34 @@ import { SnapshotConnectTarget, TLS_CONNECT_OPTIONS } from './yahoo-config';
 
 export type SnapshotLog = (line: string) => void;
 
+export class SnapshotAuthError extends Error {
+  constructor(message = 'LOGIN failed') {
+    super(message);
+    this.name = 'SnapshotAuthError';
+  }
+}
+
+type LineWaiter = {
+  match: (line: string) => boolean;
+  resolve: (v: string) => void;
+  reject: (e: Error) => void;
+};
+
 export class ReadOnlyImapSession {
   private sock: net.Socket | tls.TLSSocket | null = null;
   private buf = Buffer.alloc(0);
   private tagSeq = 0;
-  private waiters: Array<{
-    match: (line: string) => boolean;
-    resolve: (v: string) => void;
-    reject: (e: Error) => void;
-  }> = [];
+  private waiters: LineWaiter[] = [];
   private lines: string[] = [];
   private log: SnapshotLog;
+  private closed = false;
 
   constructor(log: SnapshotLog = () => undefined) {
     this.log = log;
+  }
+
+  get connected(): boolean {
+    return !!this.sock && !this.sock.destroyed && !this.closed;
   }
 
   async connect(target: SnapshotConnectTarget, timeoutMs = 10000): Promise<void> {
@@ -42,9 +56,14 @@ export class ReadOnlyImapSession {
         const onErr = (err: Error) => reject(err);
         const bind = (sock: net.Socket | tls.TLSSocket) => {
           this.sock = sock;
+          this.closed = false;
           sock.setTimeout(timeoutMs);
           sock.on('data', (c) => this.onData(c));
           sock.on('error', (e) => this.failWaiters(e));
+          sock.on('timeout', () => {
+            this.failWaiters(new Error('IMAP socket timeout'));
+            sock.destroy();
+          });
           sock.on('close', () => this.failWaiters(new Error('IMAP socket closed')));
         };
         if (target.tls) {
@@ -81,8 +100,12 @@ export class ReadOnlyImapSession {
     const u = quoteImapMailbox(username);
     const p = quoteImapMailbox(password);
     const lines = await this.command(`LOGIN ${u} ${p}`);
-    if (!lines.some((l) => / OK /i.test(l))) {
-      throw new Error('LOGIN failed');
+    const tagged = lines.filter((l) => !/^\*/.test(l));
+    if (tagged.some((l) => / AUTHENTICATIONFAILED/i.test(l) || / NO /i.test(l))) {
+      throw new SnapshotAuthError('LOGIN failed');
+    }
+    if (!lines.some((l) => / OK /i.test(l) && !/^\*/.test(l))) {
+      throw new SnapshotAuthError('LOGIN failed');
     }
   }
 
@@ -117,8 +140,8 @@ export class ReadOnlyImapSession {
     return { ...parseExamineMeta(lines), ok, lines };
   }
 
-  async fetchSizes(): Promise<FetchSizeRow[]> {
-    const lines = await this.command('UID FETCH 1:* (RFC822.SIZE FLAGS UID)');
+  async fetchSizes(timeoutMs = 60000): Promise<FetchSizeRow[]> {
+    const lines = await this.command('UID FETCH 1:* (RFC822.SIZE FLAGS UID)', timeoutMs);
     const rows: FetchSizeRow[] = [];
     for (const line of lines) {
       const row = parseFetchSizeLine(line);
@@ -129,7 +152,7 @@ export class ReadOnlyImapSession {
     return rows;
   }
 
-  async fetchBodyPeek(uid: number): Promise<Buffer> {
+  async fetchBodyPeek(uid: number, timeoutMs = 20000): Promise<Buffer> {
     const tag = this.nextTag();
     const cmd = `${tag} UID FETCH ${uid} BODY.PEEK[]`;
     const allowed = assertReadOnlyImapCommand(cmd);
@@ -140,20 +163,39 @@ export class ReadOnlyImapSession {
     if (!this.sock) {
       throw new Error('not connected');
     }
+    this.sock.setTimeout(Math.max(timeoutMs + 5000, 15000));
     this.lastLiteral = null;
-    const pending = this.readBodyLiteral(tag, uid);
+    const pending = this.readBodyLiteral(tag, uid, timeoutMs);
     this.sock.write(Buffer.from(cmd + '\r\n'));
     return pending;
   }
 
   async logout(): Promise<void> {
     try {
-      await this.command('LOGOUT');
+      await this.command('LOGOUT', 5000);
     } catch {
       // ignore
     }
-    this.sock?.destroy();
+    this.destroy();
+  }
+
+  /** Drop the socket without LOGOUT. Pending waiters fail; used before reconnect. */
+  destroy() {
+    this.closed = true;
+    const sock = this.sock;
     this.sock = null;
+    this.buf = Buffer.alloc(0);
+    this.lastLiteral = null;
+    if (sock) {
+      sock.removeAllListeners('data');
+      sock.removeAllListeners('timeout');
+      try {
+        sock.destroy();
+      } catch {
+        // ignore
+      }
+    }
+    this.failWaiters(new Error('IMAP socket closed'));
   }
 
   /** Test helper: attempting a forbidden command must throw before write. */
@@ -161,7 +203,7 @@ export class ReadOnlyImapSession {
     return assertReadOnlyImapCommand(raw);
   }
 
-  private async command(rest: string): Promise<string[]> {
+  private async command(rest: string, timeoutMs = 30000): Promise<string[]> {
     const tag = this.nextTag();
     const cmd = `${tag} ${rest}`;
     const allowed = assertReadOnlyImapCommand(cmd);
@@ -173,13 +215,17 @@ export class ReadOnlyImapSession {
       throw new Error('not connected');
     }
     const collected: string[] = [];
+    let waiter: LineWaiter;
     const done = new Promise<string[]>((resolve, reject) => {
-      const timer = setTimeout(() => reject(new Error('IMAP timeout')), 15000);
+      const timer = setTimeout(() => {
+        this.waiters = this.waiters.filter((w) => w !== waiter);
+        reject(new Error('IMAP timeout'));
+      }, timeoutMs);
       const check = (line: string) => {
         collected.push(line);
         return line.startsWith(`${tag} `);
       };
-      this.waiters.push({
+      waiter = {
         match: check,
         resolve: () => {
           clearTimeout(timer);
@@ -189,7 +235,8 @@ export class ReadOnlyImapSession {
           clearTimeout(timer);
           reject(e);
         },
-      });
+      };
+      this.waiters.push(waiter);
     });
     this.sock.write(Buffer.from(cmd + '\r\n'));
     return done;
@@ -244,6 +291,13 @@ export class ReadOnlyImapSession {
   private consumeLines() {
     for (let idx = this.buf.indexOf('\n'); idx !== -1; idx = this.buf.indexOf('\n')) {
       const line = this.buf.slice(0, idx).toString('utf8').replace(/\r$/, '');
+      if (/^\* BYE\b/i.test(line)) {
+        this.buf = this.buf.slice(idx + 1);
+        this.lines.push(line);
+        this.notify(line);
+        this.failWaiters(new Error('IMAP BYE'));
+        return;
+      }
       const lit = line.match(/\{(\d+)\}\s*$/);
       if (lit) {
         const size = parseInt(lit[1], 10);
@@ -263,10 +317,9 @@ export class ReadOnlyImapSession {
     }
   }
 
-  private readBodyLiteral(tag: string, uid: number): Promise<Buffer> {
+  private readBodyLiteral(tag: string, uid: number, timeoutMs: number): Promise<Buffer> {
     return new Promise((resolve, reject) => {
-      const timer = setTimeout(() => reject(new Error('IMAP BODY.PEEK timeout')), 20000);
-      this.waiters.push({
+      const waiter: LineWaiter = {
         match: (line) => line.startsWith(`${tag} `),
         resolve: (line) => {
           clearTimeout(timer);
@@ -284,7 +337,12 @@ export class ReadOnlyImapSession {
           clearTimeout(timer);
           reject(e);
         },
-      });
+      };
+      const timer = setTimeout(() => {
+        this.waiters = this.waiters.filter((w) => w !== waiter);
+        reject(new Error('IMAP BODY.PEEK timeout'));
+      }, timeoutMs);
+      this.waiters.push(waiter);
     });
   }
 }

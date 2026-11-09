@@ -17,6 +17,8 @@ if [ "$#" -eq 0 ]; then
   echo "offline-imap-snapshot: REFUSES to connect with no arguments." >&2
   echo "  --preflight-only --username EMAIL" >&2
   echo "  --execute --dest /abs/archive --username EMAIL [--work-copy /abs/work]" >&2
+  echo "  --password-from-keychain [--keychain-service NAME]" >&2
+  echo "  --verify --dest /abs/archive [--work-copy /abs/work]" >&2
   echo "  Fake tests: --insecure-test-server --host 127.0.0.1 --port N --secret-from-stdin" >&2
   echo "Yahoo TLS imap.mail.yahoo.com:993, EXAMINE / BODY.PEEK[], never STORE/SELECT." >&2
   echo "exit 2" >&2

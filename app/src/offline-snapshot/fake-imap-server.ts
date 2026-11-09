@@ -209,8 +209,16 @@ export type FakeImapServer = {
   port: number;
   host: string;
   storeCommands: string[];
+  successfulBodyPeeks: number;
+  hangNextBodyPeeks: number;
+  destroyNextBodyPeeks: number;
+  /** After this many successful BODY.PEEKs, destroy every later BODY.PEEK. */
+  destroyEveryBodyPeekAfter: number | null;
+  rejectLogin: boolean;
+  onBodyPeekDestroy: (() => void) | null;
   inject(folderRaw: string, message: FakeMessage): void;
   messagesOf(folderRaw: string): FakeMessage[];
+  setUidvalidity(folderRaw: string, uidvalidity: number): void;
   close(): Promise<void>;
 };
 
@@ -224,6 +232,14 @@ export function startFakeImapServer(opts?: {
   const folders = opts?.folders || defaultFakeFolders();
   const storeCommands: string[] = [];
   const sockets = new Set<net.Socket>();
+  const ctrl = {
+    successfulBodyPeeks: 0,
+    hangNextBodyPeeks: 0,
+    destroyNextBodyPeeks: 0,
+    destroyEveryBodyPeekAfter: null as number | null,
+    rejectLogin: false,
+    onBodyPeekDestroy: null as (() => void) | null,
+  };
 
   return new Promise((resolve, reject) => {
     const server = net.createServer((sock) => {
@@ -262,11 +278,11 @@ export function startFakeImapServer(opts?: {
             const m = rest.match(/^LOGIN\s+(\S+)\s+(.+)$/i);
             const u = m ? unquote(m[1]) : '';
             const p = m ? unquote(m[2]) : '';
-            if (u === user && p === password) {
+            if (ctrl.rejectLogin || u !== user || p !== password) {
+              reply(`${tag} NO [AUTHENTICATIONFAILED] LOGIN failed`);
+            } else {
               authed = true;
               reply(`${tag} OK LOGIN`);
-            } else {
-              reply(`${tag} NO LOGIN failed`);
             }
             continue;
           }
@@ -312,7 +328,7 @@ export function startFakeImapServer(opts?: {
               reply(`${tag} NO no mailbox`);
               continue;
             }
-            handleUidFetch(selected, rest, tag, sock);
+            handleUidFetch(selected, rest, tag, sock, ctrl);
             continue;
           }
           if (upper === 'NOOP') {
@@ -334,6 +350,39 @@ export function startFakeImapServer(opts?: {
         port: addr.port,
         host: '127.0.0.1',
         storeCommands,
+        get successfulBodyPeeks() {
+          return ctrl.successfulBodyPeeks;
+        },
+        get hangNextBodyPeeks() {
+          return ctrl.hangNextBodyPeeks;
+        },
+        set hangNextBodyPeeks(n: number) {
+          ctrl.hangNextBodyPeeks = n;
+        },
+        get destroyNextBodyPeeks() {
+          return ctrl.destroyNextBodyPeeks;
+        },
+        set destroyNextBodyPeeks(n: number) {
+          ctrl.destroyNextBodyPeeks = n;
+        },
+        get destroyEveryBodyPeekAfter() {
+          return ctrl.destroyEveryBodyPeekAfter;
+        },
+        set destroyEveryBodyPeekAfter(n: number | null) {
+          ctrl.destroyEveryBodyPeekAfter = n;
+        },
+        get rejectLogin() {
+          return ctrl.rejectLogin;
+        },
+        set rejectLogin(v: boolean) {
+          ctrl.rejectLogin = v;
+        },
+        get onBodyPeekDestroy() {
+          return ctrl.onBodyPeekDestroy;
+        },
+        set onBodyPeekDestroy(fn: (() => void) | null) {
+          ctrl.onBodyPeekDestroy = fn;
+        },
         inject(folderRaw: string, message: FakeMessage) {
           const f = findFolder(folders, folderRaw);
           if (!f) {
@@ -345,6 +394,13 @@ export function startFakeImapServer(opts?: {
         messagesOf(folderRaw: string) {
           const f = findFolder(folders, folderRaw);
           return f ? f.messages.slice() : [];
+        },
+        setUidvalidity(folderRaw: string, uidvalidity: number) {
+          const f = findFolder(folders, folderRaw);
+          if (!f) {
+            throw new Error(`setUidvalidity: no folder ${folderRaw}`);
+          }
+          f.uidvalidity = uidvalidity;
         },
         close: () =>
           new Promise((res, rej) => {
@@ -367,7 +423,19 @@ function unquote(s: string): string {
   return t;
 }
 
-function handleUidFetch(folder: FakeFolder, rest: string, tag: string, sock: net.Socket) {
+function handleUidFetch(
+  folder: FakeFolder,
+  rest: string,
+  tag: string,
+  sock: net.Socket,
+  ctrl: {
+    successfulBodyPeeks: number;
+    hangNextBodyPeeks: number;
+    destroyNextBodyPeeks: number;
+    destroyEveryBodyPeekAfter: number | null;
+    onBodyPeekDestroy: (() => void) | null;
+  }
+) {
   const writeLine = (s: string) => sock.write(Buffer.from(s + CRLF));
   const m = rest.match(/^UID FETCH\s+(\S+)\s+(.+)$/i);
   if (!m) {
@@ -390,6 +458,23 @@ function handleUidFetch(folder: FakeFolder, rest: string, tag: string, sock: net
     }
     const seq = folder.messages.indexOf(msg) + 1;
     if (wantBody) {
+      if (ctrl.hangNextBodyPeeks > 0) {
+        ctrl.hangNextBodyPeeks -= 1;
+        return;
+      }
+      const alwaysDrop =
+        ctrl.destroyEveryBodyPeekAfter != null &&
+        ctrl.successfulBodyPeeks >= ctrl.destroyEveryBodyPeekAfter;
+      if (ctrl.destroyNextBodyPeeks > 0 || alwaysDrop) {
+        if (ctrl.destroyNextBodyPeeks > 0) {
+          ctrl.destroyNextBodyPeeks -= 1;
+        }
+        if (ctrl.onBodyPeekDestroy) {
+          ctrl.onBodyPeekDestroy();
+        }
+        sock.destroy();
+        return;
+      }
       sock.write(
         Buffer.from(
           `* ${seq} FETCH (UID ${uid} RFC822.SIZE ${msg.raw.length} BODY[] {${msg.raw.length}}${CRLF}`
@@ -397,6 +482,7 @@ function handleUidFetch(folder: FakeFolder, rest: string, tag: string, sock: net
       );
       sock.write(msg.raw);
       sock.write(Buffer.from(`)${CRLF}`));
+      ctrl.successfulBodyPeeks += 1;
     } else {
       const parts = [`UID ${uid}`];
       if (wantFlags) {

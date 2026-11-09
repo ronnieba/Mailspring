@@ -7,10 +7,38 @@ import {
 } from '../../internal_packages/ai-sidebar/lib/core/offline-imap-snapshot-plan';
 import { isForbiddenArchiveRoot } from '../../internal_packages/ai-sidebar/lib/core/offline-archive-format';
 import { materializeWorkingCopy } from '../../internal_packages/ai-sidebar/lib/core/offline-archive-format';
+import {
+  CONSOLE_LOG,
+  HASH_LIST_FILE,
+  HashedEml,
+  SizeMismatch,
+  hashEmlTree,
+  sizeMismatchesAgainstRfc822,
+  stateFileCount,
+  writeHashList,
+} from './archive-hash';
 import { checkDiskForSnapshot } from './disk';
 import { ListMailbox, uidGaps } from './imap-protocol';
 import { ReadOnlyImapSession, SnapshotLog } from './read-only-session';
+import {
+  RetryPolicy,
+  classifySnapshotError,
+  defaultRetryPolicy,
+  retryReasonToken,
+  retryWaitMs,
+  bodyPeekTimeoutMs,
+} from './retry';
+import {
+  PROGRESS_LOG,
+  STATUS_FILE,
+  appendProgressLog,
+  writeSnapshotStatus,
+  SnapshotStatus,
+} from './progress';
 import { SnapshotConnectTarget } from './yahoo-config';
+
+export { verifySnapshotArchive } from './archive-hash';
+export { bodyPeekTimeoutMs, classifySnapshotError } from './retry';
 
 export type SnapshotFolderRecord = {
   path: string;
@@ -42,6 +70,8 @@ export type SnapshotManifest = {
   empty: string[];
   examineFailed: string[];
   sha256All: string;
+  files: HashedEml[];
+  sizeMismatches: SizeMismatch[];
   disk: {
     rfc822Bytes: number;
     recommendedFreeBytes: number;
@@ -69,6 +99,19 @@ function countLog(msg: string, extra: Record<string, number | string | boolean>)
   return `snapshot: ${msg} ${bits.join(' ')}`.trim();
 }
 
+function isDestRootSidecar(name: string): boolean {
+  return (
+    name === PROGRESS_LOG ||
+    name === STATUS_FILE ||
+    name === `${STATUS_FILE}.partial` ||
+    name === HASH_LIST_FILE ||
+    name === CONSOLE_LOG ||
+    name === 'offline-work-copy.json' ||
+    name === `${STATE_FILE}.partial` ||
+    name === `${MANIFEST_FILE}.partial`
+  );
+}
+
 export function destOverwriteGuard(dest: string): {
   ok: boolean;
   reason: string;
@@ -81,7 +124,11 @@ export function destOverwriteGuard(dest: string): {
   if (!fs.existsSync(dest)) {
     return { ok: true, reason: '', resumable: false };
   }
-  const names = fs.readdirSync(dest).filter((n) => n !== '.' && n !== '..');
+  // Progress/status/console sidecars are not archive content. A detached
+  // nohup redirect may create dest/snapshot-console.log before execute.
+  const names = fs
+    .readdirSync(dest)
+    .filter((n) => n !== '.' && n !== '..' && !isDestRootSidecar(n));
   if (names.length === 0) {
     return { ok: true, reason: '', resumable: false };
   }
@@ -166,19 +213,90 @@ export async function runReadOnlySnapshot(opts: {
   log?: SnapshotLog;
   /** Test hook: inject fake-server messages after SIZE inventory, before BODY.PEEK. */
   onAfterPreflight?: () => void | Promise<void>;
+  retry?: Partial<RetryPolicy>;
+  peekTimeoutMs?: (rfc822Size: number | null | undefined) => number;
 }): Promise<{
   ok: boolean;
   reason: string;
   manifest: SnapshotManifest | null;
   preflight: boolean;
 }> {
-  const log = opts.log || (() => undefined);
-  const session = new ReadOnlyImapSession((line) => log(line));
+  const userLog = opts.log || (() => undefined);
+  let destClaimed = false;
+  const log = (line: string) => {
+    userLog(line);
+    if (destClaimed && opts.execute && opts.dest) {
+      appendProgressLog(opts.dest, line);
+    }
+  };
+  const policy = defaultRetryPolicy(opts.retry);
+  const peekTimeout = opts.peekTimeoutMs || bodyPeekTimeoutMs;
+  let session: ReadOnlyImapSession | null = null;
+  let examinedRaw: string | null = null;
+  let consecutive = 0;
+
+  const closeQuiet = () => {
+    if (session) {
+      try {
+        session.destroy();
+      } catch {
+        // ignore
+      }
+    }
+    session = null;
+    examinedRaw = null;
+  };
+
+  const connectFresh = async (): Promise<ReadOnlyImapSession> => {
+    const s = new ReadOnlyImapSession((line) => log(line));
+    try {
+      await s.connect(opts.target);
+      await s.capability();
+      await s.login(opts.username, opts.password);
+      return s;
+    } catch (err) {
+      try {
+        s.destroy();
+      } catch {
+        // ignore
+      }
+      throw err;
+    }
+  };
+
+  const withRetry = async <T>(op: (s: ReadOnlyImapSession) => Promise<T>): Promise<T> => {
+    for (;;) {
+      try {
+        if (!session || !session.connected) {
+          session = await connectFresh();
+          examinedRaw = null;
+        }
+        const result = await op(session);
+        consecutive = 0;
+        return result;
+      } catch (err) {
+        const kind = classifySnapshotError(err);
+        if (kind === 'auth' || kind === 'fatal') {
+          throw err;
+        }
+        consecutive += 1;
+        if (consecutive > policy.maxConsecutive) {
+          throw new Error(
+            `retry cap ${policy.maxConsecutive} without progress reason=${retryReasonToken(err)}`
+          );
+        }
+        const wait = retryWaitMs(consecutive, policy.baseMs, policy.capMs);
+        log(
+          `snapshot: retry ${consecutive}/${policy.maxConsecutive} reason=${retryReasonToken(err)} wait=${Math.round(wait / 1000)}s`
+        );
+        await policy.sleep(wait);
+        closeQuiet();
+      }
+    }
+  };
+
   try {
-    await session.connect(opts.target);
-    await session.capability();
-    await session.login(opts.username, opts.password);
-    const listed = await session.listAll();
+    const listed = await withRetry((s) => s.listAll());
     log(countLog('list', { mailboxes: listed.length }));
 
     const folderRows: SnapshotFolderRecord[] = [];
@@ -186,10 +304,26 @@ export async function runReadOnlySnapshot(opts: {
     const preflightUids = new Map<string, { uids: number[]; uidvalidity: number }>();
 
     for (const box of listed) {
-      const rec = await preflightFolder(session, box, log);
+      const rec = await withRetry(async (s) => {
+        const r = await preflightFolder(s, box, log);
+        examinedRaw = box.selectable ? box.raw : examinedRaw;
+        return r;
+      });
       folderRows.push(rec);
       if (rec.status === 'fetched' || rec.status === 'listed' || rec.status === 'empty') {
-        const rows = rec.status === 'empty' ? [] : await session.fetchSizes();
+        const rows =
+          rec.status === 'empty'
+            ? []
+            : await withRetry(async (s) => {
+                if (examinedRaw !== box.raw) {
+                  const ex = await s.examine(box.raw);
+                  if (!ex.ok) {
+                    throw new Error('EXAMINE failed');
+                  }
+                  examinedRaw = box.raw;
+                }
+                return s.fetchSizes();
+              });
         const unread = rows.filter((r) => !r.flags.some((f) => /^\\Seen$/i.test(f))).length;
         rec.unread = unread;
         rec.gaps = uidGaps(rows.map((r) => r.uid));
@@ -253,6 +387,8 @@ export async function runReadOnlySnapshot(opts: {
       empty: inv.empty.map((u) => u.path),
       examineFailed: inv.examineFailed.map((u) => u.path),
       sha256All: sha,
+      files: [],
+      sizeMismatches: [],
       disk: {
         rfc822Bytes: sizes.reduce((a, s) => a + (s || 0), 0),
         recommendedFreeBytes: disk.recommendedFreeBytes,
@@ -262,7 +398,11 @@ export async function runReadOnlySnapshot(opts: {
     });
 
     if (opts.preflightOnly || !opts.execute) {
-      await session.logout();
+      try {
+        await session?.logout();
+      } catch {
+        closeQuiet();
+      }
       return {
         ok: true,
         reason: disk.ok ? 'preflight-ok' : disk.reason,
@@ -276,19 +416,39 @@ export async function runReadOnlySnapshot(opts: {
     }
 
     if (!disk.ok) {
-      await session.logout();
+      try {
+        await session?.logout();
+      } catch {
+        closeQuiet();
+      }
       return { ok: false, reason: disk.reason, manifest: manifestBase(false, ''), preflight: true };
     }
 
     const guard = destOverwriteGuard(opts.dest);
     if (!guard.ok) {
-      await session.logout();
+      try {
+        await session?.logout();
+      } catch {
+        closeQuiet();
+      }
       return { ok: false, reason: guard.reason, manifest: null, preflight: true };
     }
     fs.mkdirSync(opts.dest, { recursive: true });
+    destClaimed = true;
     const state = guard.resumable ? loadState(opts.dest) : { complete: false, folders: {} };
+    const stampStatus = (s: Omit<SnapshotStatus, 'updatedAt'>) => {
+      const lastStatus = { ...s, updatedAt: new Date().toISOString() };
+      writeSnapshotStatus(opts.dest, lastStatus);
+      log(
+        countLog('status', {
+          ok: s.ok ? 1 : 0,
+          complete: s.complete ? 1 : 0,
+          files: s.fileCount ?? 0,
+        })
+      );
+    };
 
-    const hashes: string[] = [];
+    const rfc822ByRel = new Map<string, number>();
     for (const box of listed) {
       if (!box.selectable) {
         continue;
@@ -297,7 +457,8 @@ export async function runReadOnlySnapshot(opts: {
       if (!rec || rec.status === 'examine-failed' || rec.status === 'unselectable') {
         continue;
       }
-      const examined = await session.examine(box.raw);
+      const examined = await withRetry((s) => s.examine(box.raw));
+      examinedRaw = box.raw;
       if (!examined.ok || examined.uidvalidity == null) {
         rec.status = 'examine-failed';
         rec.note = 'examine failed at download';
@@ -316,7 +477,17 @@ export async function runReadOnlySnapshot(opts: {
         rec.status = 'examine-failed';
         continue;
       }
-      const sizeRows = await session.fetchSizes();
+      const expectedUv = examined.uidvalidity;
+      const sizeRows = await withRetry(async (s) => {
+        if (examinedRaw !== box.raw) {
+          const ex = await s.examine(box.raw);
+          if (!ex.ok || ex.uidvalidity !== expectedUv) {
+            throw new Error(`UIDVALIDITY changed ${expectedUv}->${ex.uidvalidity}; refuse mix`);
+          }
+          examinedRaw = box.raw;
+        }
+        return s.fetchSizes();
+      });
       const nowUids = sizeRows.map((r) => r.uid);
       const extra = nowUids.filter((u) => planned && !planned.uids.includes(u));
       rec.arrivedDuringSnapshot = extra;
@@ -324,14 +495,31 @@ export async function runReadOnlySnapshot(opts: {
       const dir = folderDir(opts.dest, rec.path);
       let fetched = prev ? prev.doneUids.length : 0;
       const doneUids = prev ? prev.doneUids.slice() : [];
+      const sizeByUid = new Map(sizeRows.map((r) => [r.uid, r.size]));
+      for (const r of sizeRows) {
+        if (typeof r.size === 'number') {
+          rfc822ByRel.set(`${rec.path}/${r.uid}.eml`, r.size);
+        }
+      }
       for (const uid of toFetch) {
-        const raw = await session.fetchBodyPeek(uid);
-        const written = atomicWriteEml(dir, uid, raw);
-        hashes.push(`${written.sha256} ${rec.path}/${uid}.eml`);
-        fetched += 1;
-        doneUids.push(uid);
-        state.folders[box.raw] = { uidvalidity: examined.uidvalidity, doneUids };
-        saveState(opts.dest, state);
+        await withRetry(async (s) => {
+          if (doneUids.includes(uid)) {
+            return;
+          }
+          if (examinedRaw !== box.raw) {
+            const ex = await s.examine(box.raw);
+            if (!ex.ok || ex.uidvalidity !== expectedUv) {
+              throw new Error(`UIDVALIDITY changed ${expectedUv}->${ex.uidvalidity}; refuse mix`);
+            }
+            examinedRaw = box.raw;
+          }
+          const raw = await s.fetchBodyPeek(uid, peekTimeout(sizeByUid.get(uid) ?? null));
+          atomicWriteEml(dir, uid, raw);
+          doneUids.push(uid);
+          fetched += 1;
+          state.folders[box.raw] = { uidvalidity: expectedUv, doneUids };
+          saveState(opts.dest, state);
+        });
       }
       rec.fetched = fetched;
       rec.status = rec.exists === 0 ? 'empty' : 'fetched';
@@ -344,11 +532,16 @@ export async function runReadOnlySnapshot(opts: {
       );
     }
 
-    const sha256All = sha256Hex(Buffer.from(hashes.sort().join('\n')));
+    const hashed = hashEmlTree(opts.dest);
+    writeHashList(opts.dest, hashed.listing);
+    const mismatches = sizeMismatchesAgainstRfc822(hashed.files, rfc822ByRel);
     const examineFailed = folderRows.filter((f) => f.status === 'examine-failed');
-    const complete = examineFailed.length === 0;
-    const manifest = manifestBase(complete, sha256All);
-    manifest.messageCount = folderRows.reduce((a, f) => a + f.fetched, 0);
+    const countsMatch = stateFileCount(state) === hashed.files.length;
+    const complete = examineFailed.length === 0 && mismatches.length === 0 && countsMatch;
+    const manifest = manifestBase(complete, hashed.sha256All);
+    manifest.files = hashed.files;
+    manifest.sizeMismatches = mismatches;
+    manifest.messageCount = hashed.files.length;
     manifest.folderCounts = Object.fromEntries(folderRows.map((f) => [f.path, f.fetched]));
     const manTmp = path.join(opts.dest, `${MANIFEST_FILE}.partial`);
     fs.writeFileSync(manTmp, JSON.stringify(manifest, null, 2));
@@ -359,7 +552,20 @@ export async function runReadOnlySnapshot(opts: {
     if (opts.workCopy && complete) {
       const workGuard = destOverwriteGuard(opts.workCopy);
       if (!workGuard.ok) {
-        await session.logout();
+        try {
+          await session?.logout();
+        } catch {
+          closeQuiet();
+        }
+        stampStatus({
+          ok: false,
+          complete: false,
+          preflight: false,
+          reason: `work copy: ${workGuard.reason}`,
+          fileCount: hashed.files.length,
+          messageCount: hashed.files.length,
+          sha256All: hashed.sha256All,
+        });
         return {
           ok: false,
           reason: `work copy: ${workGuard.reason}`,
@@ -369,25 +575,82 @@ export async function runReadOnlySnapshot(opts: {
       }
       fs.mkdirSync(opts.workCopy, { recursive: true });
       materializeWorkingCopy({ originalRoot: opts.dest, workRoot: opts.workCopy, io: fs });
-      log(countLog('work-copy', { copied: 1 }));
+      const workHash = hashEmlTree(opts.workCopy);
+      if (workHash.sha256All !== hashed.sha256All) {
+        try {
+          await session?.logout();
+        } catch {
+          closeQuiet();
+        }
+        stampStatus({
+          ok: false,
+          complete: false,
+          preflight: false,
+          reason: 'work copy hash does not match baseline',
+          fileCount: hashed.files.length,
+          messageCount: hashed.files.length,
+          sha256All: hashed.sha256All,
+        });
+        return {
+          ok: false,
+          reason: 'work copy hash does not match baseline',
+          manifest,
+          preflight: false,
+        };
+      }
+      log(countLog('work-copy', { copied: 1, files: workHash.files.length }));
     }
 
-    await session.logout();
+    try {
+      await session?.logout();
+    } catch {
+      closeQuiet();
+    }
+    const reason = complete
+      ? ''
+      : mismatches.length
+        ? `RFC822.SIZE mismatch files=${mismatches.length}`
+        : examineFailed[0]
+          ? examineFailed[0].note || 'examine-failed'
+          : 'state/file count mismatch';
+    stampStatus({
+      ok: complete,
+      complete,
+      preflight: false,
+      reason,
+      fileCount: hashed.files.length,
+      messageCount: hashed.files.length,
+      sha256All: hashed.sha256All,
+    });
     return {
       ok: complete,
-      reason: complete ? '' : examineFailed[0].note || 'examine-failed',
+      reason,
       manifest,
       preflight: false,
     };
   } catch (err) {
     try {
-      await session.logout();
+      await session?.logout();
     } catch {
-      // ignore
+      closeQuiet();
+    }
+    const reason = (err as Error).message || 'snapshot failed';
+    if (destClaimed && opts.dest) {
+      writeSnapshotStatus(opts.dest, {
+        ok: false,
+        complete: false,
+        preflight: !!opts.preflightOnly,
+        reason,
+        fileCount: null,
+        messageCount: null,
+        sha256All: null,
+        updatedAt: new Date().toISOString(),
+      });
+      appendProgressLog(opts.dest, `snapshot: status ok=0 complete=0 reason=failed`);
     }
     return {
       ok: false,
-      reason: (err as Error).message || 'snapshot failed',
+      reason,
       manifest: null,
       preflight: !!opts.preflightOnly,
     };

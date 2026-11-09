@@ -1,7 +1,10 @@
 /**
  * Password is never on argv, never copied from env, never written to logs.
- * Yahoo path: hidden TTY prompt only. Fake-server tests may pipe stdin.
+ * Yahoo path: hidden TTY prompt by default. --password-from-keychain is the
+ * non-TTY opt-in. Fake-server tests may pipe stdin.
  */
+import { KeychainExec, readYahooImapPasswordFromKeychain } from './keychain-password';
+
 export const FORBIDDEN_SECRET_ENV = [
   'YAHOO_IMAP_PASSWORD',
   'IMAP_PASSWORD',
@@ -96,8 +99,31 @@ export async function obtainSnapshotSecret(opts: {
   allowStdinPipe: boolean;
   stdin: NodeJS.ReadStream;
   stderr: NodeJS.WritableStream;
+  passwordFromKeychain?: boolean;
+  keychainAccount?: string;
+  keychainService?: string;
+  keychainReader?: typeof readYahooImapPasswordFromKeychain;
+  keychainExec?: KeychainExec;
 }): Promise<{ ok: true; secret: string } | { ok: false; reason: string }> {
   try {
+    if (opts.passwordFromKeychain) {
+      const reader = opts.keychainReader || readYahooImapPasswordFromKeychain;
+      const got = reader({
+        account: opts.keychainAccount || '',
+        service: opts.keychainService,
+        execFile: opts.keychainExec,
+      });
+      if (got.ok === false) {
+        return { ok: false, reason: got.reason };
+      }
+      if (!got.secret) {
+        return {
+          ok: false,
+          reason: 'Keychain item returned an empty password. No password fallback.',
+        };
+      }
+      return { ok: true, secret: got.secret };
+    }
     if (opts.allowStdinPipe) {
       const secret = await readSecretFromStdin(opts.stdin);
       if (!secret) {

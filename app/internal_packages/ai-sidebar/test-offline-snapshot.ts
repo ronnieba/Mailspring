@@ -13,7 +13,22 @@ import { estimateBaselineAndWorkCopy } from './lib/core/offline-imap-snapshot-pl
 import { displayFromRfc822, decodeRfc2047 } from './lib/core/offline-mime-display';
 import { readOfflineArchive } from './lib/core/offline-archive-format';
 import { fixtureRfc822, startFakeImapServer } from '../../src/offline-snapshot/fake-imap-server';
-import { runReadOnlySnapshot, destOverwriteGuard } from '../../src/offline-snapshot/snapshot-run';
+import {
+  runReadOnlySnapshot,
+  destOverwriteGuard,
+  bodyPeekTimeoutMs,
+  classifySnapshotError,
+} from '../../src/offline-snapshot/snapshot-run';
+import { verifySnapshotArchive } from '../../src/offline-snapshot/archive-hash';
+import {
+  YAHOO_IMAP_KEYCHAIN_SERVICE,
+  SECURITY_BIN,
+  classifySecurityFindResult,
+  readYahooImapPasswordFromKeychain,
+  securityFindPasswordArgs,
+} from '../../src/offline-snapshot/keychain-password';
+import { PROGRESS_LOG, STATUS_FILE } from '../../src/offline-snapshot/progress';
+import { SnapshotAuthError } from '../../src/offline-snapshot/read-only-session';
 import { ReadOnlyImapSession } from '../../src/offline-snapshot/read-only-session';
 import { parseSnapshotArgv, runSnapshotCli, usage } from '../../src/offline-snapshot/cli';
 import {
@@ -62,6 +77,18 @@ function tmpDir(prefix: string): string {
   return fs.mkdtempSync(path.join(os.tmpdir(), prefix));
 }
 
+function fastRetry(max = 8) {
+  return {
+    maxConsecutive: max,
+    baseMs: 5,
+    capMs: 15,
+    sleep: (ms: number) => new Promise<void>((resolve) => setTimeout(resolve, Math.min(ms, 5))),
+  };
+}
+
+const TARGET = (port: number) => ({ host: '127.0.0.1' as const, port, tls: false });
+const AMPLE_DISK = 10 * 1024 * 1024 * 1024;
+
 function logsHaveContent(logs: string[]): boolean {
   const joined = logs.join('\n');
   return /Inbox one|unread-body|archive-sender@|שלום|test-password-not-yahoo/.test(joined);
@@ -83,6 +110,7 @@ async function run() {
 
   await test('refuses password argv/env; stdin secret is test-server only', () => {
     assertTrue(argvLooksLikePasswordFlag(['--execute', '--password=secret']));
+    assertFalse(argvLooksLikePasswordFlag(['--execute', '--password-from-keychain']));
     assertFalse(assertNoEnvSecrets({ YAHOO_IMAP_PASSWORD: 'x' } as NodeJS.ProcessEnv).ok);
     assertTrue(assertNoEnvSecrets({ PATH: '/bin' } as NodeJS.ProcessEnv).ok);
     const args = parseSnapshotArgv(['--execute', '--dest=/tmp/a', '--username', USER]);
@@ -179,6 +207,11 @@ async function run() {
       });
       assertTrue(out.ok, out.reason);
       assertTrue(!!out.manifest && out.manifest.complete);
+      assertEqual(
+        out.manifest && out.manifest.files.length,
+        out.manifest && out.manifest.messageCount
+      );
+      assertEqual((out.manifest && out.manifest.sha256All.length) || 0, 64);
       assertTrue(fs.existsSync(path.join(dest, 'INBOX', '1.eml')));
       assertTrue(fs.existsSync(path.join(dest, 'INBOX', '5.eml')));
       assertFalse(fs.existsSync(path.join(dest, 'INBOX', '3.eml')));
@@ -225,6 +258,14 @@ async function run() {
   });
 
   await test('refuses overwrite of complete archive; UIDVALIDITY mismatch disclosed', async () => {
+    const destSidecar = tmpDir('snap-side-');
+    fs.writeFileSync(path.join(destSidecar, PROGRESS_LOG), 'snapshot: counts only\n');
+    fs.writeFileSync(path.join(destSidecar, STATUS_FILE), '{}\n');
+    fs.writeFileSync(path.join(destSidecar, 'snapshot-console.log'), 'nohup\n');
+    const gSide = destOverwriteGuard(destSidecar);
+    assertTrue(gSide.ok);
+    assertFalse(gSide.resumable);
+    fs.rmSync(destSidecar, { recursive: true, force: true });
     const dest = tmpDir('snap-ov-');
     fs.writeFileSync(
       path.join(dest, 'snapshot-manifest.json'),
@@ -427,6 +468,358 @@ async function run() {
       assertFalse(out.includes(PASS));
       assertFalse(stderrChunks.join('').includes(PASS));
       assertTrue(fs.existsSync(path.join(dest, 'snapshot-manifest.json')));
+    } finally {
+      fs.rmSync(dest, { recursive: true, force: true });
+      await fake.close();
+    }
+  });
+
+  console.log('\nCategory: retry / reconnect / hash / verify');
+  await test('classifies auth vs transient; BODY.PEEK timeout scales with SIZE', () => {
+    assertEqual(classifySnapshotError(new SnapshotAuthError('LOGIN failed')), 'auth');
+    assertEqual(classifySnapshotError(new Error('IMAP BODY.PEEK timeout')), 'transient');
+    assertEqual(classifySnapshotError(new Error('IMAP socket closed')), 'transient');
+    assertEqual(
+      classifySnapshotError(Object.assign(new Error('reset'), { code: 'ECONNRESET' })),
+      'transient'
+    );
+    assertEqual(classifySnapshotError(new Error('UIDVALIDITY changed 1->2; refuse mix')), 'fatal');
+    assertEqual(
+      classifySnapshotError(new Error('IMAP command is not on the read-only allowlist')),
+      'fatal'
+    );
+    assertTrue(bodyPeekTimeoutMs(null) >= 20000);
+    assertTrue(bodyPeekTimeoutMs(10 * 1024 * 1024) <= 5 * 60 * 1000);
+    assertTrue(bodyPeekTimeoutMs(10 * 1024 * 1024) > bodyPeekTimeoutMs(1000));
+  });
+
+  await test('disconnect mid-fetch reconnects, no duplicate .eml, unread unchanged', async () => {
+    const fake = await startFakeImapServer({ user: USER, password: PASS });
+    const dest = tmpDir('snap-re-');
+    const logs: string[] = [];
+    try {
+      fake.destroyNextBodyPeeks = 1;
+      const out = await runReadOnlySnapshot({
+        target: TARGET(fake.port),
+        username: USER,
+        password: PASS,
+        dest,
+        execute: true,
+        freeBytes: AMPLE_DISK,
+        retry: fastRetry(),
+        log: (l) => logs.push(l),
+      });
+      assertTrue(out.ok, out.reason);
+      assertTrue(logs.some((l) => /snapshot: retry 1\/8 reason=/.test(l)));
+      assertFalse(logsHaveContent(logs));
+      const inbox = fs.readdirSync(path.join(dest, 'INBOX')).filter((n) => n.endsWith('.eml'));
+      assertEqual(inbox.sort().join(','), '1.eml,2.eml,5.eml');
+      assertEqual(fake.storeCommands.length, 0);
+      const unread = fake.messagesOf('INBOX').find((m) => m.uid === 2);
+      assertTrue(!!unread && !unread.flags.some((f) => /^\\Seen$/i.test(f)));
+    } finally {
+      fs.rmSync(dest, { recursive: true, force: true });
+      await fake.close();
+    }
+  });
+
+  await test('BODY.PEEK hang times out and retries the in-flight UID', async () => {
+    const fake = await startFakeImapServer({ user: USER, password: PASS });
+    const dest = tmpDir('snap-hang-');
+    const logs: string[] = [];
+    try {
+      fake.hangNextBodyPeeks = 1;
+      const out = await runReadOnlySnapshot({
+        target: TARGET(fake.port),
+        username: USER,
+        password: PASS,
+        dest,
+        execute: true,
+        freeBytes: AMPLE_DISK,
+        retry: fastRetry(),
+        peekTimeoutMs: () => 80,
+        log: (l) => logs.push(l),
+      });
+      assertTrue(out.ok, out.reason);
+      assertTrue(logs.some((l) => /reason=body-peek-timeout/.test(l)));
+      assertTrue(fs.existsSync(path.join(dest, 'INBOX', '1.eml')));
+    } finally {
+      fs.rmSync(dest, { recursive: true, force: true });
+      await fake.close();
+    }
+  });
+
+  await test('UIDVALIDITY change on reconnect fails closed without mixing', async () => {
+    const fake = await startFakeImapServer({ user: USER, password: PASS });
+    const dest = tmpDir('snap-uv2-');
+    try {
+      fake.destroyEveryBodyPeekAfter = 1;
+      fake.onBodyPeekDestroy = () => fake.setUidvalidity('INBOX', 777);
+      const out = await runReadOnlySnapshot({
+        target: TARGET(fake.port),
+        username: USER,
+        password: PASS,
+        dest,
+        execute: true,
+        freeBytes: AMPLE_DISK,
+        retry: fastRetry(3),
+      });
+      assertFalse(out.ok);
+      assertContains(out.reason, 'UIDVALIDITY');
+      assertTrue(fs.existsSync(path.join(dest, 'INBOX', '1.eml')));
+      assertFalse(fs.existsSync(path.join(dest, 'INBOX', '2.eml')));
+      const st = JSON.parse(fs.readFileSync(path.join(dest, 'snapshot-state.json'), 'utf8'));
+      assertFalse(st.complete);
+      assertTrue(st.folders.INBOX.doneUids.includes(1));
+      assertFalse(st.folders.INBOX.doneUids.includes(2));
+    } finally {
+      fs.rmSync(dest, { recursive: true, force: true });
+      await fake.close();
+    }
+  });
+
+  await test('LOGIN AUTHENTICATIONFAILED is not retried', async () => {
+    const fake = await startFakeImapServer({ user: USER, password: PASS });
+    const dest = tmpDir('snap-auth-');
+    const logs: string[] = [];
+    try {
+      const out = await runReadOnlySnapshot({
+        target: TARGET(fake.port),
+        username: USER,
+        password: 'wrong-password',
+        dest,
+        execute: true,
+        freeBytes: AMPLE_DISK,
+        retry: fastRetry(),
+        log: (l) => logs.push(l),
+      });
+      assertFalse(out.ok);
+      assertContains(out.reason, 'LOGIN failed');
+      assertFalse(logs.some((l) => /snapshot: retry /.test(l)));
+    } finally {
+      fs.rmSync(dest, { recursive: true, force: true });
+      await fake.close();
+    }
+  });
+
+  await test('retry cap exits nonzero with resumable 55bab0ba-shaped state', async () => {
+    const fake = await startFakeImapServer({ user: USER, password: PASS });
+    const dest = tmpDir('snap-cap-');
+    const logs: string[] = [];
+    try {
+      fake.destroyEveryBodyPeekAfter = 2;
+      const out = await runReadOnlySnapshot({
+        target: TARGET(fake.port),
+        username: USER,
+        password: PASS,
+        dest,
+        execute: true,
+        freeBytes: AMPLE_DISK,
+        retry: fastRetry(2),
+        log: (l) => logs.push(l),
+      });
+      assertFalse(out.ok);
+      assertContains(out.reason, 'retry cap');
+      assertTrue(logs.some((l) => /snapshot: retry 2\/2 reason=/.test(l)));
+      assertFalse(fs.existsSync(path.join(dest, 'snapshot-manifest.json')));
+      const st = JSON.parse(fs.readFileSync(path.join(dest, 'snapshot-state.json'), 'utf8'));
+      assertFalse(st.complete);
+      assertTrue(Object.keys(st.folders).length >= 1);
+      assertTrue(typeof st.folders[Object.keys(st.folders)[0]].uidvalidity === 'number');
+      assertTrue(Array.isArray(st.folders[Object.keys(st.folders)[0]].doneUids));
+      const g = destOverwriteGuard(dest);
+      assertTrue(g.ok && g.resumable);
+      fake.destroyEveryBodyPeekAfter = null;
+      const resume = await runReadOnlySnapshot({
+        target: TARGET(fake.port),
+        username: USER,
+        password: PASS,
+        dest,
+        execute: true,
+        freeBytes: AMPLE_DISK,
+        retry: fastRetry(),
+      });
+      assertTrue(resume.ok, resume.reason);
+      if (!resume.manifest) {
+        throw new Error('expected resumed manifest');
+      }
+      assertEqual(resume.manifest.files.length, resume.manifest.messageCount);
+      assertTrue(resume.manifest.files.length >= 9);
+    } finally {
+      fs.rmSync(dest, { recursive: true, force: true });
+      await fake.close();
+    }
+  });
+
+  await test('--verify is offline, detects tamper/missing, work-copy mismatch', async () => {
+    const fake = await startFakeImapServer({ user: USER, password: PASS });
+    const dest = tmpDir('snap-ver-');
+    const work = tmpDir('snap-ver-work-');
+    fs.rmSync(work, { recursive: true, force: true });
+    try {
+      const out = await runReadOnlySnapshot({
+        target: TARGET(fake.port),
+        username: USER,
+        password: PASS,
+        dest,
+        workCopy: work,
+        execute: true,
+        freeBytes: AMPLE_DISK,
+      });
+      assertTrue(out.ok, out.reason);
+      const good = verifySnapshotArchive(dest, work);
+      assertTrue(good.ok);
+      assertTrue(good.complete);
+      const vcli = await runSnapshotCli(['--verify', '--dest', dest, '--work-copy', work], {
+        stdin: { isTTY: false } as unknown as NodeJS.ReadStream,
+        stdout: { write: () => true } as unknown as NodeJS.WritableStream,
+        stderr: { write: () => true } as unknown as NodeJS.WritableStream,
+        env: { PATH: '/bin' },
+      });
+      assertEqual(vcli, 0);
+      const inbox1 = path.join(dest, 'INBOX', '1.eml');
+      const orig = fs.readFileSync(inbox1);
+      fs.writeFileSync(inbox1, Buffer.concat([orig, Buffer.from('x')]));
+      const tamper = verifySnapshotArchive(dest);
+      assertFalse(tamper.ok);
+      assertTrue(tamper.issues.some((i) => i.kind === 'hash' || i.kind === 'size'));
+      fs.writeFileSync(inbox1, orig);
+      fs.unlinkSync(inbox1);
+      const missing = verifySnapshotArchive(dest);
+      assertFalse(missing.ok);
+      assertTrue(
+        missing.issues.some((i) => i.kind === 'missing' || i.kind === 'count' || i.kind === 'hash')
+      );
+      fs.writeFileSync(inbox1, orig);
+      fs.writeFileSync(path.join(work, 'INBOX', '1.eml'), Buffer.from('local-tamper'));
+      const workBad = verifySnapshotArchive(dest, work);
+      assertFalse(workBad.ok);
+      assertTrue(workBad.issues.some((i) => i.kind === 'work-copy'));
+    } finally {
+      fs.rmSync(dest, { recursive: true, force: true });
+      fs.rmSync(work, { recursive: true, force: true });
+      await fake.close();
+    }
+  });
+
+  console.log('\nCategory: keychain / non-TTY / dest progress');
+  await test('security find argv is -s -a -w; missing/denied fail closed', () => {
+    const args = securityFindPasswordArgs(YAHOO_IMAP_KEYCHAIN_SERVICE, USER);
+    assertEqual(args[0], 'find-generic-password');
+    assertTrue(args.includes('-s'));
+    assertTrue(args.includes('-a'));
+    assertTrue(args.includes('-w'));
+    assertFalse(args.includes(PASS));
+    const missing = classifySecurityFindResult({
+      status: 44,
+      stdout: '',
+      stderr: 'could not be found',
+      argv: [SECURITY_BIN, ...args],
+    });
+    assertFalse(missing.ok);
+    if (missing.ok === false) assertEqual(missing.kind, 'missing');
+    const denied = classifySecurityFindResult({
+      status: 128,
+      stdout: '',
+      stderr: 'User canceled',
+      argv: [SECURITY_BIN, ...args],
+    });
+    assertFalse(denied.ok);
+    if (denied.ok === false) assertEqual(denied.kind, 'denied');
+    const linux = readYahooImapPasswordFromKeychain({ account: USER, platform: 'linux' });
+    assertFalse(linux.ok);
+  });
+
+  await test('non-TTY Yahoo without keychain still fail-closed; denied Keychain does not connect', async () => {
+    const calls: string[][] = [];
+    const code = await runSnapshotCli(
+      [
+        '--execute',
+        '--dest=/tmp/offline-snapshot-kc-denied',
+        '--username',
+        USER,
+        '--password-from-keychain',
+      ],
+      {
+        stdin: { isTTY: false, read: () => null } as unknown as NodeJS.ReadStream,
+        stdout: { write: () => true } as unknown as NodeJS.WritableStream,
+        stderr: { write: () => true } as unknown as NodeJS.WritableStream,
+        env: { PATH: '/bin' },
+        keychainExec: (file, args) => {
+          calls.push([file, ...args]);
+          return {
+            status: 128,
+            stdout: '',
+            stderr: 'User canceled',
+            argv: [file, ...args],
+          };
+        },
+      }
+    );
+    assertEqual(code, 1);
+    assertTrue(calls.length >= 1);
+    assertFalse(calls[0].includes(PASS));
+    assertTrue(calls[0].includes('-w'));
+  });
+
+  await test('non-TTY --password-from-keychain execute; secret not in logs/argv; progress+status files', async () => {
+    const fake = await startFakeImapServer({ user: USER, password: PASS });
+    const dest = tmpDir('snap-kc-');
+    const stderrChunks: string[] = [];
+    const stdoutChunks: string[] = [];
+    const spawned: string[][] = [];
+    try {
+      const code = await runSnapshotCli(
+        [
+          '--execute',
+          '--insecure-test-server',
+          '--host',
+          '127.0.0.1',
+          '--port',
+          String(fake.port),
+          '--username',
+          USER,
+          '--dest',
+          dest,
+          '--password-from-keychain',
+        ],
+        {
+          stdin: { isTTY: false, read: () => null } as unknown as NodeJS.ReadStream,
+          stdout: {
+            write: (s: string) => (stdoutChunks.push(String(s)), true),
+          } as NodeJS.WritableStream,
+          stderr: {
+            write: (s: string) => (stderrChunks.push(String(s)), true),
+          } as NodeJS.WritableStream,
+          env: { PATH: '/bin' },
+          keychainExec: (file, args) => {
+            spawned.push([file, ...args]);
+            assertEqual(file, SECURITY_BIN);
+            assertFalse(args.includes(PASS));
+            assertFalse(args.some((a) => a.includes(PASS)));
+            return {
+              status: 0,
+              stdout: PASS + '\n',
+              stderr: '',
+              argv: [file, ...args],
+            };
+          },
+        }
+      );
+      assertEqual(code, 0);
+      const joined = stdoutChunks.join('') + stderrChunks.join('');
+      assertFalse(joined.includes(PASS));
+      assertTrue(spawned.length >= 1);
+      assertTrue(fs.existsSync(path.join(dest, PROGRESS_LOG)));
+      assertTrue(fs.existsSync(path.join(dest, STATUS_FILE)));
+      const progress = fs.readFileSync(path.join(dest, PROGRESS_LOG), 'utf8');
+      assertFalse(progress.includes(PASS));
+      assertContains(progress, 'snapshot:');
+      const status = JSON.parse(fs.readFileSync(path.join(dest, STATUS_FILE), 'utf8'));
+      assertTrue(status.ok);
+      assertTrue(status.complete);
+      assertEqual(typeof status.sha256All, 'string');
+      assertFalse(JSON.stringify(status).includes(PASS));
     } finally {
       fs.rmSync(dest, { recursive: true, force: true });
       await fake.close();
