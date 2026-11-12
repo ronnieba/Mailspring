@@ -12,7 +12,7 @@ import { PassThrough } from 'stream';
 import { estimateBaselineAndWorkCopy } from './lib/core/offline-imap-snapshot-plan';
 import { displayFromRfc822, decodeRfc2047 } from './lib/core/offline-mime-display';
 import { readOfflineArchive } from './lib/core/offline-archive-format';
-import { fixtureRfc822, startFakeImapServer } from '../../src/offline-snapshot/fake-imap-server';
+import { fixtureRfc822, startFakeImapServer, FakeFolder } from '../../src/offline-snapshot/fake-imap-server';
 import {
   runReadOnlySnapshot,
   destOverwriteGuard,
@@ -24,13 +24,23 @@ import {
   YAHOO_IMAP_KEYCHAIN_SERVICE,
   SECURITY_BIN,
   classifySecurityFindResult,
+  classifyWindowsCredResult,
   readYahooImapPasswordFromKeychain,
   securityFindPasswordArgs,
+  windowsCredentialTarget,
+  windowsCredReadArgs,
 } from '../../src/offline-snapshot/keychain-password';
+import {
+  encodeArchiveRelPath,
+  encodeArchiveSegment,
+  maybeWindowsLongPath,
+} from '../../src/offline-snapshot/archive-path';
+import { freeBytesForPath } from '../../src/offline-snapshot/disk';
+import { startKeepAwake } from '../../src/offline-snapshot/keep-awake';
 import { PROGRESS_LOG, STATUS_FILE } from '../../src/offline-snapshot/progress';
 import { SnapshotAuthError } from '../../src/offline-snapshot/read-only-session';
 import { ReadOnlyImapSession } from '../../src/offline-snapshot/read-only-session';
-import { parseSnapshotArgv, runSnapshotCli, usage } from '../../src/offline-snapshot/cli';
+import { parseSnapshotArgv, runSnapshotCli, usage, isAbsoluteSnapshotPath } from '../../src/offline-snapshot/cli';
 import {
   argvLooksLikePasswordFlag,
   assertNoEnvSecrets,
@@ -77,6 +87,22 @@ function tmpDir(prefix: string): string {
   return fs.mkdtempSync(path.join(os.tmpdir(), prefix));
 }
 
+function posixSh(): string | null {
+  const candidates = [
+    path.join('C:\\Program Files', 'Git', 'bin', 'sh.exe'),
+    path.join('C:\\Program Files', 'Git', 'usr', 'bin', 'sh.exe'),
+    '/bin/sh',
+    '/usr/bin/sh',
+  ];
+  for (const c of candidates) {
+    if (fs.existsSync(c)) {
+      return c;
+    }
+  }
+  return 'sh';
+}
+
+
 function fastRetry(max = 8) {
   return {
     maxConsecutive: max,
@@ -104,7 +130,8 @@ async function run() {
     assertContains(script, 'BODY.PEEK');
     assertFalse(script.includes('openssl s_client'));
     assertFalse(/\bnc\b/.test(script));
-    const spawn = spawnSync('sh', [path.join(ROOT, 'scripts/offline-imap-snapshot.sh')]);
+    const sh = posixSh();
+    const spawn = spawnSync(sh || 'sh', [path.join(ROOT, 'scripts/offline-imap-snapshot.sh')]);
     assertEqual(spawn.status, 2);
   });
 
@@ -825,6 +852,152 @@ async function run() {
       await fake.close();
     }
   });
+
+
+  console.log('\nCategory: Windows path / cred / sanitization / launcher');
+  await test('dest and work-copy accept Windows and POSIX absolute paths; reject relative', () => {
+    assertTrue(isAbsoluteSnapshotPath('/tmp/archive'));
+    assertTrue(isAbsoluteSnapshotPath(path.resolve(os.tmpdir(), 'archive')));
+    if (process.platform === 'win32') {
+      assertTrue(isAbsoluteSnapshotPath('D:\\\\Yahoo-Offline\\\\baseline'));
+      assertTrue(isAbsoluteSnapshotPath('C:/Users/Public/archive'));
+    }
+    assertFalse(isAbsoluteSnapshotPath('relative/archive'));
+    assertFalse(isAbsoluteSnapshotPath(''));
+  });
+
+  await test('Windows Credential Manager target is service|account; missing/denied fail closed; linux stays macOS-only', () => {
+    const target = windowsCredentialTarget(YAHOO_IMAP_KEYCHAIN_SERVICE, USER);
+    assertEqual(target, YAHOO_IMAP_KEYCHAIN_SERVICE + '|' + USER);
+    const args = windowsCredReadArgs('scripts/windows-cred-read.ps1', target, USER);
+    assertTrue(args.includes('-File'));
+    assertTrue(args.includes('-Target'));
+    assertTrue(args.includes(target));
+    assertTrue(args.includes(USER));
+    assertFalse(args.includes(PASS));
+    const missing = classifyWindowsCredResult({
+      status: 44,
+      stdout: '',
+      stderr: 'item could not be found',
+      argv: ['powershell.exe', ...args],
+    });
+    assertFalse(missing.ok);
+    if (missing.ok === false) assertEqual(missing.kind, 'missing');
+    const denied = classifyWindowsCredResult({
+      status: 128,
+      stdout: '',
+      stderr: 'denied',
+      argv: ['powershell.exe', ...args],
+    });
+    assertFalse(denied.ok);
+    if (denied.ok === false) assertEqual(denied.kind, 'denied');
+    const linux = readYahooImapPasswordFromKeychain({ account: USER, platform: 'linux' });
+    assertFalse(linux.ok);
+  });
+
+  await test('archive folder names are encoded deterministically without collisions', () => {
+    assertEqual(encodeArchiveRelPath('INBOX'), 'INBOX');
+    assertEqual(encodeArchiveRelPath('Work:Urgent'), 'Work%3AUrgent');
+    assertEqual(encodeArchiveSegment('CON'), '%43ON');
+    assertEqual(encodeArchiveSegment('aux.txt'), '%61ux.txt');
+    const dotted = encodeArchiveSegment('folder.');
+    assertTrue(dotted.includes('%2E'));
+    const encodedPct = encodeArchiveRelPath('A%3AB');
+    assertTrue(encodedPct !== encodeArchiveRelPath('A:B'));
+    assertEqual(encodeArchiveRelPath('A:B'), 'A%3AB');
+    const long = maybeWindowsLongPath("D:\\" + 'a'.repeat(300), 'win32');
+    assertTrue(long.startsWith("\\\\?\\"));
+    const short = maybeWindowsLongPath("D:\\short", 'win32');
+    assertFalse(short.startsWith("\\\\?\\"));
+  });
+
+  await test('illegal IMAP folder names write sanitized paths and record mapping', async () => {
+    const folders: FakeFolder[] = [
+      {
+        raw: 'INBOX',
+        attrs: ['\\\\HasNoChildren'],
+        uidvalidity: 1,
+        uidnext: 2,
+        messages: [{ uid: 1, flags: ['\\\\Seen'], raw: fixtureRfc822({ subject: 'ok', body: 'ok-body' }) }],
+      },
+      {
+        raw: 'Work:Urgent',
+        attrs: ['\\\\HasNoChildren'],
+        uidvalidity: 2,
+        uidnext: 2,
+        messages: [{ uid: 1, flags: ['\\\\Seen'], raw: fixtureRfc822({ subject: 'urgent', body: 'urgent-body' }) }],
+      },
+      {
+        raw: 'CON',
+        attrs: ['\\\\HasNoChildren'],
+        uidvalidity: 3,
+        uidnext: 2,
+        messages: [{ uid: 1, flags: ['\\\\Seen'], raw: fixtureRfc822({ subject: 'reserved', body: 'reserved-body' }) }],
+      },
+    ];
+    const fake = await startFakeImapServer({ user: USER, password: PASS, folders });
+    const dest = tmpDir('snap-sanitize-');
+    try {
+      const out = await runReadOnlySnapshot({
+        target: { host: '127.0.0.1', port: fake.port, tls: false },
+        username: USER,
+        password: PASS,
+        dest,
+        execute: true,
+        freeBytes: AMPLE_DISK,
+      });
+      assertTrue(out.ok, out.reason);
+      assertTrue(!!out.manifest);
+      const mapping = out.manifest!.folderPathMapping;
+      const work = mapping.find((m) => m.original === 'Work:Urgent');
+      const reserved = mapping.find((m) => m.original === 'CON');
+      assertTrue(!!work);
+      assertEqual(work!.stored, 'Work%3AUrgent');
+      assertTrue(!!reserved);
+      assertEqual(reserved!.stored, '%43ON');
+      assertTrue(fs.existsSync(path.join(dest, 'Work%3AUrgent', '1.eml')));
+      assertTrue(fs.existsSync(path.join(dest, '%43ON', '1.eml')));
+      assertFalse(fs.existsSync(path.join(dest, 'Work:Urgent')));
+      assertFalse(fs.existsSync(path.join(dest, 'CON')));
+    } finally {
+      fs.rmSync(dest, { recursive: true, force: true });
+      await fake.close();
+    }
+  });
+
+  await test('Windows launcher refuses no-args and --password', () => {
+    const ps1 = path.join(ROOT, 'scripts', 'offline-imap-snapshot.ps1');
+    assertTrue(fs.existsSync(ps1));
+    const script = fs.readFileSync(ps1, 'utf8');
+    assertContains(script, 'REFUSES');
+    assertContains(script, 'BODY.PEEK');
+    if (process.platform === 'win32') {
+      const none = spawnSync('powershell.exe', ['-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', ps1], {
+        encoding: 'utf8',
+      });
+      assertEqual(none.status, 2);
+      const pw = spawnSync(
+        'powershell.exe',
+        ['-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', ps1, '--execute', '--password=secret'],
+        { encoding: 'utf8' }
+      );
+      assertEqual(pw.status, 1);
+      const joined = String(pw.stdout || '') + String(pw.stderr || '');
+      assertFalse(joined.includes('secret'));
+    }
+  });
+
+  await test('free disk space can be read on this platform', () => {
+    const n = freeBytesForPath(os.tmpdir());
+    assertTrue(n != null && n > 0);
+  });
+
+  await test('keep-awake start/release is safe', () => {
+    const handle = startKeepAwake();
+    handle.release();
+    handle.release();
+  });
+
 
   console.log('\n' + '='.repeat(40));
   console.log(`Results: ${passed} passed, ${failed} failed`);

@@ -36,6 +36,9 @@ import {
   SnapshotStatus,
 } from './progress';
 import { SnapshotConnectTarget } from './yahoo-config';
+import { encodeArchiveRelPath, mappingsForFolderPaths, toFsPath } from './archive-path';
+import type { FolderPathMapping } from './archive-path';
+import { startKeepAwake } from './keep-awake';
 
 export { verifySnapshotArchive } from './archive-hash';
 export { bodyPeekTimeoutMs, classifySnapshotError } from './retry';
@@ -72,6 +75,7 @@ export type SnapshotManifest = {
   sha256All: string;
   files: HashedEml[];
   sizeMismatches: SizeMismatch[];
+  folderPathMapping: FolderPathMapping[];
   disk: {
     rfc822Bytes: number;
     recommendedFreeBytes: number;
@@ -197,7 +201,7 @@ function atomicWriteEml(dir: string, uid: number, raw: Buffer) {
 }
 
 function folderDir(dest: string, unicodePath: string): string {
-  return path.join(dest, unicodePath.replace(/[\\/]/g, path.sep));
+  return toFsPath(dest, encodeArchiveRelPath(unicodePath));
 }
 
 export async function runReadOnlySnapshot(opts: {
@@ -389,6 +393,7 @@ export async function runReadOnlySnapshot(opts: {
       sha256All: sha,
       files: [],
       sizeMismatches: [],
+      folderPathMapping: mappingsForFolderPaths(folderRows.map((f) => f.path)),
       disk: {
         rfc822Bytes: sizes.reduce((a, s) => a + (s || 0), 0),
         recommendedFreeBytes: disk.recommendedFreeBytes,
@@ -424,7 +429,9 @@ export async function runReadOnlySnapshot(opts: {
       return { ok: false, reason: disk.reason, manifest: manifestBase(false, ''), preflight: true };
     }
 
-    const guard = destOverwriteGuard(opts.dest);
+    const awake = startKeepAwake();
+  try {
+  const guard = destOverwriteGuard(opts.dest);
     if (!guard.ok) {
       try {
         await session?.logout();
@@ -498,7 +505,7 @@ export async function runReadOnlySnapshot(opts: {
       const sizeByUid = new Map(sizeRows.map((r) => [r.uid, r.size]));
       for (const r of sizeRows) {
         if (typeof r.size === 'number') {
-          rfc822ByRel.set(`${rec.path}/${r.uid}.eml`, r.size);
+          rfc822ByRel.set(`${encodeArchiveRelPath(rec.path)}/${r.uid}.eml`, r.size);
         }
       }
       for (const uid of toFetch) {
@@ -628,6 +635,9 @@ export async function runReadOnlySnapshot(opts: {
       manifest,
       preflight: false,
     };
+  } finally {
+    awake.release();
+  }
   } catch (err) {
     try {
       await session?.logout();

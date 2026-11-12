@@ -13,7 +13,7 @@ export type DiskCheck = {
   unknownSizes: number;
 };
 
-export function freeBytesForPath(p: string): number | null {
+export function freeBytesForPath(p: string, platform: NodeJS.Platform = process.platform): number | null {
   const resolved = path.resolve(p);
   let probe = resolved;
   try {
@@ -25,18 +25,59 @@ export function freeBytesForPath(p: string): number | null {
         statfsSync?: (p: string) => { bavail: number | bigint; bsize: number | bigint };
       }
     ).statfsSync;
-    if (typeof statfs !== 'function') {
-      return freeBytesFromDf(probe);
+    if (typeof statfs === 'function') {
+      try {
+        const s = statfs(probe);
+        const bavail = typeof s.bavail === 'bigint' ? Number(s.bavail) : s.bavail;
+        const bsize = typeof s.bsize === 'bigint' ? Number(s.bsize) : s.bsize;
+        if (Number.isFinite(bavail) && Number.isFinite(bsize)) {
+          return bavail * bsize;
+        }
+      } catch {
+        // fall through to platform fallback
+      }
     }
-    const s = statfs(probe);
-    const bavail = typeof s.bavail === 'bigint' ? Number(s.bavail) : s.bavail;
-    const bsize = typeof s.bsize === 'bigint' ? Number(s.bsize) : s.bsize;
-    if (!Number.isFinite(bavail) || !Number.isFinite(bsize)) {
+    if (platform === 'win32') {
+      return freeBytesFromWindows(probe);
+    }
+    return freeBytesFromDf(probe);
+  } catch {
+    if (platform === 'win32') {
+      return freeBytesFromWindows(probe);
+    }
+    return freeBytesFromDf(probe);
+  }
+}
+
+export function freeBytesFromWindows(p: string): number | null {
+  try {
+    const resolved = path.resolve(p);
+    const root = path.parse(resolved).root;
+    if (!root) {
       return null;
     }
-    return bavail * bsize;
+    const out = execFileSync(
+      'powershell.exe',
+      [
+        '-NoProfile',
+        '-NonInteractive',
+        '-Command',
+        '[System.IO.DriveInfo]::new($env:OFFLINE_SNAP_DRIVE).AvailableFreeSpace',
+      ],
+      {
+        encoding: 'utf8',
+        timeout: 15000,
+        env: { ...process.env, OFFLINE_SNAP_DRIVE: root },
+        windowsHide: true,
+      }
+    );
+    const n = parseInt(String(out).trim(), 10);
+    if (!Number.isFinite(n) || n < 0) {
+      return null;
+    }
+    return n;
   } catch {
-    return freeBytesFromDf(probe);
+    return null;
   }
 }
 

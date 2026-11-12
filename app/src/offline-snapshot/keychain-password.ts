@@ -1,13 +1,19 @@
 /**
- * Opt-in Yahoo IMAP password from a dedicated macOS login Keychain item.
+ * Opt-in Yahoo IMAP password from a dedicated macOS login Keychain item
+ * or a dedicated Windows Credential Manager generic credential.
  * Default service: "Mailspring-offline Yahoo IMAP". Account is --username.
- * Secret is captured from `security find-generic-password -w` stdout in-process
- * only — never argv/env/logs/disk. Denied/locked/missing is fail-closed.
+ * Secret is captured from `security find-generic-password -w` or CredRead
+ * stdout in-process only — never argv/env/logs/disk. Denied/locked/missing
+ * is fail-closed.
  */
 import { spawnSync } from 'child_process';
+import * as fs from 'fs';
+import * as path from 'path';
 
 export const YAHOO_IMAP_KEYCHAIN_SERVICE = 'Mailspring-offline Yahoo IMAP';
 export const SECURITY_BIN = '/usr/bin/security';
+export const WINDOWS_POWERSHELL = 'powershell.exe';
+export const WINDOWS_CRED_READ_SCRIPT = 'windows-cred-read.ps1';
 
 export type KeychainFailKind = 'missing' | 'denied' | 'locked' | 'error';
 
@@ -28,6 +34,30 @@ export function securityFindPasswordArgs(service: string, account: string): stri
   return ['find-generic-password', '-s', service, '-a', account, '-w'];
 }
 
+export function windowsCredentialTarget(service: string, account: string): string {
+  return `${service}|${account}`;
+}
+
+export function windowsCredReadScriptPath(scriptsDir?: string): string {
+  const dir = scriptsDir || path.resolve(__dirname, '../../../scripts');
+  return path.join(dir, WINDOWS_CRED_READ_SCRIPT);
+}
+
+export function windowsCredReadArgs(scriptPath: string, target: string, account: string): string[] {
+  return [
+    '-NoProfile',
+    '-NonInteractive',
+    '-ExecutionPolicy',
+    'Bypass',
+    '-File',
+    scriptPath,
+    '-Target',
+    target,
+    '-UserName',
+    account,
+  ];
+}
+
 export function defaultSecurityExec(file: string, args: string[]): KeychainExecResult {
   const r = spawnSync(file, args, {
     encoding: 'utf8',
@@ -42,10 +72,14 @@ export function defaultSecurityExec(file: string, args: string[]): KeychainExecR
   };
 }
 
-export function classifySecurityFindResult(result: KeychainExecResult): KeychainReadResult {
-  const stdout = String(result.stdout || '')
+function stripTrailingNewline(s: string): string {
+  return String(s || '')
     .replace(/\r\n/g, '\n')
     .replace(/\n$/, '');
+}
+
+export function classifySecurityFindResult(result: KeychainExecResult): KeychainReadResult {
+  const stdout = stripTrailingNewline(result.stdout);
   const stderr = String(result.stderr || '');
   const status = result.status;
   if (status === 0 && stdout) {
@@ -63,7 +97,7 @@ export function classifySecurityFindResult(result: KeychainExecResult): Keychain
     };
   }
   if (
-    /User interaction is not allowed|interaction not allowed|errSecInteractionNotAllowed/i.test(
+    /User interaction is not allowed|interaction not allowed|errSecItemNotAllowed|errSecInteractionNotAllowed/i.test(
       stderr
     )
   ) {
@@ -100,11 +134,53 @@ export function classifySecurityFindResult(result: KeychainExecResult): Keychain
   };
 }
 
+export function classifyWindowsCredResult(result: KeychainExecResult): KeychainReadResult {
+  const stdout = stripTrailingNewline(result.stdout);
+  const stderr = String(result.stderr || '');
+  const status = result.status;
+  if (status === 0 && stdout) {
+    return { ok: true, secret: stdout };
+  }
+  if (status === 44 || /could not be found|item could not be found|empty password/i.test(stderr)) {
+    return {
+      ok: false,
+      kind: 'missing',
+      reason:
+        'Credential Manager item not found. Store a generic credential (target Mailspring-offline Yahoo IMAP|<username>, user = --username) with scripts/store-yahoo-imap-password.ps1. No password fallback.',
+    };
+  }
+  if (status === 128 || /denied|canceled|cancelled/i.test(stderr)) {
+    return {
+      ok: false,
+      kind: 'denied',
+      reason:
+        'Credential Manager access denied or cancelled. Retry after allowing access. No password fallback.',
+    };
+  }
+  if (status === 0 && !stdout) {
+    return {
+      ok: false,
+      kind: 'missing',
+      reason: 'Credential Manager item returned an empty password. No password fallback.',
+    };
+  }
+  return {
+    ok: false,
+    kind: 'error',
+    reason: 'Credential Manager lookup failed. No password fallback.',
+  };
+}
+
+function argvContainsForbiddenSecret(argv: string[]): boolean {
+  return /test-password-not-yahoo/i.test(argv.join(' '));
+}
+
 export function readYahooImapPasswordFromKeychain(opts: {
   account: string;
   service?: string;
   execFile?: KeychainExec;
   platform?: NodeJS.Platform;
+  scriptsDir?: string;
 }): KeychainReadResult {
   const account = String(opts.account || '').trim();
   if (!account) {
@@ -115,32 +191,86 @@ export function readYahooImapPasswordFromKeychain(opts: {
     return { ok: false, kind: 'error', reason: 'Keychain service is empty' };
   }
   const platform = opts.platform || process.platform;
-  if (platform !== 'darwin' && !opts.execFile) {
-    return {
-      ok: false,
-      kind: 'error',
-      reason: 'Keychain password is macOS only',
-    };
+
+  if (opts.execFile) {
+    const execFile = opts.execFile;
+    const args = securityFindPasswordArgs(service, account);
+    let result: KeychainExecResult;
+    try {
+      result = execFile(SECURITY_BIN, args);
+    } catch {
+      return {
+        ok: false,
+        kind: 'error',
+        reason: 'Keychain lookup failed (denied, locked, or error). No password fallback.',
+      };
+    }
+    if (argvContainsForbiddenSecret(result.argv)) {
+      return {
+        ok: false,
+        kind: 'error',
+        reason: 'Keychain lookup refused: secret must not appear on argv',
+      };
+    }
+    return classifySecurityFindResult(result);
   }
-  const execFile = opts.execFile || defaultSecurityExec;
-  const args = securityFindPasswordArgs(service, account);
-  let result: KeychainExecResult;
-  try {
-    result = execFile(SECURITY_BIN, args);
-  } catch {
-    return {
-      ok: false,
-      kind: 'error',
-      reason: 'Keychain lookup failed (denied, locked, or error). No password fallback.',
-    };
+
+  if (platform === 'darwin') {
+    const args = securityFindPasswordArgs(service, account);
+    let result: KeychainExecResult;
+    try {
+      result = defaultSecurityExec(SECURITY_BIN, args);
+    } catch {
+      return {
+        ok: false,
+        kind: 'error',
+        reason: 'Keychain lookup failed (denied, locked, or error). No password fallback.',
+      };
+    }
+    if (argvContainsForbiddenSecret(result.argv)) {
+      return {
+        ok: false,
+        kind: 'error',
+        reason: 'Keychain lookup refused: secret must not appear on argv',
+      };
+    }
+    return classifySecurityFindResult(result);
   }
-  const argvJoined = result.argv.join(' ');
-  if (/test-password-not-yahoo/i.test(argvJoined)) {
-    return {
-      ok: false,
-      kind: 'error',
-      reason: 'Keychain lookup refused: secret must not appear on argv',
-    };
+
+  if (platform === 'win32') {
+    const script = windowsCredReadScriptPath(opts.scriptsDir);
+    if (!fs.existsSync(script)) {
+      return {
+        ok: false,
+        kind: 'error',
+        reason: 'Credential Manager helper script is missing. No password fallback.',
+      };
+    }
+    const target = windowsCredentialTarget(service, account);
+    const args = windowsCredReadArgs(script, target, account);
+    let result: KeychainExecResult;
+    try {
+      result = defaultSecurityExec(WINDOWS_POWERSHELL, args);
+    } catch {
+      return {
+        ok: false,
+        kind: 'error',
+        reason: 'Credential Manager lookup failed. No password fallback.',
+      };
+    }
+    if (argvContainsForbiddenSecret(result.argv)) {
+      return {
+        ok: false,
+        kind: 'error',
+        reason: 'Keychain lookup refused: secret must not appear on argv',
+      };
+    }
+    return classifyWindowsCredResult(result);
   }
-  return classifySecurityFindResult(result);
+
+  return {
+    ok: false,
+    kind: 'error',
+    reason: 'Keychain password is macOS only',
+  };
 }

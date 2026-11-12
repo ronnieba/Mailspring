@@ -16,6 +16,12 @@ import {
   obtainSnapshotSecret,
 } from './secret-input';
 import { resolveSnapshotTarget } from './yahoo-config';
+import * as path from 'path';
+
+
+export function isAbsoluteSnapshotPath(p: string): boolean {
+  return typeof p === 'string' && p.length > 0 && path.isAbsolute(p);
+}
 
 export type SnapshotCliArgs = {
   dest: string | null;
@@ -94,8 +100,10 @@ export function usage(): string {
     '',
     '  --preflight-only --username EMAIL',
     '  --execute --dest /abs/archive --username EMAIL [--work-copy /abs/work]',
-    '  --password-from-keychain [--keychain-service NAME]  (non-TTY Mac; login Keychain)',
+    '  --password-from-keychain [--keychain-service NAME]',
+    '    Mac: login Keychain. Windows: Credential Manager (see scripts/store-yahoo-imap-password.ps1).',
     '  --verify --dest /abs/archive [--work-copy /abs/work]  (offline, no password)',
+    '  dest/work-copy must be an absolute path (POSIX or Windows).',
     '  Fake tests: --insecure-test-server --host 127.0.0.1 --port N --secret-from-stdin',
     '',
     'Does not connect to Yahoo unless --execute or --preflight-only (TTY prompt or --password-from-keychain).',
@@ -141,11 +149,11 @@ export async function runSnapshotCli(
       io.stderr.write('offline-imap-snapshot: --verify requires --dest (absolute)\n');
       return 1;
     }
-    if (!args.dest.startsWith('/')) {
+    if (!isAbsoluteSnapshotPath(args.dest)) {
       io.stderr.write('offline-imap-snapshot: --dest must be absolute\n');
       return 1;
     }
-    if (args.workCopy && !args.workCopy.startsWith('/')) {
+    if (args.workCopy && !isAbsoluteSnapshotPath(args.workCopy)) {
       io.stderr.write('offline-imap-snapshot: --work-copy must be absolute\n');
       return 1;
     }
@@ -207,11 +215,11 @@ export async function runSnapshotCli(
     io.stderr.write('offline-imap-snapshot: --execute requires --dest (absolute)\n');
     return 1;
   }
-  if (args.dest && !args.dest.startsWith('/')) {
+  if (args.dest && !isAbsoluteSnapshotPath(args.dest)) {
     io.stderr.write('offline-imap-snapshot: --dest must be absolute\n');
     return 1;
   }
-  if (args.workCopy && !args.workCopy.startsWith('/')) {
+  if (args.workCopy && !isAbsoluteSnapshotPath(args.workCopy)) {
     io.stderr.write('offline-imap-snapshot: --work-copy must be absolute\n');
     return 1;
   }

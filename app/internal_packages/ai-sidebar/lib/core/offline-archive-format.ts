@@ -6,6 +6,20 @@
 import * as crypto from 'crypto';
 import * as fs from 'fs';
 import * as path from 'path';
+
+/** Join an archive root and relative path without turning POSIX /roots into Windows backslash roots. */
+export function joinArchiveFsPath(root: string, rel = ''): string {
+  const normRel = String(rel || '').replace(/\\/g, '/');
+  if (!normRel) {
+    return root.startsWith('/') && !/^[A-Za-z]:/.test(root) ? root.replace(/\\/g, '/') : root;
+  }
+  if (root.startsWith('/') && !/^[A-Za-z]:/.test(root)) {
+    const base = root.replace(/\\/g, '/').replace(/\/$/, '');
+    return base + '/' + normRel.replace(/^\//, '');
+  }
+  return path.join(root, normRel.split('/').join(path.sep));
+}
+
 import { displayFromRfc822 } from './offline-mime-display';
 
 export { stripRemoteHtml } from './offline-mime-display';
@@ -187,7 +201,7 @@ export function messageFromRfc822(
 }
 
 function listFilesRecursive(root: string, io: FsLike, rel = ''): string[] {
-  const abs = rel ? path.join(root, rel) : root;
+  const abs = (rel ? path.join(root, rel) : root).replace(/\\/g, '/');
   const entries = io.readdirSync(abs, { withFileTypes: true }) as Array<{
     name: string;
     isDirectory(): boolean;
@@ -195,7 +209,7 @@ function listFilesRecursive(root: string, io: FsLike, rel = ''): string[] {
   }>;
   const out: string[] = [];
   for (const ent of entries) {
-    const childRel = rel ? path.join(rel, ent.name) : ent.name;
+    const childRel = (rel ? path.join(rel, ent.name) : ent.name).replace(/\\/g, '/');
     if (ent.name === '.' || ent.name === '..') {
       continue;
     }
@@ -229,7 +243,7 @@ export function readOfflineArchive(
 
   for (const rel of files.sort()) {
     const lower = rel.toLowerCase();
-    const abs = path.join(originalRoot, rel);
+    const abs = joinArchiveFsPath(originalRoot, rel);
     if (lower.endsWith('.eml') || /\/(cur|new)\/[^/]+$/.test(rel.replace(/\\/g, '/'))) {
       try {
         const raw = io.readFileSync(abs).toString('latin1');
@@ -294,8 +308,8 @@ export function materializeWorkingCopy(opts: {
   }
   opts.io.mkdirSync(opts.workRoot, { recursive: true });
   for (const rel of files) {
-    const src = path.join(opts.originalRoot, rel);
-    const dest = path.join(opts.workRoot, rel);
+    const src = joinArchiveFsPath(opts.originalRoot, rel);
+    const dest = joinArchiveFsPath(opts.workRoot, rel);
     const buf = opts.io.readFileSync(src);
     originalHashes[rel] = sha256Hex(buf);
     opts.io.mkdirSync(path.dirname(dest), { recursive: true });
@@ -303,7 +317,7 @@ export function materializeWorkingCopy(opts: {
     copied += 1;
   }
   opts.io.writeFileSync(
-    path.join(opts.workRoot, 'offline-work-copy.json'),
+    joinArchiveFsPath(opts.workRoot, 'offline-work-copy.json'),
     JSON.stringify({ originalRoot: opts.originalRoot, copied, originalHashes }, null, 2)
   );
   return { copied, originalHashes };
@@ -315,7 +329,7 @@ export function originalHashesUnchanged(
   io: FsLike
 ): boolean {
   for (const rel of Object.keys(expected)) {
-    const buf = io.readFileSync(path.join(originalRoot, rel));
+    const buf = io.readFileSync(joinArchiveFsPath(originalRoot, rel));
     if (sha256Hex(buf) !== expected[rel]) {
       return false;
     }

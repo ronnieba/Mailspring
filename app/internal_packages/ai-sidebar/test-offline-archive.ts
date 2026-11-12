@@ -505,7 +505,9 @@ async function run() {
     assertFalse(script.includes('openssl s_client'));
     assertFalse(/\bnc\b/.test(script));
     assertFalse(script.includes('imap.mail.yahoo.com:993"'));
-    const spawn = require('child_process').spawnSync('sh', [
+    const gitSh = path.join('C:\\Program Files', 'Git', 'bin', 'sh.exe');
+    const sh = fs.existsSync(gitSh) ? gitSh : 'sh';
+    const spawn = require('child_process').spawnSync(sh, [
       path.join(ROOT, 'scripts/offline-imap-snapshot.sh'),
     ]);
     assertEqual(spawn.status, 2);
