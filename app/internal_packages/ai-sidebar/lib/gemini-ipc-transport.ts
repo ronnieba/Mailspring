@@ -31,7 +31,8 @@ export function createGeminiIpcTransport(): GeminiDemoTransport {
         | 'demo-synthetic'
         | 'real-selected-single'
         | 'offline-archive-selected'
-        | 'offline-archive-scoped';
+        | 'offline-archive-scoped'
+        | 'offline-draft-proofread';
       allowedMessageId?: string;
       snapshotEpoch?: number;
       scopeFacts?: GeminiScopeFacts;
@@ -42,6 +43,22 @@ export function createGeminiIpcTransport(): GeminiDemoTransport {
       return ipcRenderer.invoke(GEMINI_IPC_CANCEL, generation);
     },
   };
+}
+
+/**
+ * Local drafts: proofread one draft with Gemini (explicit click only).
+ * Sends the draft text and nothing else; the main process records usage.
+ */
+export function proofreadDraftViaIpc(
+  generation: number,
+  draftText: string
+): Promise<GeminiHostResult> {
+  return ipcRenderer.invoke(GEMINI_IPC_QUERY, {
+    generation,
+    query: draftText,
+    messages: [],
+    mode: 'offline-draft-proofread',
+  });
 }
 
 /** Local usage ledger (main process). Counts and estimates only. */

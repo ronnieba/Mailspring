@@ -1,5 +1,6 @@
 import React from 'react';
 import classNames from 'classnames';
+import { offlineDraftsStore } from './offline-drafts-store';
 import { Actions, WorkspaceStore } from 'mailspring-exports';
 import {
   OfflineLang,
@@ -185,6 +186,18 @@ export class OfflinePaneToggles extends React.Component {
         >
           <span className="offline-pane-toggle-icon">🎨</span>
           {tr('ערכה', 'Theme')}
+        </button>
+        <button
+          className="offline-pane-toggle offline-new-draft-btn"
+          data-offline-new-draft="true"
+          title={tr(
+            'טיוטה חדשה — נשמרת רק במחשב, אין שליחה',
+            'New draft — saved only on this computer, no sending'
+          )}
+          onClick={() => offlineDraftsStore.createNew()}
+        >
+          <span className="offline-pane-toggle-icon">✉️</span>
+          {tr('טיוטה', 'Draft')}
         </button>
         <button
           className="offline-pane-toggle offline-lang-btn"

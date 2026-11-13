@@ -2,6 +2,8 @@ import React from 'react';
 import classNames from 'classnames';
 import { tr, offlineDir, offlineDateLocale } from '../core/offline-i18n';
 import { offlineMailStore } from './offline-mail-store';
+import { offlineDraftsStore } from './offline-drafts-store';
+import { OfflineDraftsList } from './offline-drafts-view';
 import { OfflineStoreComponent } from './use-offline-store';
 import { OfflineIndexEntry } from '../core/offline-mail-index';
 
@@ -161,6 +163,9 @@ export class OfflineMessageList extends OfflineStoreComponent<Record<string, nev
   }
 
   render() {
+    if (offlineDraftsStore.showing) {
+      return <OfflineDraftsList />;
+    }
     const s = offlineMailStore;
     const rows = s.visibleMessages();
     const folder = s.findFolder(s.currentFolder);

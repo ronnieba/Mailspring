@@ -2,6 +2,7 @@ import React from 'react';
 import classNames from 'classnames';
 import { tr } from '../core/offline-i18n';
 import { offlineMailStore } from './offline-mail-store';
+import { offlineDraftsStore } from './offline-drafts-store';
 import { OfflineStoreComponent } from './use-offline-store';
 import { OfflineFolderNode } from '../core/offline-mail-index';
 
@@ -26,7 +27,10 @@ export class OfflineFolderSidebar extends OfflineStoreComponent {
           style={{ paddingInlineStart: 4 + node.depth * 16 }}
           data-offline-folder-row="true"
           data-folder-count={node.count}
-          onClick={() => s.setFolder(node.path)}
+          onClick={() => {
+            offlineDraftsStore.hide();
+            s.setFolder(node.path);
+          }}
           title={node.displayPath}
         >
           {hasChildren ? (
@@ -119,6 +123,23 @@ export class OfflineFolderSidebar extends OfflineStoreComponent {
             )}
           </div>
         ) : null}
+        <div
+          className={classNames('offline-folder-row offline-drafts-entry', {
+            selected: offlineDraftsStore.showing,
+          })}
+          role="button"
+          data-offline-drafts-entry="true"
+          data-drafts-count={offlineDraftsStore.count}
+          title={tr(
+            'טיוטות שנשמרו רק במחשב הזה (אין שליחה)',
+            'Drafts saved only on this computer (no sending)'
+          )}
+          onClick={() => offlineDraftsStore.showList()}
+        >
+          <span className="offline-folder-toggle-spacer" aria-hidden="true" />
+          <span className="offline-folder-name">📝 {tr('טיוטות מקומיות', 'Local drafts')}</span>
+          <span className="offline-folder-count">{offlineDraftsStore.count}</span>
+        </div>
         <div className="offline-folder-tree" role="tree" aria-label={tr('תיקיות', 'Folders')}>
           {s.folders.map((n) => this._renderNode(n))}
         </div>

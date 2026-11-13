@@ -16,6 +16,10 @@ import {
   GEMINI_DISPLAY_NAME,
   GEMINI_OFFLINE_ARCHIVE_SYSTEM_INSTRUCTION,
   GEMINI_OFFLINE_SCOPED_SYSTEM_INSTRUCTION,
+  GEMINI_OFFLINE_PROOFREAD_SYSTEM_INSTRUCTION,
+  OFFLINE_PROOFREAD_MAX_CHARS,
+  OFFLINE_PROOFREAD_REASON,
+  buildProofreadInput,
   geminiUiLangFromLocale,
   localizeOfflineInstruction,
   GeminiUiLang,
@@ -509,6 +513,27 @@ function admitOfflineScopedQuery(req: GeminiDemoQueryInput): GeminiHostFailure |
   return null;
 }
 
+/** Proofread: one draft text, no mail at all. */
+export function admitOfflineProofreadQuery(req: GeminiDemoQueryInput): GeminiHostFailure | null {
+  if (req.mode !== 'offline-draft-proofread') {
+    return fail('offline-archive-scope', OFFLINE_PROOFREAD_REASON);
+  }
+  if (!Array.isArray(req.messages) || req.messages.length !== 0) {
+    return fail('offline-archive-scope', OFFLINE_PROOFREAD_REASON);
+  }
+  if (
+    typeof req.query !== 'string' ||
+    !req.query.trim() ||
+    req.query.length > OFFLINE_PROOFREAD_MAX_CHARS
+  ) {
+    return fail('offline-archive-scope', OFFLINE_PROOFREAD_REASON);
+  }
+  if (req.allowedMessageId !== undefined || req.scopeFacts !== undefined) {
+    return fail('offline-archive-scope', OFFLINE_PROOFREAD_REASON);
+  }
+  return null;
+}
+
 function admitRealSelectedQuery(req: GeminiDemoQueryInput): GeminiHostFailure | null {
   if (req.mode !== 'real-selected-single') {
     return fail('real-selected-scope', REAL_SELECTED_SCOPE_REASON);
@@ -565,7 +590,13 @@ export async function runGeminiDemoQuery(
     return fail('unconfigured', status.reason);
   }
   const offlineScoped = offlineArchive && req.mode === 'offline-archive-scoped';
-  if (offlineScoped) {
+  const offlineProofread = offlineArchive && req.mode === 'offline-draft-proofread';
+  if (offlineProofread) {
+    const scoped = admitOfflineProofreadQuery(req);
+    if (scoped) {
+      return scoped;
+    }
+  } else if (offlineScoped) {
     const scoped = admitOfflineScopedQuery(req);
     if (scoped) {
       return scoped;
@@ -623,19 +654,23 @@ export async function runGeminiDemoQuery(
 
     const body = JSON.stringify({
       model: GEMINI_DEMO_MODEL,
-      system_instruction: offlineScoped
-        ? localizeOfflineInstruction(GEMINI_OFFLINE_SCOPED_SYSTEM_INSTRUCTION, currentUiLang())
-        : offlineArchive
-          ? localizeOfflineInstruction(GEMINI_OFFLINE_ARCHIVE_SYSTEM_INSTRUCTION, currentUiLang())
-          : realSelectedSummary
-            ? GEMINI_REAL_SELECTED_SYSTEM_INSTRUCTION
-            : GEMINI_SYSTEM_INSTRUCTION,
-      input: buildUntrustedGeminiInput(req.query, req.messages, {
-        includeBody: realSelectedSummary || offlineArchive,
-        scopeFacts: offlineScoped
-          ? sanitizeGeminiScopeFacts(req.scopeFacts, req.messages.length)
-          : undefined,
-      }),
+      system_instruction: offlineProofread
+        ? GEMINI_OFFLINE_PROOFREAD_SYSTEM_INSTRUCTION
+        : offlineScoped
+          ? localizeOfflineInstruction(GEMINI_OFFLINE_SCOPED_SYSTEM_INSTRUCTION, currentUiLang())
+          : offlineArchive
+            ? localizeOfflineInstruction(GEMINI_OFFLINE_ARCHIVE_SYSTEM_INSTRUCTION, currentUiLang())
+            : realSelectedSummary
+              ? GEMINI_REAL_SELECTED_SYSTEM_INSTRUCTION
+              : GEMINI_SYSTEM_INSTRUCTION,
+      input: offlineProofread
+        ? buildProofreadInput(req.query)
+        : buildUntrustedGeminiInput(req.query, req.messages, {
+            includeBody: realSelectedSummary || offlineArchive,
+            scopeFacts: offlineScoped
+              ? sanitizeGeminiScopeFacts(req.scopeFacts, req.messages.length)
+              : undefined,
+          }),
       response_format: GEMINI_RESPONSE_FORMAT,
     });
 

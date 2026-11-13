@@ -88,3 +88,8 @@ app/src/spellcheck/offline-prototype/package-lock.json
 
 # Compiled DEMO Gemini Keychain helper (source is committed; build on Mac)
 /app/native/gemini-demo-keychain/gemini-demo-keychain
+
+# Offline experiment: local spell-check dictionaries are copied at runtime, never committed
+*.bdic
+*.aff
+*.dic

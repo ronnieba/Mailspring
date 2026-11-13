@@ -103,7 +103,8 @@ function parseQuery(raw: unknown): GeminiDemoQueryInput {
     r.mode === 'real-selected-single' ||
     r.mode === 'demo-synthetic' ||
     r.mode === 'offline-archive-selected' ||
-    r.mode === 'offline-archive-scoped'
+    r.mode === 'offline-archive-scoped' ||
+    r.mode === 'offline-draft-proofread'
       ? r.mode
       : undefined;
   const allowedMessageId = typeof r.allowedMessageId === 'string' ? r.allowedMessageId : undefined;
@@ -111,7 +112,8 @@ function parseQuery(raw: unknown): GeminiDemoQueryInput {
     typeof r.snapshotEpoch === 'number' && Number.isFinite(r.snapshotEpoch)
       ? r.snapshotEpoch
       : undefined;
-  const messages = asMessages(r.messages);
+  // Proofreading carries draft text only; any mail passed along is dropped.
+  const messages = mode === 'offline-draft-proofread' ? [] : asMessages(r.messages);
   return {
     generation,
     query,

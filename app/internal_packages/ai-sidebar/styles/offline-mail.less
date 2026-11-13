@@ -707,3 +707,330 @@ body.ai-dark-surface .ai-sidebar .ai-sidebar-scope .scope-status.empty.hint {
   color: var(--text-color);
   border: 1px solid var(--border-color-divider);
 }
+
+// ---- Local drafts (saved only in the offline profile; no sending) ----
+.offline-drafts-entry {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  padding: 4px 8px;
+  margin-bottom: 4px;
+  border-bottom: 1px solid fade(@text-color, 8%);
+  cursor: pointer;
+  .offline-folder-name {
+    flex: 1;
+  }
+  &:hover {
+    background: fade(@text-color, 4%);
+  }
+  &.selected {
+    background: @list-selected-bg;
+  }
+}
+
+.offline-drafts-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-top: 4px;
+  flex-wrap: wrap;
+}
+
+.offline-drafts-note,
+.offline-draft-footer,
+.offline-proof-note {
+  font-size: 11px;
+  color: @text-color-very-subtle;
+}
+
+.offline-drafts-empty {
+  padding: 16px;
+  color: @text-color-very-subtle;
+  font-size: 13px;
+  line-height: 1.5;
+}
+
+.offline-draft-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 10px;
+  border-bottom: 1px solid fade(@text-color, 7%);
+  cursor: default;
+  .offline-row-main {
+    flex: 1;
+    min-width: 0;
+  }
+  &:hover {
+    background: fade(@text-color, 4%);
+  }
+  &.selected {
+    background: @list-selected-bg;
+  }
+}
+
+.offline-draft-kind {
+  flex-shrink: 0;
+  font-size: 11px;
+  font-weight: normal;
+  padding: 0 6px;
+  border-radius: 8px;
+  background: fade(@text-color, 8%);
+  color: @text-color-subtle;
+}
+
+.offline-draft-snippet {
+  font-size: 12px;
+  color: @text-color-very-subtle;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  unicode-bidi: plaintext;
+  text-align: start;
+}
+
+.offline-draft-delete {
+  flex-shrink: 0;
+  font-size: 12px;
+  &.armed {
+    color: #c62828;
+    font-weight: 600;
+  }
+}
+
+.offline-draft-editor {
+  gap: 8px;
+  overflow-y: auto;
+  .offline-reader-actions {
+    flex-wrap: wrap;
+  }
+}
+
+.offline-draft-saved {
+  font-size: 11px;
+  color: @text-color-very-subtle;
+}
+
+.offline-draft-nosend {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.offline-reader-actions .btn.offline-draft-send,
+.offline-draft-send[disabled] {
+  opacity: 0.45;
+  cursor: not-allowed;
+  text-decoration: line-through;
+}
+
+.offline-draft-nosend-note {
+  font-size: 11px;
+  font-weight: 600;
+  color: #b26a00;
+}
+
+.offline-draft-fields {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  label {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    font-size: 12px;
+    color: @text-color-subtle;
+    > span {
+      flex: 0 0 48px;
+    }
+  }
+  input {
+    flex: 1;
+    min-width: 0;
+    font-size: 13px;
+    padding: 3px 6px;
+    color: @text-color;
+    background: @background-primary;
+    border: 1px solid @border-color-primary;
+    border-radius: 4px;
+    unicode-bidi: plaintext;
+    text-align: start;
+  }
+}
+
+// Each paragraph picks its own direction (Hebrew right, English left).
+.offline-draft-body {
+  flex: 1;
+  min-height: 220px;
+  resize: vertical;
+  font-size: 14px;
+  line-height: 1.55;
+  padding: 8px 10px;
+  color: @text-color;
+  background: @background-primary;
+  border: 1px solid @border-color-primary;
+  border-radius: 4px;
+  unicode-bidi: plaintext;
+  text-align: start;
+  white-space: pre-wrap;
+}
+
+.offline-proof {
+  border: 1px solid fade(@offline-accent, 45%);
+  border-radius: 6px;
+  padding: 8px 10px;
+  background: fade(@offline-accent, 5%);
+  font-size: 13px;
+  &.error {
+    border-color: #c62828;
+  }
+  del {
+    background: fade(#c62828, 15%);
+    color: #b71c1c;
+  }
+  ins {
+    background: fade(#2e7d32, 15%);
+    color: #1b5e20;
+    text-decoration: none;
+  }
+}
+
+.offline-proof-title {
+  font-weight: 600;
+  margin-bottom: 6px;
+}
+
+.offline-proof-warning {
+  color: #b26a00;
+  margin-bottom: 6px;
+}
+
+.offline-proof-preview {
+  max-height: 160px;
+  overflow-y: auto;
+  white-space: pre-wrap;
+  unicode-bidi: plaintext;
+  text-align: start;
+  padding: 6px;
+  margin-bottom: 6px;
+  background: @background-primary;
+  border-radius: 4px;
+}
+
+.offline-proof-change {
+  &.rejected {
+    del {
+      background: none;
+      color: inherit;
+      text-decoration: none;
+    }
+    ins {
+      display: none;
+    }
+  }
+  &.accepted del {
+    display: none;
+  }
+}
+
+.offline-proof-list {
+  margin: 0 0 6px;
+  padding-inline-start: 20px;
+  li {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    margin-bottom: 3px;
+  }
+  .offline-proof-pair {
+    flex: 1;
+    min-width: 0;
+    unicode-bidi: plaintext;
+  }
+  .btn.on {
+    font-weight: 700;
+    border-color: @offline-accent;
+  }
+}
+
+.offline-proof-actions {
+  display: flex;
+  gap: 6px;
+  flex-wrap: wrap;
+  margin-bottom: 4px;
+}
+
+// Local drafts on the full-palette themes (Darkside, Ubuntu, Taiga, Less Is More).
+body[class*='theme-ui-darkside'],
+body[class*='theme-ui-taiga'],
+body[class*='theme-ui-ubuntu'],
+body[class*='less-is-more'] {
+  .offline-drafts-entry {
+    border-bottom-color: color-mix(in srgb, var(--ofl-side-fg) 15%, transparent);
+    &.selected {
+      background: var(--ofl-accent);
+      color: #fff;
+      .offline-folder-count {
+        color: #fff;
+      }
+    }
+  }
+  .offline-drafts-list,
+  .offline-draft-editor {
+    color: var(--ofl-fg);
+    .btn {
+      background: var(--ofl-surface);
+      color: var(--ofl-fg);
+      border-color: var(--ofl-border);
+    }
+  }
+  .offline-drafts-note,
+  .offline-drafts-empty,
+  .offline-draft-footer,
+  .offline-proof-note,
+  .offline-draft-saved,
+  .offline-draft-snippet,
+  .offline-draft-fields label {
+    color: var(--ofl-subtle);
+  }
+  .offline-draft-kind {
+    background: color-mix(in srgb, var(--ofl-fg) 14%, transparent);
+    color: var(--ofl-fg);
+  }
+  .offline-draft-row {
+    border-bottom-color: var(--ofl-border);
+    &:hover {
+      background: color-mix(in srgb, var(--ofl-fg) 7%, transparent);
+    }
+    &.selected {
+      background: var(--ofl-selected);
+      box-shadow: inset -3px 0 0 var(--ofl-accent);
+    }
+  }
+  .offline-draft-fields input,
+  .offline-draft-body,
+  .offline-proof-preview {
+    background: var(--ofl-surface);
+    color: var(--ofl-fg);
+    border: 1px solid var(--ofl-border);
+  }
+  .offline-proof {
+    background: color-mix(in srgb, var(--ofl-accent) 8%, transparent);
+    border-color: color-mix(in srgb, var(--ofl-accent) 50%, transparent);
+  }
+  .offline-draft-nosend-note {
+    color: var(--ofl-accent);
+  }
+}
+body[class*='theme-ui-darkside'],
+body[class*='theme-ui-ubuntu'],
+body.theme-ui-dark {
+  .offline-proof {
+    del {
+      color: #ff8a80;
+    }
+    ins {
+      color: #a5d6a7;
+    }
+  }
+}

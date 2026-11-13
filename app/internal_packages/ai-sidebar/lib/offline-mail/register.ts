@@ -11,6 +11,9 @@ import { OfflineMessageList } from './offline-message-list';
 import { OfflineMessageReader } from './offline-message-reader';
 import { OfflinePaneToggles } from './offline-pane-toggles';
 import { offlineMailStore } from './offline-mail-store';
+import { offlineDraftsStore } from './offline-drafts-store';
+import { proofreadDraftViaIpc } from '../gemini-ipc-transport';
+import AISidebarStore from '../ai-sidebar-store';
 import { offlineLang, offlineLangBodyClass, offlineDir } from '../core/offline-i18n';
 
 /** Mark <body> with the offline UI language so styles can follow it. */
@@ -50,9 +53,22 @@ export function registerOfflineMailBrowser(archivePath: string, sidebar: any) {
   } catch {
     cachePath = undefined;
   }
+  // Local drafts: saved only in the offline profile. Proofreading sends the
+  // draft text alone, on click; the main process logs usage to the meter.
+  try {
+    offlineDraftsStore.configure({
+      configDir: AppEnv.getConfigDirPath(),
+      transport: (generation, text) => proofreadDraftViaIpc(generation, text),
+      afterProofread: () => void AISidebarStore.refreshGeminiUsage(),
+    });
+  } catch (err) {
+    console.error('[Offline drafts] not available:', (err as Error).message);
+  }
+  window.addEventListener('beforeunload', () => offlineDraftsStore.flush());
   (window as any).__offlineMail = {
     summary: () => offlineMailStore.summary(),
     store: offlineMailStore,
+    drafts: offlineDraftsStore,
   };
   void offlineMailStore.start(archivePath, cachePath);
   // Window size/position/maximized state is restored by the main process

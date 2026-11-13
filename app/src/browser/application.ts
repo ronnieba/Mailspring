@@ -13,6 +13,7 @@ import {
   nativeImage,
   powerMonitor,
   screen,
+  session,
   shell,
 } from 'electron';
 
@@ -42,6 +43,7 @@ import { registerLocalAIIPCHandlers } from './local-ai-service';
 import { resolveGeminiDemoStatus } from './gemini-demo-host';
 import { registerGeminiDemoIpcHandlers } from './gemini-demo-ipc';
 import { applyAndTrackOfflineWindowState } from './offline-window-state';
+import { configureOfflineSpellcheck, ensureOfflineSpellDictionaries } from './offline-spellcheck';
 import { formatGeminiDemoStatusLog } from './gemini-demo-secret';
 import { registerViewSessionIPCHandlers } from './view-sessions';
 import { guardAuxiliaryWindowNavigation } from './auxiliary-window-guard';
@@ -173,6 +175,16 @@ export default class Application extends EventEmitter {
         }
       } else if (this.offlineArchive) {
         installOfflineNetworkGuard();
+        // Local Hebrew + English spell check for drafts: no dictionary downloads.
+        try {
+          const dict = ensureOfflineSpellDictionaries(this.configDirPath);
+          const langs = configureOfflineSpellcheck(session.defaultSession);
+          console.log(
+            `[Offline spellcheck] languages=${langs.join(',')} dictionaries=${dict.present.length} copied=${dict.copied.length} (no network)`
+          );
+        } catch (spellErr) {
+          console.warn('[Offline spellcheck] not configured:', (spellErr as Error).message);
+        }
         console.log(
           '[Offline archive] Skipping mailsync — disconnected experiment. Official /Applications/Mailspring.app is unused. Yahoo IMAP is not opened. Gemini is not bulk-upload; only explicit Summarize of one selected local message.'
         );

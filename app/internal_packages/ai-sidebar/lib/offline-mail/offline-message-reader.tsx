@@ -1,5 +1,8 @@
 import React from 'react';
 import { offlineMailStore } from './offline-mail-store';
+import { offlineDraftsStore } from './offline-drafts-store';
+import { OfflineDraftEditor } from './offline-drafts-view';
+import { OfflineDraftSource } from '../core/offline-drafts';
 import { tr } from '../core/offline-i18n';
 import { OfflineStoreComponent } from './use-offline-store';
 import { buildSandboxedHtmlDocument, containsHebrew } from '../core/offline-mail-mime';
@@ -18,7 +21,27 @@ export class OfflineMessageReader extends OfflineStoreComponent<Record<string, n
 
   state: State = { showText: false };
 
+  _draftSource(): OfflineDraftSource | null {
+    const open = offlineMailStore.openMessage;
+    if (!open || !open.parsed) {
+      return null;
+    }
+    const m = open.parsed;
+    return {
+      id: open.id,
+      subject: m.subject,
+      from: m.from,
+      to: m.to,
+      cc: m.cc,
+      date: m.date,
+      text: m.text,
+    };
+  }
+
   render() {
+    if (offlineDraftsStore.showing) {
+      return <OfflineDraftEditor />;
+    }
     const s = offlineMailStore;
     const open = s.openMessage;
     if (s.selectedIds.length > 1) {
@@ -83,6 +106,38 @@ export class OfflineMessageReader extends OfflineStoreComponent<Record<string, n
           >
             {tr('קריאה בלבד · אין שליחה/העברה/מחיקה', 'Read-only · no send/move/delete')}
           </span>
+          <button
+            className="btn btn-small offline-reply-btn"
+            data-offline-reply="true"
+            title={tr(
+              'פותח טיוטת תשובה שנשמרת רק במחשב (אין שליחה)',
+              'Opens a reply draft saved only on this computer (no sending)'
+            )}
+            onClick={() => {
+              const src = this._draftSource();
+              if (src) {
+                offlineDraftsStore.createReply(src);
+              }
+            }}
+          >
+            ↩️ {tr('השב (טיוטה)', 'Reply (draft)')}
+          </button>
+          <button
+            className="btn btn-small offline-forward-btn"
+            data-offline-forward="true"
+            title={tr(
+              'פותח טיוטת העברה שנשמרת רק במחשב (אין שליחה)',
+              'Opens a forward draft saved only on this computer (no sending)'
+            )}
+            onClick={() => {
+              const src = this._draftSource();
+              if (src) {
+                offlineDraftsStore.createForward(src);
+              }
+            }}
+          >
+            ↪️ {tr('העבר (טיוטה)', 'Forward (draft)')}
+          </button>
           {m.html ? (
             <button
               className="btn btn-small"
