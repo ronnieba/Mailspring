@@ -20,6 +20,9 @@ import {
   addRecipient,
 } from './offline-recipients';
 import { OfflineRichEditor } from './offline-rich-editor';
+import { OfflineAttachmentList } from './offline-attachments-view';
+import { chooseFilesToAttach, openWithDefaultApp } from './offline-file-actions';
+import { draftAttachmentPath } from '../core/offline-attachments';
 import { ProofSegment } from '../core/text-diff';
 import { offlineDateLocale, offlineDir, tr } from '../core/offline-i18n';
 
@@ -132,6 +135,14 @@ export class OfflineDraftsList extends DraftsComponent<Record<string, never>, Li
                     <span className="offline-row-from" dir="auto">
                       {recipientsSummary(d.to) || tr('(ללא נמען)', '(no recipient)')}
                     </span>
+                    {(d.attachments || []).length ? (
+                      <span
+                        className="offline-row-attach"
+                        title={tr('קבצים מצורפים', 'Attachments')}
+                      >
+                        📎{(d.attachments || []).length}
+                      </span>
+                    ) : null}
                     <span className="offline-row-date">{fmtTime(d.updatedAt)}</span>
                   </div>
                   <div className="offline-row-subject" dir="auto">
@@ -185,11 +196,72 @@ function renderSegments(segs: ProofSegment[], decisions: Map<number, boolean>) {
   });
 }
 
-type EditorState = { armedDelete: boolean; picker: RecipientField | null };
+type EditorState = {
+  armedDelete: boolean;
+  picker: RecipientField | null;
+  attachNote: string | null;
+  dragging: boolean;
+};
 
 export class OfflineDraftEditor extends DraftsComponent<Record<string, never>, EditorState> {
   static displayName = 'OfflineDraftEditor';
-  state: EditorState = { armedDelete: false, picker: null };
+  state: EditorState = { armedDelete: false, picker: null, attachNote: null, dragging: false };
+
+  _addFiles(d: OfflineDraft, paths: string[]) {
+    if (!paths.length) {
+      return;
+    }
+    const res = offlineDraftsStore.addAttachmentFiles(d.id, paths);
+    this.setState({
+      attachNote: res.failed.length
+        ? tr(
+            `${res.failed.length} קבצים לא צורפו (גדולים מ-50MB או לא נגישים).`,
+            `${res.failed.length} files were not added (over 50 MB or not readable).`
+          )
+        : null,
+    });
+  }
+
+  _onDrop = (e: React.DragEvent, d: OfflineDraft) => {
+    const files = Array.from(e.dataTransfer?.files || []);
+    if (!files.length) {
+      return;
+    }
+    e.preventDefault();
+    e.stopPropagation();
+    this.setState({ dragging: false });
+    this._addFiles(d, files.map((f) => (f as any).path as string).filter(Boolean));
+  };
+
+  _renderAttachments(d: OfflineDraft) {
+    const list = d.attachments || [];
+    const dir = offlineDraftsStore.configDir;
+    return (
+      <>
+        <OfflineAttachmentList
+          context="draft"
+          items={list.map((a) => ({
+            key: a.id,
+            filename: a.filename,
+            contentType: a.contentType,
+            size: a.size,
+          }))}
+          onOpen={async (i) => {
+            if (!dir) {
+              return tr('אין תיקיית פרופיל', 'No profile folder');
+            }
+            return openWithDefaultApp(draftAttachmentPath(dir, list[i]));
+          }}
+          onRemove={(i) => offlineDraftsStore.removeAttachment(d.id, list[i].id)}
+        />
+        {this.state.attachNote ? (
+          <div className="offline-attachment-status error" data-offline-draft-attach-note="true">
+            {this.state.attachNote}
+          </div>
+        ) : null}
+      </>
+    );
+  }
 
   _renderProof(d: OfflineDraft) {
     const p = offlineDraftsStore.proof;
@@ -317,9 +389,25 @@ export class OfflineDraftEditor extends DraftsComponent<Record<string, never>, E
     const running = s.proof.status === 'running' && s.proof.draftId === d.id;
     return (
       <div
-        className="offline-reader offline-draft-editor"
+        className={classNames('offline-reader offline-draft-editor', {
+          'offline-drop-target': this.state.dragging,
+        })}
         data-offline-draft-editor={d.id}
         dir={offlineDir()}
+        onDragOver={(e) => {
+          if (Array.from(e.dataTransfer?.types || []).includes('Files')) {
+            e.preventDefault();
+            if (!this.state.dragging) {
+              this.setState({ dragging: true });
+            }
+          }
+        }}
+        onDragLeave={(e) => {
+          if (e.currentTarget === e.target) {
+            this.setState({ dragging: false });
+          }
+        }}
+        onDropCapture={(e) => this._onDrop(e, d)}
       >
         <div className="offline-reader-actions">
           <span className="offline-draft-kind">{kindLabel(d)}</span>
@@ -336,6 +424,17 @@ export class OfflineDraftEditor extends DraftsComponent<Record<string, never>, E
                   )
                 : tr('💾 נשמר אוטומטית במחשב', '💾 Saved automatically on this computer')}
           </span>
+          <button
+            className="btn btn-small offline-draft-attach"
+            data-offline-draft-attach="true"
+            title={tr(
+              'הוסף קבצים לטיוטה (עותק נשמר רק בפרופיל הניסוי). אפשר גם לגרור קבצים לכאן.',
+              'Add files to the draft (a copy is kept only in the experiment profile). You can also drag files here.'
+            )}
+            onClick={() => void chooseFilesToAttach().then((paths) => this._addFiles(d, paths))}
+          >
+            📎 {tr('צרף קבצים', 'Attach files')}
+          </button>
           <button
             className="btn btn-small offline-draft-proofread"
             data-offline-draft-proofread="true"
@@ -408,6 +507,7 @@ export class OfflineDraftEditor extends DraftsComponent<Record<string, never>, E
             />
           </label>
         </div>
+        {this._renderAttachments(d)}
         {this._renderProof(d)}
         {s.proofNotice ? (
           <div className="offline-proof offline-proof-notice" data-offline-proof="notice">

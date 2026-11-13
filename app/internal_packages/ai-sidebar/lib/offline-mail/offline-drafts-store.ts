@@ -28,6 +28,16 @@ import {
 } from '../core/text-diff';
 import { offlineLang, tr } from '../core/offline-i18n';
 import {
+  OfflineDraftAttachment,
+  addDraftAttachmentBytes,
+  addDraftAttachmentFromFile,
+  removeDraftAttachmentFile,
+  removeDraftFiles,
+} from '../core/offline-attachments';
+
+/** A file carried over from an archive message (forward). */
+export type DraftFileBytes = { filename: string; contentType: string; data: Buffer };
+import {
   applyProofToHtml,
   htmlToPlain,
   plainToHtml,
@@ -178,8 +188,71 @@ export class OfflineDraftsStore {
     return this._add(makeReplyDraft(src, this._now(), this._labels()));
   }
 
-  createForward(src: OfflineDraftSource): OfflineDraft {
-    return this._add(makeForwardDraft(src, this._now(), this._labels()));
+  createForward(src: OfflineDraftSource, files: DraftFileBytes[] = []): OfflineDraft {
+    const d = makeForwardDraft(src, this._now(), this._labels());
+    if (files.length && this._dir) {
+      const list: OfflineDraftAttachment[] = [];
+      for (const f of files) {
+        try {
+          list.push(addDraftAttachmentBytes(this._dir, d.id, f.filename, f.contentType, f.data));
+        } catch (err) {
+          console.warn('[Offline drafts] attachment not copied:', (err as Error).message);
+        }
+      }
+      if (list.length) {
+        d.attachments = list;
+      }
+    }
+    return this._add(d);
+  }
+
+  get configDir(): string | null {
+    return this._dir;
+  }
+
+  /** Copy files the user picked into the draft (inside the profile). */
+  addAttachmentFiles(id: string, paths: string[]): { added: number; failed: string[] } {
+    const d = this.drafts.find((x) => x.id === id);
+    const failed: string[] = [];
+    if (!d || !this._dir) {
+      return { added: 0, failed: paths.map(() => 'no-draft') };
+    }
+    const list = (d.attachments || []).slice();
+    for (const p of paths) {
+      try {
+        list.push(addDraftAttachmentFromFile(this._dir, id, p));
+      } catch (err) {
+        failed.push(String((err as Error).message || err));
+      }
+    }
+    const added = list.length - (d.attachments || []).length;
+    if (added) {
+      this._setAttachments(id, list);
+    }
+    return { added, failed };
+  }
+
+  removeAttachment(id: string, attachmentId: string) {
+    const d = this.drafts.find((x) => x.id === id);
+    if (!d || !this._dir) {
+      return;
+    }
+    const a = (d.attachments || []).find((x) => x.id === attachmentId);
+    if (a) {
+      removeDraftAttachmentFile(this._dir, a);
+    }
+    this._setAttachments(
+      id,
+      (d.attachments || []).filter((x) => x.id !== attachmentId)
+    );
+  }
+
+  private _setAttachments(id: string, list: OfflineDraftAttachment[]) {
+    this.drafts = this.drafts.map((x) =>
+      x.id === id ? { ...x, attachments: list, updatedAt: this._now() } : x
+    );
+    this._persist();
+    this._emit();
   }
 
   update(
@@ -205,6 +278,9 @@ export class OfflineDraftsStore {
   }
 
   delete(id: string) {
+    if (this._dir) {
+      removeDraftFiles(this._dir, id);
+    }
     this.drafts = removeDraft(this.drafts, id);
     if (this.openId === id) {
       this.openId = null;

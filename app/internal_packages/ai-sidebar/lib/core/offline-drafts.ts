@@ -10,6 +10,7 @@
 import fs from 'fs';
 import path from 'path';
 import { htmlToPlain, plainToHtml, sanitizeDraftHtml } from './offline-rich-text';
+import { OfflineDraftAttachment, sanitizeDraftAttachment } from './offline-attachments';
 
 export type OfflineDraftKind = 'new' | 'reply' | 'forward';
 
@@ -25,6 +26,8 @@ export interface OfflineDraft {
   body: string;
   /** Formatted body (sanitized HTML). Older drafts have none until edited. */
   html?: string;
+  /** Files added to the draft (copies kept in the offline profile). */
+  attachments?: OfflineDraftAttachment[];
   /** Local archive message this reply / forward was started from. */
   sourceMessageId?: string;
   createdAt: number;
@@ -91,6 +94,14 @@ export function sanitizeDraft(raw: unknown): OfflineDraft | null {
     createdAt,
     updatedAt: num(r.updatedAt, createdAt),
   };
+  if (Array.isArray(r.attachments)) {
+    const list = r.attachments
+      .map((a) => sanitizeDraftAttachment(a, r.id as string))
+      .filter(Boolean) as OfflineDraftAttachment[];
+    if (list.length) {
+      d.attachments = list.slice(0, 100);
+    }
+  }
   if (typeof r.html === 'string' && r.html) {
     d.html = sanitizeDraftHtml(r.html);
     d.body = htmlToPlain(d.html);
@@ -296,7 +307,12 @@ export function draftSnippet(d: OfflineDraft, max = 90): string {
 
 export function isDraftEmpty(d: OfflineDraft): boolean {
   return (
-    !d.to.trim() && !d.cc.trim() && !(d.bcc || '').trim() && !d.subject.trim() && !d.body.trim()
+    !d.to.trim() &&
+    !d.cc.trim() &&
+    !(d.bcc || '').trim() &&
+    !d.subject.trim() &&
+    !d.body.trim() &&
+    !(d.attachments || []).length
   );
 }
 

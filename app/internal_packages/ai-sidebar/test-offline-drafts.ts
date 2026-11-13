@@ -445,6 +445,8 @@ const paidEnv = { [GEMINI_DEMO_KEY_ENV]: FAKE_KEY, [GEMINI_DEMO_PAID_ENV]: '1' }
     'internal_packages/ai-sidebar/lib/offline-mail/offline-address-book-store.ts',
     'internal_packages/ai-sidebar/lib/offline-mail/offline-recipients.tsx',
     'internal_packages/ai-sidebar/lib/offline-mail/offline-rich-editor.tsx',
+    'internal_packages/ai-sidebar/lib/core/offline-attachments.ts',
+    'internal_packages/ai-sidebar/lib/offline-mail/offline-attachments-view.tsx',
   ];
   await test('drafts code has no send, network or mail-task calls', () => {
     const banned = [

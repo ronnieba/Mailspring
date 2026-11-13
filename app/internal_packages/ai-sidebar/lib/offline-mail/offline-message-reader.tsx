@@ -5,14 +5,85 @@ import { OfflineDraftEditor } from './offline-drafts-view';
 import { OfflineDraftSource } from '../core/offline-drafts';
 import { tr } from '../core/offline-i18n';
 import { OfflineStoreComponent } from './use-offline-store';
-import { buildSandboxedHtmlDocument, containsHebrew } from '../core/offline-mail-mime';
+import {
+  OfflineMailAttachment,
+  buildSandboxedHtmlDocument,
+  containsHebrew,
+} from '../core/offline-mail-mime';
+import { OfflineAttachmentList } from './offline-attachments-view';
+import {
+  OFFLINE_DRAFT_ATTACHMENT_MAX_BYTES,
+  extractAttachmentToProfile,
+} from '../core/offline-attachments';
+import { openWithDefaultApp, saveBytesAs } from './offline-file-actions';
 
 type State = { showText: boolean };
 
-function formatSize(n: number): string {
-  if (n < 1024) return `${n} B`;
-  if (n < 1024 * 1024) return `${Math.round(n / 1024)} KB`;
-  return `${(n / 1024 / 1024).toFixed(1)} MB`;
+/** Attachment bytes of one message, read on demand from the local copy. */
+const attachmentCache: { id: string | null; list: OfflineMailAttachment[] } = {
+  id: null,
+  list: [],
+};
+export function offlineAttachmentBytes(id: string): OfflineMailAttachment[] {
+  if (attachmentCache.id !== id) {
+    attachmentCache.list = offlineMailStore.attachmentData(id);
+    attachmentCache.id = id;
+  }
+  return attachmentCache.list;
+}
+
+export function renderMessageAttachments(id: string, list: OfflineMailAttachment[]) {
+  if (!list.length) {
+    return null;
+  }
+  const dataAt = (i: number): OfflineMailAttachment => {
+    const a = offlineAttachmentBytes(id)[i];
+    if (!a || !a.data) {
+      throw new Error(tr('הקובץ לא נמצא בהודעה', 'File not found in the message'));
+    }
+    return a;
+  };
+  return (
+    <OfflineAttachmentList
+      context="reader"
+      items={list.map((a, i) => ({
+        key: `${id}#${i}`,
+        filename: a.filename,
+        contentType: a.contentType,
+        size: a.size,
+      }))}
+      loadImage={(i) => dataAt(i).data || null}
+      onOpen={async (i) => {
+        const dir = offlineMailStore.configDir;
+        if (!dir) {
+          return tr('אין תיקיית פרופיל', 'No profile folder');
+        }
+        try {
+          const a = dataAt(i);
+          const file = extractAttachmentToProfile(dir, id, i, a.filename, a.data as Buffer);
+          return openWithDefaultApp(file);
+        } catch (err) {
+          return String((err as Error).message || err);
+        }
+      }}
+      onSave={(i) => {
+        const a = dataAt(i);
+        return saveBytesAs(a.filename, a.data as Buffer, offlineMailStore.root);
+      }}
+    />
+  );
+}
+
+/** Original attachments carried into a forward draft (copied into the profile). */
+export function forwardFiles(id: string) {
+  try {
+    return offlineAttachmentBytes(id)
+      .filter((a) => a.data && a.data.length <= OFFLINE_DRAFT_ATTACHMENT_MAX_BYTES)
+      .map((a) => ({ filename: a.filename, contentType: a.contentType, data: a.data as Buffer }));
+  } catch (err) {
+    console.warn('[Offline mail] attachments not carried into the forward');
+    return [];
+  }
 }
 
 export class OfflineMessageReader extends OfflineStoreComponent<Record<string, never>, State> {
@@ -132,7 +203,7 @@ export class OfflineMessageReader extends OfflineStoreComponent<Record<string, n
             onClick={() => {
               const src = this._draftSource();
               if (src) {
-                offlineDraftsStore.createForward(src);
+                offlineDraftsStore.createForward(src, forwardFiles(src.id));
               }
             }}
           >
@@ -170,15 +241,7 @@ export class OfflineMessageReader extends OfflineStoreComponent<Record<string, n
           <dt>{tr('תאריך', 'Date')}</dt>
           <dd>{m.date}</dd>
         </dl>
-        {m.attachments.length ? (
-          <div className="offline-reader-attachments" data-attachment-count={m.attachments.length}>
-            {m.attachments.map((a, i) => (
-              <span key={i} className="offline-attachment" dir="auto" title={a.contentType}>
-                📎 {a.filename} <small>({formatSize(a.size)})</small>
-              </span>
-            ))}
-          </div>
-        ) : null}
+        {renderMessageAttachments(open.id, m.attachments)}
         {useHtml ? (
           <iframe
             key={open.id}

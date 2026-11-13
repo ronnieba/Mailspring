@@ -15,7 +15,12 @@ import {
   OfflineMailIndex,
   readOfflineMessageRawSync,
 } from '../core/offline-mail-index';
-import { parseOfflineMail, ParsedOfflineMail } from '../core/offline-mail-mime';
+import {
+  OfflineMailAttachment,
+  parseOfflineMail,
+  ParsedOfflineMail,
+} from '../core/offline-mail-mime';
+import { cleanAttachmentTemp } from '../core/offline-attachments';
 import { OFFLINE_ARCHIVE_ACCOUNT_ID, OfflineArchiveMessage } from '../core/offline-archive-format';
 import {
   offlineFolderIdFor,
@@ -84,6 +89,8 @@ class OfflineMailStore {
   filter = '';
   openMessage: OpenMessageState | null = null;
   expanded = new Set<string>();
+  /** Offline profile folder (opened attachment copies live under it). */
+  configDir: string | null = null;
 
   private _listeners = new Set<Listener>();
   private _byId = new Map<string, OfflineIndexEntry>();
@@ -113,6 +120,10 @@ class OfflineMailStore {
       return;
     }
     this.root = root;
+    this.configDir = cachePath ? path.dirname(cachePath) : null;
+    if (this.configDir) {
+      cleanAttachmentTemp(this.configDir);
+    }
     this._expandedFile = cachePath
       ? path.join(path.dirname(cachePath), OFFLINE_FOLDER_EXPANDED_FILE)
       : null;
@@ -425,6 +436,16 @@ class OfflineMailStore {
       }
     }
     this._emit();
+  }
+
+  /** Attachments of one message with their bytes (read-only from the work copy). */
+  attachmentData(id: string): OfflineMailAttachment[] {
+    const entry = this._byId.get(id);
+    if (!entry || !this.root) {
+      return [];
+    }
+    return parseOfflineMail(readOfflineMessageRawSync(this.root, entry.rel), { withBytes: true })
+      .attachments;
   }
 
   /** Sanitized counts only (no names), for logs and verification hooks. */

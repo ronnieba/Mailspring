@@ -11,6 +11,13 @@ export type OfflineMailAttachment = {
   filename: string;
   contentType: string;
   size: number;
+  /** Decoded bytes, only when parsed with { withBytes: true }. */
+  data?: Buffer;
+};
+
+export type ParseOfflineMailOptions = {
+  /** Keep attachment bytes (to open / save one). Off for normal reading. */
+  withBytes?: boolean;
 };
 
 export type ParsedOfflineMail = {
@@ -290,6 +297,7 @@ type Walk = {
   attachments: OfflineMailAttachment[];
   inlineImages: { [cid: string]: string };
   notes: Set<string>;
+  withBytes?: boolean;
 };
 
 function walkEntity(rawLatin1: string, walk: Walk, depth: number, parentType: string): void {
@@ -323,6 +331,7 @@ function walkEntity(rawLatin1: string, walk: Walk, depth: number, parentType: st
         attachments: [],
         inlineImages: {},
         notes: walk.notes,
+        withBytes: walk.withBytes,
       };
       for (const p of parts) {
         walkEntity(p, sub, depth + 1, ct);
@@ -345,10 +354,12 @@ function walkEntity(rawLatin1: string, walk: Walk, depth: number, parentType: st
 
   const isAttachment = disp === 'attachment' || (!!filename && !ct.startsWith('text/'));
   if (ct === 'message/rfc822' || ct === 'message/global') {
+    const msgBytes = decodeTransfer(body, cte);
     walk.attachments.push({
       filename: filename || 'attached-message.eml',
       contentType: ct,
-      size: body.length,
+      size: msgBytes.length,
+      ...(walk.withBytes ? { data: msgBytes } : {}),
     });
     walk.notes.add('nested-message-as-attachment');
     return;
@@ -384,6 +395,7 @@ function walkEntity(rawLatin1: string, walk: Walk, depth: number, parentType: st
     filename: filename || `(unnamed ${ct || 'part'})`,
     contentType: ct,
     size: bytes.length,
+    ...(walk.withBytes ? { data: bytes } : {}),
   });
 }
 
@@ -437,11 +449,21 @@ export function htmlToText(html: string): string {
     .trim();
 }
 
-export function parseOfflineMail(raw: Buffer | string): ParsedOfflineMail {
+export function parseOfflineMail(
+  raw: Buffer | string,
+  opts: ParseOfflineMailOptions = {}
+): ParsedOfflineMail {
   const rawLatin1 = typeof raw === 'string' ? raw : raw.toString('latin1');
   const { headerText } = splitHeadersAndBody(rawLatin1);
   const h = parseHeaderBlock(headerText);
-  const walk: Walk = { text: [], html: [], attachments: [], inlineImages: {}, notes: new Set() };
+  const walk: Walk = {
+    text: [],
+    html: [],
+    attachments: [],
+    inlineImages: {},
+    notes: new Set(),
+    withBytes: !!opts.withBytes,
+  };
   try {
     walkEntity(rawLatin1, walk, 0, '');
   } catch (err) {
