@@ -475,6 +475,9 @@ export function parseOfflineMailHeaders(headChunk: Buffer | string): {
   from: string;
   date: string;
   hasAttachments: boolean;
+  to: string;
+  cc: string;
+  replyTo: string;
 } {
   const rawLatin1 = typeof headChunk === 'string' ? headChunk : headChunk.toString('latin1');
   const { headerText } = splitHeadersAndBody(rawLatin1);
@@ -486,6 +489,10 @@ export function parseOfflineMailHeaders(headChunk: Buffer | string): {
     date: first(h, 'date'),
     hasAttachments:
       ct === 'multipart/mixed' || /Content-Disposition:\s*attachment/i.test(rawLatin1),
+    // Recipients feed the local address book (kept in the offline profile only).
+    to: decodeHeaderValue(first(h, 'to')).slice(0, 4000),
+    cc: decodeHeaderValue(first(h, 'cc')).slice(0, 4000),
+    replyTo: decodeHeaderValue(first(h, 'reply-to')).slice(0, 1000),
   };
 }
 

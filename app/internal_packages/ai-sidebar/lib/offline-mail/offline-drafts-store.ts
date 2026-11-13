@@ -27,6 +27,12 @@ import {
   proofChanges,
 } from '../core/text-diff';
 import { offlineLang, tr } from '../core/offline-i18n';
+import {
+  applyProofToHtml,
+  htmlToPlain,
+  plainToHtml,
+  sanitizeDraftHtml,
+} from '../core/offline-rich-text';
 
 type Listener = () => void;
 
@@ -66,6 +72,10 @@ export class OfflineDraftsStore {
   savedAt: number | null = null;
   saveError: string | null = null;
   proof: ProofState = IDLE_PROOF();
+  /** Bumped when the body changes from outside the editor (proof applied). */
+  contentRev = 0;
+  /** Shown after applying proofreading when some changes could not be applied safely. */
+  proofNotice: string | null = null;
 
   private _dir: string | null = null;
   private _listeners = new Set<Listener>();
@@ -135,6 +145,7 @@ export class OfflineDraftsStore {
     this.flush();
     this.showing = true;
     this.openId = id;
+    this.proofNotice = null;
     if (this.proof.draftId !== id) {
       this.proof = IDLE_PROOF();
     }
@@ -171,12 +182,22 @@ export class OfflineDraftsStore {
     return this._add(makeForwardDraft(src, this._now(), this._labels()));
   }
 
-  update(id: string, patch: Partial<Pick<OfflineDraft, 'to' | 'cc' | 'subject' | 'body'>>) {
+  update(
+    id: string,
+    patch: Partial<Pick<OfflineDraft, 'to' | 'cc' | 'bcc' | 'subject' | 'body' | 'html'>>
+  ) {
     const d = this.drafts.find((x) => x.id === id);
     if (!d) {
       return;
     }
     const next: OfflineDraft = { ...d, ...patch, updatedAt: this._now() };
+    if (typeof patch.html === 'string') {
+      // Formatted editor: keep sanitized HTML, derive the plain copy from it.
+      next.html = sanitizeDraftHtml(patch.html);
+      next.body = htmlToPlain(next.html);
+    } else if (typeof patch.body === 'string') {
+      next.html = plainToHtml(patch.body);
+    }
     // Keep the list order stable while typing; it is re-sorted on save.
     this.drafts = this.drafts.map((x) => (x.id === id ? next : x));
     this._scheduleSave();
@@ -268,6 +289,7 @@ export class OfflineDraftsStore {
       this._emit();
       return;
     }
+    this.proofNotice = null;
     const generation = ++this._generation;
     this.proof = { ...IDLE_PROOF(), status: 'running', draftId: id, original: text };
     this._emit();
@@ -353,12 +375,33 @@ export class OfflineDraftsStore {
         accepted.add(k);
       }
     });
-    const body = applyProofDecisions(this.proof.segments, accepted);
-    this.proof = IDLE_PROOF();
-    this.update(d.id, { body });
+    let notice: string | null = null;
+    if (d.html) {
+      // Keep formatting: splice accepted changes into the HTML text.
+      const res = applyProofToHtml(d.html, this.proof.segments, accepted);
+      this.proof = IDLE_PROOF();
+      this.update(d.id, { html: res.html });
+      if (res.skipped > 0) {
+        notice = tr(
+          `${res.skipped} תיקונים לא הוחלו כי הם חוצים שורות או פסקאות. העיצוב נשמר.`,
+          `${res.skipped} changes were not applied because they cross lines or paragraphs. Formatting was kept.`
+        );
+      }
+    } else {
+      const body = applyProofDecisions(this.proof.segments, accepted);
+      this.proof = IDLE_PROOF();
+      this.update(d.id, { body });
+    }
+    this.proofNotice = notice;
+    this.contentRev++;
     this.flush();
     this._emit();
     return true;
+  }
+
+  dismissProofNotice() {
+    this.proofNotice = null;
+    this._emit();
   }
 
   discardProof() {

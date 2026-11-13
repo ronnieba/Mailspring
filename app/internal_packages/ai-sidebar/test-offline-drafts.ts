@@ -226,8 +226,8 @@ const paidEnv = { [GEMINI_DEMO_KEY_ENV]: FAKE_KEY, [GEMINI_DEMO_PAID_ENV]: '1' }
     );
   });
   await test('editor body uses dir=auto + plaintext bidi per paragraph', () => {
-    const view = read('internal_packages/ai-sidebar/lib/offline-mail/offline-drafts-view.tsx');
-    const i = view.indexOf('className="offline-draft-body"');
+    const view = read('internal_packages/ai-sidebar/lib/offline-mail/offline-rich-editor.tsx');
+    const i = view.indexOf('className="offline-draft-body offline-draft-rich"');
     ok(i > 0);
     const tag = view.slice(i - 40, i + 400);
     ok(tag.includes('dir="auto"'), 'dir=auto');
@@ -440,6 +440,11 @@ const paidEnv = { [GEMINI_DEMO_KEY_ENV]: FAKE_KEY, [GEMINI_DEMO_PAID_ENV]: '1' }
     'internal_packages/ai-sidebar/lib/core/text-diff.ts',
     'internal_packages/ai-sidebar/lib/offline-mail/offline-drafts-store.ts',
     'internal_packages/ai-sidebar/lib/offline-mail/offline-drafts-view.tsx',
+    'internal_packages/ai-sidebar/lib/core/offline-rich-text.ts',
+    'internal_packages/ai-sidebar/lib/core/offline-address-book.ts',
+    'internal_packages/ai-sidebar/lib/offline-mail/offline-address-book-store.ts',
+    'internal_packages/ai-sidebar/lib/offline-mail/offline-recipients.tsx',
+    'internal_packages/ai-sidebar/lib/offline-mail/offline-rich-editor.tsx',
   ];
   await test('drafts code has no send, network or mail-task calls', () => {
     const banned = [

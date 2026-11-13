@@ -36,6 +36,10 @@ export type OfflineIndexEntry = {
   ts: number;
   hasAttachments: boolean;
   hebrew: boolean;
+  /** Decoded To / Cc / Reply-To (for the local address book). Missing in older caches. */
+  to?: string;
+  cc?: string;
+  replyTo?: string;
 };
 
 export type OfflineMailIndex = {
@@ -319,11 +323,15 @@ export async function buildOfflineMailIndex(
           ts: parseTs(h.date),
           hasAttachments: h.hasAttachments,
           hebrew: containsHebrew(h.subject) || containsHebrew(h.from),
+          to: h.to,
+          cc: h.cc,
+          replyTo: h.replyTo,
         };
       });
     }
     const old = prior.get(rel);
-    if (old && old.size === fst.size && old.mtimeMs === fst.mtimeMs) {
+    // Entries cached before recipients were indexed are read once more.
+    if (old && old.size === fst.size && old.mtimeMs === fst.mtimeMs && old.to !== undefined) {
       reused++;
       return [old];
     }
@@ -343,6 +351,9 @@ export async function buildOfflineMailIndex(
         ts: parseTs(h.date),
         hasAttachments: h.hasAttachments,
         hebrew: containsHebrew(h.subject) || containsHebrew(h.from),
+        to: h.to,
+        cc: h.cc,
+        replyTo: h.replyTo,
       },
     ];
   };

@@ -12,6 +12,7 @@ import { OfflineMessageReader } from './offline-message-reader';
 import { OfflinePaneToggles } from './offline-pane-toggles';
 import { offlineMailStore } from './offline-mail-store';
 import { offlineDraftsStore } from './offline-drafts-store';
+import { offlineAddressBook } from './offline-address-book-store';
 import { proofreadDraftViaIpc } from '../gemini-ipc-transport';
 import AISidebarStore from '../ai-sidebar-store';
 import { offlineLang, offlineLangBodyClass, offlineDir } from '../core/offline-i18n';
@@ -64,11 +65,25 @@ export function registerOfflineMailBrowser(archivePath: string, sidebar: any) {
   } catch (err) {
     console.error('[Offline drafts] not available:', (err as Error).message);
   }
+  // Local address book from archive headers; saved only in the offline profile.
+  try {
+    offlineAddressBook.configure(AppEnv.getConfigDirPath());
+  } catch (err) {
+    console.error('[Offline address book] not available:', (err as Error).message);
+  }
+  offlineMailStore.listen(() => {
+    if (offlineMailStore.status === 'ready' && offlineMailStore.index) {
+      // Let the folder tree paint first.
+      const index = offlineMailStore.index;
+      setTimeout(() => offlineAddressBook.rebuild(index), 50);
+    }
+  });
   window.addEventListener('beforeunload', () => offlineDraftsStore.flush());
   (window as any).__offlineMail = {
     summary: () => offlineMailStore.summary(),
     store: offlineMailStore,
     drafts: offlineDraftsStore,
+    addressBook: offlineAddressBook,
   };
   void offlineMailStore.start(archivePath, cachePath);
   // Window size/position/maximized state is restored by the main process

@@ -9,6 +9,7 @@
  */
 import fs from 'fs';
 import path from 'path';
+import { htmlToPlain, plainToHtml, sanitizeDraftHtml } from './offline-rich-text';
 
 export type OfflineDraftKind = 'new' | 'reply' | 'forward';
 
@@ -17,8 +18,13 @@ export interface OfflineDraft {
   kind: OfflineDraftKind;
   to: string;
   cc: string;
+  /** Blind copy (local only, like everything in a draft). */
+  bcc: string;
   subject: string;
+  /** Plain-text copy of the draft (what proofreading sees). */
   body: string;
+  /** Formatted body (sanitized HTML). Older drafts have none until edited. */
+  html?: string;
   /** Local archive message this reply / forward was started from. */
   sourceMessageId?: string;
   createdAt: number;
@@ -79,11 +85,16 @@ export function sanitizeDraft(raw: unknown): OfflineDraft | null {
     kind,
     to: str(r.to, 4000),
     cc: str(r.cc, 4000),
+    bcc: str(r.bcc, 4000),
     subject: str(r.subject, 2000),
     body: str(r.body),
     createdAt,
     updatedAt: num(r.updatedAt, createdAt),
   };
+  if (typeof r.html === 'string' && r.html) {
+    d.html = sanitizeDraftHtml(r.html);
+    d.body = htmlToPlain(d.html);
+  }
   if (typeof r.sourceMessageId === 'string' && r.sourceMessageId) {
     d.sourceMessageId = r.sourceMessageId.slice(0, 500);
   }
@@ -136,8 +147,10 @@ export function makeNewDraft(now: number): OfflineDraft {
     kind: 'new',
     to: '',
     cc: '',
+    bcc: '',
     subject: '',
     body: '',
+    html: '',
     createdAt: now,
     updatedAt: now,
   };
@@ -198,13 +211,16 @@ export function makeReplyDraft(
     .split('\n')
     .map((l) => (l ? `> ${l}` : '>'))
     .join('\n');
+  const body = `\n\n${labels.wrote(src.date, src.from)}\n${quoted}`;
   return {
     id: newDraftId(now),
     kind: 'reply',
     to: addressOf(src.from),
     cc: '',
+    bcc: '',
     subject: prefixed(src.subject, 'Re'),
-    body: `\n\n${labels.wrote(src.date, src.from)}\n${quoted}`,
+    body,
+    html: plainToHtml(body),
     sourceMessageId: src.id,
     createdAt: now,
     updatedAt: now,
@@ -225,13 +241,16 @@ export function makeForwardDraft(
   ]
     .filter(Boolean)
     .join('\n');
+  const body = `\n\n${head}\n\n${capped(src.text)}`;
   return {
     id: newDraftId(now),
     kind: 'forward',
     to: '',
     cc: '',
+    bcc: '',
     subject: prefixed(src.subject, 'Fwd'),
-    body: `\n\n${head}\n\n${capped(src.text)}`,
+    body,
+    html: plainToHtml(body),
     sourceMessageId: src.id,
     createdAt: now,
     updatedAt: now,
@@ -276,5 +295,12 @@ export function draftSnippet(d: OfflineDraft, max = 90): string {
 }
 
 export function isDraftEmpty(d: OfflineDraft): boolean {
-  return !d.to.trim() && !d.cc.trim() && !d.subject.trim() && !d.body.trim();
+  return (
+    !d.to.trim() && !d.cc.trim() && !(d.bcc || '').trim() && !d.subject.trim() && !d.body.trim()
+  );
+}
+
+/** HTML to show in the editor (older plain drafts are converted on the fly). */
+export function draftHtml(d: OfflineDraft): string {
+  return typeof d.html === 'string' && (d.html || !d.body) ? d.html : plainToHtml(d.body);
 }

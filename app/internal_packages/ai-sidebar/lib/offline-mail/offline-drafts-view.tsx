@@ -6,7 +6,20 @@
 import React from 'react';
 import classNames from 'classnames';
 import { offlineDraftsStore } from './offline-drafts-store';
-import { OFFLINE_DRAFTS_NO_SEND_NOTE, OfflineDraft, draftSnippet } from '../core/offline-drafts';
+import {
+  OFFLINE_DRAFTS_NO_SEND_NOTE,
+  OfflineDraft,
+  draftHtml,
+  draftSnippet,
+} from '../core/offline-drafts';
+import { OfflineAddress, splitRecipients } from '../core/offline-address-book';
+import {
+  OfflineAddressPicker,
+  OfflineRecipientsField,
+  RecipientField,
+  addRecipient,
+} from './offline-recipients';
+import { OfflineRichEditor } from './offline-rich-editor';
 import { ProofSegment } from '../core/text-diff';
 import { offlineDateLocale, offlineDir, tr } from '../core/offline-i18n';
 
@@ -31,6 +44,12 @@ function kindLabel(d: OfflineDraft): string {
     : d.kind === 'forward'
       ? tr('העברה', 'Forward')
       : tr('חדשה', 'New');
+}
+
+function recipientsSummary(value: string): string {
+  return splitRecipients(value)
+    .map((c) => (c.addr ? c.addr.name || c.addr.email : c.raw))
+    .join(', ');
 }
 
 function fmtTime(ts: number): string {
@@ -111,7 +130,7 @@ export class OfflineDraftsList extends DraftsComponent<Record<string, never>, Li
                   <div className="offline-row-line1">
                     <span className="offline-draft-kind">{kindLabel(d)}</span>
                     <span className="offline-row-from" dir="auto">
-                      {d.to || tr('(ללא נמען)', '(no recipient)')}
+                      {recipientsSummary(d.to) || tr('(ללא נמען)', '(no recipient)')}
                     </span>
                     <span className="offline-row-date">{fmtTime(d.updatedAt)}</span>
                   </div>
@@ -166,11 +185,11 @@ function renderSegments(segs: ProofSegment[], decisions: Map<number, boolean>) {
   });
 }
 
-type EditorState = { armedDelete: boolean };
+type EditorState = { armedDelete: boolean; picker: RecipientField | null };
 
 export class OfflineDraftEditor extends DraftsComponent<Record<string, never>, EditorState> {
   static displayName = 'OfflineDraftEditor';
-  state: EditorState = { armedDelete: false };
+  state: EditorState = { armedDelete: false, picker: null };
 
   _renderProof(d: OfflineDraft) {
     const p = offlineDraftsStore.proof;
@@ -366,28 +385,17 @@ export class OfflineDraftEditor extends DraftsComponent<Record<string, never>, E
           </span>
         </div>
         <div className="offline-draft-fields">
-          <label>
-            <span>{tr('אל', 'To')}</span>
-            <input
-              type="text"
-              dir="auto"
-              spellCheck={false}
-              data-offline-draft-field="to"
-              value={d.to}
-              onChange={(e) => s.update(d.id, { to: e.target.value })}
+          {(['to', 'cc', 'bcc'] as RecipientField[]).map((f) => (
+            <OfflineRecipientsField
+              key={f}
+              field={f}
+              value={d[f] || ''}
+              onChange={(v) =>
+                s.update(d.id, { [f]: v } as Partial<Record<RecipientField, string>>)
+              }
+              onOpenPicker={(field) => this.setState({ picker: field })}
             />
-          </label>
-          <label>
-            <span>{tr('עותק', 'Cc')}</span>
-            <input
-              type="text"
-              dir="auto"
-              spellCheck={false}
-              data-offline-draft-field="cc"
-              value={d.cc}
-              onChange={(e) => s.update(d.id, { cc: e.target.value })}
-            />
-          </label>
+          ))}
           <label>
             <span>{tr('נושא', 'Subject')}</span>
             <input
@@ -401,19 +409,41 @@ export class OfflineDraftEditor extends DraftsComponent<Record<string, never>, E
           </label>
         </div>
         {this._renderProof(d)}
-        <textarea
-          className="offline-draft-body"
-          data-offline-draft-field="body"
-          dir="auto"
-          spellCheck
+        {s.proofNotice ? (
+          <div className="offline-proof offline-proof-notice" data-offline-proof="notice">
+            ⚠️ {s.proofNotice}
+            <button className="btn btn-small" onClick={() => s.dismissProofNotice()}>
+              {tr('סגור', 'Close')}
+            </button>
+          </div>
+        ) : null}
+        <OfflineRichEditor
+          draftId={d.id}
+          rev={s.contentRev}
+          html={draftHtml(d)}
+          readOnly={running}
           placeholder={tr(
             'כתוב כאן. כל פסקה מקבלת כיוון לפי השפה שלה (עברית מימין, English משמאל).',
             'Write here. Each paragraph gets its own direction (Hebrew right-to-left, English left-to-right).'
           )}
-          value={d.body}
-          readOnly={running}
-          onChange={(e) => s.update(d.id, { body: e.target.value })}
+          onChange={(html) => s.update(d.id, { html })}
         />
+        {this.state.picker ? (
+          <OfflineAddressPicker
+            field={this.state.picker}
+            chosen={(f) =>
+              splitRecipients(d[f] || '')
+                .filter((c) => c.addr)
+                .map((c) => (c.addr as OfflineAddress).email)
+            }
+            onAdd={(f, a) =>
+              s.update(d.id, {
+                [f]: addRecipient(d[f] || '', a),
+              } as Partial<Record<RecipientField, string>>)
+            }
+            onClose={() => this.setState({ picker: null })}
+          />
+        ) : null}
         <div className="offline-draft-footer">
           {tr(
             'בדיקת איות מקומית (עברית ואנגלית) — בלי אינטרנט. מילה עם קו אדום: קליק ימני להצעות.',
