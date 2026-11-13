@@ -19,7 +19,7 @@ import {
 } from './archive-hash';
 import { checkDiskForSnapshot } from './disk';
 import { ListMailbox, uidGaps } from './imap-protocol';
-import { ReadOnlyImapSession, SnapshotLog } from './read-only-session';
+import { ReadOnlyImapSession, SnapshotLog, SnapshotMessageError } from './read-only-session';
 import {
   RetryPolicy,
   classifySnapshotError,
@@ -40,7 +40,8 @@ import { encodeArchiveRelPath, mappingsForFolderPaths, toFsPath } from './archiv
 import type { FolderPathMapping } from './archive-path';
 import { startKeepAwake } from './keep-awake';
 
-export { verifySnapshotArchive } from './archive-hash';
+import { verifySnapshotArchive } from './archive-hash';
+export { verifySnapshotArchive };
 export { bodyPeekTimeoutMs, classifySnapshotError } from './retry';
 
 export type SnapshotFolderRecord = {
@@ -75,6 +76,14 @@ export type SnapshotManifest = {
   sha256All: string;
   files: HashedEml[];
   sizeMismatches: SizeMismatch[];
+  /**
+   * UIDs the server kept refusing (NO/BAD/empty body) even after the final
+   * retry. Not in files[]; the archive is complete except for these.
+   * folderIndex is the LIST position (see folders[]); no subjects/addresses.
+   */
+  incompleteMessages: SnapshotIncompleteMessage[];
+  /** Previously skipped UIDs recovered by the end-of-run retry. */
+  recoveredMessages: Array<{ folderIndex: number; uid: number; method: 'body-peek' | 'header+text' }>;
   folderPathMapping: FolderPathMapping[];
   disk: {
     rfc822Bytes: number;
@@ -84,10 +93,25 @@ export type SnapshotManifest = {
   };
 };
 
+export type SnapshotIncompleteMessage = {
+  folderIndex: number;
+  uid: number;
+  reason: string;
+};
+
 export type SnapshotState = {
   complete: boolean;
   folders: Record<string, { uidvalidity: number; doneUids: number[] }>;
+  /**
+   * Per-folder UIDs whose BODY.PEEK the server refused after the per-message
+   * attempts. Skipped so the rest of the mailbox can finish; retried once at
+   * the end and on every resume. Absent in pre-skip state files.
+   */
+  skipped?: Record<string, { uidvalidity: number; uids: number[]; reasons?: Record<string, string> }>;
 };
+
+/** Per-UID attempts (with reconnect) before a refused message is skipped. */
+export const DEFAULT_MESSAGE_ATTEMPTS = 3;
 
 const STATE_FILE = 'snapshot-state.json';
 const MANIFEST_FILE = 'snapshot-manifest.json';
@@ -219,6 +243,8 @@ export async function runReadOnlySnapshot(opts: {
   onAfterPreflight?: () => void | Promise<void>;
   retry?: Partial<RetryPolicy>;
   peekTimeoutMs?: (rfc822Size: number | null | undefined) => number;
+  /** Attempts per refused UID before it is skipped (default 3). */
+  messageAttempts?: number;
 }): Promise<{
   ok: boolean;
   reason: string;
@@ -235,6 +261,7 @@ export async function runReadOnlySnapshot(opts: {
   };
   const policy = defaultRetryPolicy(opts.retry);
   const peekTimeout = opts.peekTimeoutMs || bodyPeekTimeoutMs;
+  const messageAttempts = Math.max(1, opts.messageAttempts ?? DEFAULT_MESSAGE_ATTEMPTS);
   let session: ReadOnlyImapSession | null = null;
   let examinedRaw: string | null = null;
   let consecutive = 0;
@@ -280,7 +307,8 @@ export async function runReadOnlySnapshot(opts: {
         return result;
       } catch (err) {
         const kind = classifySnapshotError(err);
-        if (kind === 'auth' || kind === 'fatal') {
+        if (kind === 'auth' || kind === 'fatal' || kind === 'message') {
+          // 'message' is handled per UID by the caller (skip after attempts).
           throw err;
         }
         consecutive += 1;
@@ -393,6 +421,8 @@ export async function runReadOnlySnapshot(opts: {
       sha256All: sha,
       files: [],
       sizeMismatches: [],
+      incompleteMessages: [],
+      recoveredMessages: [],
       folderPathMapping: mappingsForFolderPaths(folderRows.map((f) => f.path)),
       disk: {
         rfc822Bytes: sizes.reduce((a, s) => a + (s || 0), 0),
@@ -442,7 +472,39 @@ export async function runReadOnlySnapshot(opts: {
     }
     fs.mkdirSync(opts.dest, { recursive: true });
     destClaimed = true;
-    const state = guard.resumable ? loadState(opts.dest) : { complete: false, folders: {} };
+    const state: SnapshotState = guard.resumable
+      ? loadState(opts.dest)
+      : { complete: false, folders: {} };
+    const skippedOf = (raw: string) => (state.skipped ? state.skipped[raw] : undefined);
+    const clearSkipped = (raw: string, uid: number) => {
+      const entry = skippedOf(raw);
+      if (!entry) {
+        return;
+      }
+      entry.uids = entry.uids.filter((u) => u !== uid);
+      if (entry.reasons) {
+        delete entry.reasons[String(uid)];
+      }
+      if (entry.uids.length === 0 && state.skipped) {
+        delete state.skipped[raw];
+      }
+    };
+    const markSkipped = (raw: string, uidvalidity: number, uid: number, reason: string) => {
+      if (!state.skipped) {
+        state.skipped = {};
+      }
+      let entry = state.skipped[raw];
+      if (!entry || entry.uidvalidity !== uidvalidity) {
+        entry = { uidvalidity, uids: [], reasons: {} };
+        state.skipped[raw] = entry;
+      }
+      if (!entry.uids.includes(uid)) {
+        entry.uids.push(uid);
+      }
+      entry.reasons = entry.reasons || {};
+      entry.reasons[String(uid)] = reason;
+    };
+    const recovered: SnapshotManifest['recoveredMessages'] = [];
     const stampStatus = (s: Omit<SnapshotStatus, 'updatedAt'>) => {
       const lastStatus = { ...s, updatedAt: new Date().toISOString() };
       writeSnapshotStatus(opts.dest, lastStatus);
@@ -500,8 +562,24 @@ export async function runReadOnlySnapshot(opts: {
       rec.arrivedDuringSnapshot = extra;
       const toFetch = nowUids.filter((u) => !(prev && prev.doneUids.includes(u)));
       const dir = folderDir(opts.dest, rec.path);
+      const folderIndex = listed.indexOf(box);
       let fetched = prev ? prev.doneUids.length : 0;
       const doneUids = prev ? prev.doneUids.slice() : [];
+      {
+        // Drop skipped UIDs that vanished or belong to an older UIDVALIDITY.
+        const entry = skippedOf(box.raw);
+        if (entry) {
+          if (entry.uidvalidity !== expectedUv) {
+            delete state.skipped![box.raw];
+          } else {
+            for (const u of entry.uids.slice()) {
+              if (!nowUids.includes(u) || doneUids.includes(u)) {
+                clearSkipped(box.raw, u);
+              }
+            }
+          }
+        }
+      }
       const sizeByUid = new Map(sizeRows.map((r) => [r.uid, r.size]));
       for (const r of sizeRows) {
         if (typeof r.size === 'number') {
@@ -509,24 +587,56 @@ export async function runReadOnlySnapshot(opts: {
         }
       }
       for (const uid of toFetch) {
-        await withRetry(async (s) => {
-          if (doneUids.includes(uid)) {
-            return;
-          }
-          if (examinedRaw !== box.raw) {
-            const ex = await s.examine(box.raw);
-            if (!ex.ok || ex.uidvalidity !== expectedUv) {
-              throw new Error(`UIDVALIDITY changed ${expectedUv}->${ex.uidvalidity}; refuse mix`);
+        for (let attempt = 1; ; attempt++) {
+          try {
+            await withRetry(async (s) => {
+              if (doneUids.includes(uid)) {
+                return;
+              }
+              if (examinedRaw !== box.raw) {
+                const ex = await s.examine(box.raw);
+                if (!ex.ok || ex.uidvalidity !== expectedUv) {
+                  throw new Error(`UIDVALIDITY changed ${expectedUv}->${ex.uidvalidity}; refuse mix`);
+                }
+                examinedRaw = box.raw;
+              }
+              const raw = await s.fetchBodyPeek(uid, peekTimeout(sizeByUid.get(uid) ?? null));
+              atomicWriteEml(dir, uid, raw);
+              doneUids.push(uid);
+              fetched += 1;
+              clearSkipped(box.raw, uid);
+              state.folders[box.raw] = { uidvalidity: expectedUv, doneUids };
+              saveState(opts.dest, state);
+            });
+            break;
+          } catch (err) {
+            if (classifySnapshotError(err) !== 'message') {
+              throw err;
             }
-            examinedRaw = box.raw;
+            const reason = retryReasonToken(err);
+            if (attempt < messageAttempts) {
+              const wait = retryWaitMs(attempt, policy.baseMs, policy.capMs);
+              log(
+                countLog('message-retry', {
+                  attempt,
+                  max: messageAttempts,
+                  folder: folderIndex,
+                  uid,
+                  reason,
+                })
+              );
+              await policy.sleep(wait);
+              closeQuiet();
+              continue;
+            }
+            // Skip this UID; it is not marked done and stays out of the archive.
+            markSkipped(box.raw, expectedUv, uid, reason);
+            state.folders[box.raw] = { uidvalidity: expectedUv, doneUids };
+            saveState(opts.dest, state);
+            log(countLog('message-skipped', { folder: folderIndex, uid, reason }));
+            break;
           }
-          const raw = await s.fetchBodyPeek(uid, peekTimeout(sizeByUid.get(uid) ?? null));
-          atomicWriteEml(dir, uid, raw);
-          doneUids.push(uid);
-          fetched += 1;
-          state.folders[box.raw] = { uidvalidity: expectedUv, doneUids };
-          saveState(opts.dest, state);
-        });
+        }
       }
       rec.fetched = fetched;
       rec.status = rec.exists === 0 ? 'empty' : 'fetched';
@@ -539,6 +649,101 @@ export async function runReadOnlySnapshot(opts: {
       );
     }
 
+    // One final retry for skipped UIDs on a fresh connection. If BODY.PEEK[]
+    // is still refused, diagnose with RFC822.SIZE and try BODY.PEEK[HEADER] +
+    // BODY.PEEK[TEXT] (RFC3501: BODY[] = HEADER + TEXT), accepted only when the
+    // reassembled length equals the server's RFC822.SIZE. Read-only throughout.
+    const skippedTotal = Object.values(state.skipped || {}).reduce((a, e) => a + e.uids.length, 0);
+    if (skippedTotal > 0) {
+      log(countLog('skipped-retry-start', { messages: skippedTotal }));
+      closeQuiet();
+      for (const raw of Object.keys(state.skipped || {})) {
+        const entry = skippedOf(raw);
+        const box = listed.find((b) => b.raw === raw);
+        const rec = folderRows.find((f) => f.raw === raw);
+        if (!entry || !box || !rec || rec.status === 'examine-failed') {
+          continue;
+        }
+        const folderIndex = listed.indexOf(box);
+        const dir = folderDir(opts.dest, rec.path);
+        for (const uid of entry.uids.slice()) {
+          const size = rfc822ByRel.get(`${encodeArchiveRelPath(rec.path)}/${uid}.eml`) ?? null;
+          try {
+            const got = await withRetry(async (s) => {
+              if (examinedRaw !== raw) {
+                const ex = await s.examine(raw);
+                if (!ex.ok || ex.uidvalidity !== entry.uidvalidity) {
+                  throw new Error(
+                    `UIDVALIDITY changed ${entry.uidvalidity}->${ex.uidvalidity}; refuse mix`
+                  );
+                }
+                examinedRaw = raw;
+              }
+              try {
+                const body = await s.fetchBodyPeek(uid, peekTimeout(size));
+                return { body, method: 'body-peek' as const };
+              } catch (err) {
+                if (classifySnapshotError(err) !== 'message') {
+                  throw err;
+                }
+                const serverSize = await s.fetchUidSize(uid);
+                log(
+                  countLog('skipped-diagnose', {
+                    folder: folderIndex,
+                    uid,
+                    size: serverSize == null ? 'unknown' : serverSize,
+                    first: retryReasonToken(err),
+                  })
+                );
+                const t = peekTimeout(serverSize ?? size);
+                const header = await s.fetchBodyPeek(uid, t, 'HEADER');
+                const text = await s.fetchBodyPeek(uid, t, 'TEXT');
+                const body = Buffer.concat([header, text]);
+                if (serverSize == null || body.length !== serverSize) {
+                  throw new SnapshotMessageError(`UID FETCH ${uid} reassembled size mismatch`);
+                }
+                return { body, method: 'header+text' as const };
+              }
+            });
+            atomicWriteEml(dir, uid, got.body);
+            const folderState = state.folders[raw] || {
+              uidvalidity: entry.uidvalidity,
+              doneUids: [] as number[],
+            };
+            if (!folderState.doneUids.includes(uid)) {
+              folderState.doneUids.push(uid);
+              rec.fetched += 1;
+            }
+            state.folders[raw] = folderState;
+            clearSkipped(raw, uid);
+            saveState(opts.dest, state);
+            recovered.push({ folderIndex, uid, method: got.method });
+            log(countLog('skipped-recovered', { folder: folderIndex, uid, method: got.method }));
+          } catch (err) {
+            if (classifySnapshotError(err) !== 'message') {
+              throw err;
+            }
+            const reason = retryReasonToken(err);
+            entry.reasons = entry.reasons || {};
+            entry.reasons[String(uid)] = reason;
+            saveState(opts.dest, state);
+            log(countLog('skipped-still-failing', { folder: folderIndex, uid, reason }));
+          }
+        }
+      }
+    }
+    const incompleteMessages: SnapshotIncompleteMessage[] = [];
+    for (const [raw, entry] of Object.entries(state.skipped || {})) {
+      const folderIndex = listed.findIndex((b) => b.raw === raw);
+      for (const uid of entry.uids) {
+        incompleteMessages.push({
+          folderIndex,
+          uid,
+          reason: (entry.reasons && entry.reasons[String(uid)]) || 'fetch-failed',
+        });
+      }
+    }
+
     const hashed = hashEmlTree(opts.dest);
     writeHashList(opts.dest, hashed.listing);
     const mismatches = sizeMismatchesAgainstRfc822(hashed.files, rfc822ByRel);
@@ -548,6 +753,8 @@ export async function runReadOnlySnapshot(opts: {
     const manifest = manifestBase(complete, hashed.sha256All);
     manifest.files = hashed.files;
     manifest.sizeMismatches = mismatches;
+    manifest.incompleteMessages = incompleteMessages;
+    manifest.recoveredMessages = recovered;
     manifest.messageCount = hashed.files.length;
     manifest.folderCounts = Object.fromEntries(folderRows.map((f) => [f.path, f.fetched]));
     const manTmp = path.join(opts.dest, `${MANIFEST_FILE}.partial`);
@@ -555,6 +762,13 @@ export async function runReadOnlySnapshot(opts: {
     fs.renameSync(manTmp, path.join(opts.dest, MANIFEST_FILE));
     state.complete = complete;
     saveState(opts.dest, state);
+
+    log(
+      countLog('incomplete', {
+        messages: incompleteMessages.length,
+        recovered: recovered.length,
+      })
+    );
 
     if (opts.workCopy && complete) {
       const workGuard = destOverwriteGuard(opts.workCopy);
@@ -606,6 +820,15 @@ export async function runReadOnlySnapshot(opts: {
         };
       }
       log(countLog('work-copy', { copied: 1, files: workHash.files.length }));
+      const workVerify = verifySnapshotArchive(opts.dest, opts.workCopy);
+      log(
+        countLog('verify', {
+          ok: workVerify.ok ? 1 : 0,
+          issues: workVerify.issues.length,
+          files: workVerify.fileCount,
+          incomplete: incompleteMessages.length,
+        })
+      );
     }
 
     try {
@@ -614,7 +837,9 @@ export async function runReadOnlySnapshot(opts: {
       closeQuiet();
     }
     const reason = complete
-      ? ''
+      ? incompleteMessages.length
+        ? `incomplete messages: ${incompleteMessages.length}`
+        : ''
       : mismatches.length
         ? `RFC822.SIZE mismatch files=${mismatches.length}`
         : examineFailed[0]

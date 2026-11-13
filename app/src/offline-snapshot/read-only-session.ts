@@ -18,6 +18,17 @@ import { SnapshotConnectTarget, TLS_CONNECT_OPTIONS } from './yahoo-config';
 
 export type SnapshotLog = (line: string) => void;
 
+/**
+ * The server refused (NO/BAD) or returned no body for one UID. Message-level:
+ * the caller may skip this UID and continue; never a mailbox mutation.
+ */
+export class SnapshotMessageError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = 'SnapshotMessageError';
+  }
+}
+
 export class SnapshotAuthError extends Error {
   constructor(message = 'LOGIN failed') {
     super(message);
@@ -152,9 +163,34 @@ export class ReadOnlyImapSession {
     return rows;
   }
 
-  async fetchBodyPeek(uid: number, timeoutMs = 20000): Promise<Buffer> {
+  /** Diagnostic: RFC822.SIZE for one UID (read-only, no body). */
+  async fetchUidSize(uid: number, timeoutMs = 30000): Promise<number | null> {
+    const lines = await this.command(`UID FETCH ${uid} (RFC822.SIZE)`, timeoutMs);
+    const tagged = lines[lines.length - 1] || '';
+    if (!/ OK /i.test(tagged)) {
+      return null;
+    }
+    for (const line of lines) {
+      const m = line.match(/RFC822\.SIZE (\d+)/i);
+      if (m && new RegExp(`UID ${uid}\\b`).test(line)) {
+        return parseInt(m[1], 10);
+      }
+    }
+    return null;
+  }
+
+  /**
+   * UID FETCH n BODY.PEEK[section]. section '' is the whole RFC822 message;
+   * 'HEADER' / 'TEXT' are used only to reassemble a message the server refuses
+   * to return whole. PEEK never sets \Seen.
+   */
+  async fetchBodyPeek(
+    uid: number,
+    timeoutMs = 20000,
+    section: '' | 'HEADER' | 'TEXT' = ''
+  ): Promise<Buffer> {
     const tag = this.nextTag();
-    const cmd = `${tag} UID FETCH ${uid} BODY.PEEK[]`;
+    const cmd = `${tag} UID FETCH ${uid} BODY.PEEK[${section}]`;
     const allowed = assertReadOnlyImapCommand(cmd);
     if (!allowed.ok) {
       throw new Error(allowed.reason);
@@ -165,7 +201,7 @@ export class ReadOnlyImapSession {
     }
     this.sock.setTimeout(Math.max(timeoutMs + 5000, 15000));
     this.lastLiteral = null;
-    const pending = this.readBodyLiteral(tag, uid, timeoutMs);
+    const pending = this.readBodyLiteral(tag, uid, timeoutMs, section === 'TEXT');
     this.sock.write(Buffer.from(cmd + '\r\n'));
     return pending;
   }
@@ -317,18 +353,28 @@ export class ReadOnlyImapSession {
     }
   }
 
-  private readBodyLiteral(tag: string, uid: number, timeoutMs: number): Promise<Buffer> {
+  private readBodyLiteral(
+    tag: string,
+    uid: number,
+    timeoutMs: number,
+    allowEmpty = false
+  ): Promise<Buffer> {
     return new Promise((resolve, reject) => {
       const waiter: LineWaiter = {
         match: (line) => line.startsWith(`${tag} `),
         resolve: (line) => {
           clearTimeout(timer);
           if (!/ OK /i.test(line)) {
-            reject(new Error(`UID FETCH ${uid} failed`));
+            const status = / BAD /i.test(line) ? 'BAD' : / NO /i.test(line) ? 'NO' : 'other';
+            reject(new SnapshotMessageError(`UID FETCH ${uid} failed status=${status}`));
+            return;
+          }
+          if (allowEmpty && (!this.lastLiteral || this.lastLiteral.length === 0)) {
+            resolve(Buffer.alloc(0));
             return;
           }
           if (!this.lastLiteral || this.lastLiteral.length === 0) {
-            reject(new Error(`UID FETCH ${uid} missing BODY literal`));
+            reject(new SnapshotMessageError(`UID FETCH ${uid} missing BODY literal`));
             return;
           }
           resolve(this.lastLiteral);

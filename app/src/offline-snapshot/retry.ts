@@ -7,7 +7,8 @@ export const DEFAULT_MAX_CONSECUTIVE_RETRIES = 8;
 export const DEFAULT_RETRY_BASE_MS = 5000;
 export const DEFAULT_RETRY_CAP_MS = 5 * 60 * 1000;
 
-export type SnapshotErrorKind = 'transient' | 'auth' | 'fatal';
+/** 'message' = one UID refused/empty; the run may skip it and continue. */
+export type SnapshotErrorKind = 'transient' | 'auth' | 'fatal' | 'message';
 
 export type RetryPolicy = {
   maxConsecutive: number;
@@ -46,6 +47,21 @@ export function retryReasonToken(err: unknown): string {
   const code = errorCode(err);
   if (/BODY\.PEEK timeout/i.test(msg)) {
     return 'body-peek-timeout';
+  }
+  if (/^UID FETCH \d+ failed status=NO/i.test(msg)) {
+    return 'fetch-no';
+  }
+  if (/^UID FETCH \d+ failed status=BAD/i.test(msg)) {
+    return 'fetch-bad';
+  }
+  if (/^UID FETCH \d+ failed/i.test(msg)) {
+    return 'fetch-failed';
+  }
+  if (/missing BODY literal/i.test(msg)) {
+    return 'fetch-empty';
+  }
+  if (/reassembled size mismatch/i.test(msg)) {
+    return 'reassemble-size';
   }
   if (/greeting timeout/i.test(msg)) {
     return 'greeting-timeout';
@@ -95,6 +111,14 @@ export function classifySnapshotError(err: unknown): SnapshotErrorKind {
   }
   if (isCertVerificationError(msg, code)) {
     return 'fatal';
+  }
+  if (
+    (err && typeof err === 'object' && (err as { name?: string }).name === 'SnapshotMessageError') ||
+    /^UID FETCH \d+ failed\b/i.test(msg) ||
+    /^UID FETCH \d+ missing BODY literal/i.test(msg) ||
+    /^UID FETCH \d+ reassembled size mismatch/i.test(msg)
+  ) {
+    return 'message';
   }
   if (
     /not on the read-only allowlist/i.test(msg) ||

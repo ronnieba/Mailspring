@@ -992,6 +992,92 @@ async function run() {
     assertTrue(n != null && n > 0);
   });
 
+  await test('UID refused by server is skipped, retried at end, archive completes with incomplete count', async () => {
+    const fake = await startFakeImapServer({ user: USER, password: PASS });
+    const dest = tmpDir('snap-skip-');
+    const work = tmpDir('snap-skip-work-');
+    fs.rmSync(work, { recursive: true, force: true });
+    const logs: string[] = [];
+    try {
+      fake.refuseBodyPeekUids.add(2);
+      fake.refuseSectionUids.add(2);
+      const out = await runReadOnlySnapshot({
+        target: TARGET(fake.port),
+        username: USER,
+        password: PASS,
+        dest,
+        workCopy: work,
+        execute: true,
+        freeBytes: AMPLE_DISK,
+        retry: fastRetry(),
+        log: (l) => logs.push(l),
+      });
+      assertTrue(out.ok, out.reason);
+      assertEqual(out.reason, 'incomplete messages: 1');
+      assertTrue(!!out.manifest && out.manifest.complete);
+      assertEqual(out.manifest!.incompleteMessages.length, 1);
+      assertEqual(out.manifest!.incompleteMessages[0].uid, 2);
+      assertEqual(out.manifest!.recoveredMessages.length, 0);
+      const inbox = fs.readdirSync(path.join(dest, 'INBOX')).filter((n) => n.endsWith('.eml'));
+      assertEqual(inbox.sort().join(','), '1.eml,5.eml');
+      assertTrue(logs.some((l) => /snapshot: message-retry attempt=1 /.test(l)));
+      assertTrue(logs.some((l) => /snapshot: message-skipped .*uid=2/.test(l)));
+      assertTrue(logs.some((l) => /snapshot: skipped-still-failing .*uid=2/.test(l)));
+      assertTrue(fs.existsSync(work), 'work copy created');
+      const v = verifySnapshotArchive(dest, work);
+      assertTrue(v.ok, v.reason);
+      assertTrue(v.complete);
+      assertEqual(v.incompleteMessages, 1);
+      const state = JSON.parse(fs.readFileSync(path.join(dest, 'snapshot-state.json'), 'utf8'));
+      assertEqual(state.skipped.INBOX.uids.join(','), '2');
+      assertEqual(fake.storeCommands.length, 0);
+      assertFalse(logsHaveContent(logs));
+      const unread = fake.messagesOf('INBOX').find((m) => m.uid === 2);
+      assertTrue(!!unread && !unread.flags.some((f) => /^\\Seen$/i.test(f)));
+    } finally {
+      fs.rmSync(dest, { recursive: true, force: true });
+      fs.rmSync(work, { recursive: true, force: true });
+      await fake.close();
+    }
+  });
+
+  await test('refused BODY.PEEK[] is recovered at end via HEADER+TEXT when size matches', async () => {
+    const fake = await startFakeImapServer({ user: USER, password: PASS });
+    const dest = tmpDir('snap-reasm-');
+    const logs: string[] = [];
+    try {
+      fake.refuseBodyPeekUids.add(2);
+      const out = await runReadOnlySnapshot({
+        target: TARGET(fake.port),
+        username: USER,
+        password: PASS,
+        dest,
+        execute: true,
+        freeBytes: AMPLE_DISK,
+        retry: fastRetry(),
+        log: (l) => logs.push(l),
+      });
+      assertTrue(out.ok, out.reason);
+      assertEqual(out.reason, '');
+      assertEqual(out.manifest!.incompleteMessages.length, 0);
+      assertEqual(out.manifest!.recoveredMessages.length, 1);
+      assertEqual(out.manifest!.recoveredMessages[0].method, 'header+text');
+      const original = fake.messagesOf('INBOX').find((m) => m.uid === 2)!.raw;
+      const saved = fs.readFileSync(path.join(dest, 'INBOX', '2.eml'));
+      assertTrue(Buffer.compare(original, saved) === 0, 'reassembled bytes equal original');
+      const v = verifySnapshotArchive(dest);
+      assertTrue(v.ok, v.reason);
+      assertEqual(v.incompleteMessages, 0);
+      const state = JSON.parse(fs.readFileSync(path.join(dest, 'snapshot-state.json'), 'utf8'));
+      assertTrue(!state.skipped || !state.skipped.INBOX);
+      assertEqual(fake.storeCommands.length, 0);
+      assertFalse(logsHaveContent(logs));
+    } finally {
+      fs.rmSync(dest, { recursive: true, force: true });
+      await fake.close();
+    }
+  });
+
   await test('keep-awake start/release is safe', () => {
     const handle = startKeepAwake();
     handle.release();

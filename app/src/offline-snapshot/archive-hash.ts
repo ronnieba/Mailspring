@@ -153,6 +153,8 @@ export type VerifyResult = {
   expectedSha256All: string | null;
   issues: VerifyIssue[];
   sizeMismatches: SizeMismatch[];
+  /** UIDs the server refused, recorded as known-missing (not a verify failure). */
+  incompleteMessages: number;
 };
 
 function loadJson(p: string): unknown | null {
@@ -173,8 +175,11 @@ export function verifySnapshotArchive(dest: string, workCopy?: string | null): V
     sha256All?: string;
     messageCount?: number;
     files?: HashedEml[];
+    incompleteMessages?: unknown[];
   } | null;
   const state = loadJson(path.join(dest, STATE_FILE)) as StateLike | null;
+  const incompleteMessages =
+    manifest && Array.isArray(manifest.incompleteMessages) ? manifest.incompleteMessages.length : 0;
   const issues: VerifyIssue[] = [];
   const sizeMismatches: SizeMismatch[] = [];
   const expectedSha =
@@ -233,6 +238,8 @@ export function verifySnapshotArchive(dest: string, workCopy?: string | null): V
     reason = `verify failed issues=${issues.length} sizeMismatches=${sizeMismatches.length}`;
   } else if (!complete) {
     reason = 'verify-ok-incomplete';
+  } else if (incompleteMessages > 0) {
+    reason = `verify-ok incomplete messages: ${incompleteMessages}`;
   }
   return {
     ok,
@@ -243,6 +250,7 @@ export function verifySnapshotArchive(dest: string, workCopy?: string | null): V
     expectedSha256All: expectedSha,
     issues,
     sizeMismatches,
+    incompleteMessages,
   };
 }
 

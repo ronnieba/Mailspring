@@ -216,6 +216,10 @@ export type FakeImapServer = {
   destroyEveryBodyPeekAfter: number | null;
   rejectLogin: boolean;
   onBodyPeekDestroy: (() => void) | null;
+  /** UIDs whose BODY.PEEK[] is answered with a tagged NO (like Yahoo did). */
+  refuseBodyPeekUids: Set<number>;
+  /** UIDs whose BODY.PEEK[HEADER]/[TEXT] are refused as well. */
+  refuseSectionUids: Set<number>;
   inject(folderRaw: string, message: FakeMessage): void;
   messagesOf(folderRaw: string): FakeMessage[];
   setUidvalidity(folderRaw: string, uidvalidity: number): void;
@@ -239,6 +243,8 @@ export function startFakeImapServer(opts?: {
     destroyEveryBodyPeekAfter: null as number | null,
     rejectLogin: false,
     onBodyPeekDestroy: null as (() => void) | null,
+    refuseBodyPeekUids: new Set<number>(),
+    refuseSectionUids: new Set<number>(),
   };
 
   return new Promise((resolve, reject) => {
@@ -350,6 +356,8 @@ export function startFakeImapServer(opts?: {
         port: addr.port,
         host: '127.0.0.1',
         storeCommands,
+        refuseBodyPeekUids: ctrl.refuseBodyPeekUids,
+        refuseSectionUids: ctrl.refuseSectionUids,
         get successfulBodyPeeks() {
           return ctrl.successfulBodyPeeks;
         },
@@ -434,6 +442,8 @@ function handleUidFetch(
     destroyNextBodyPeeks: number;
     destroyEveryBodyPeekAfter: number | null;
     onBodyPeekDestroy: (() => void) | null;
+    refuseBodyPeekUids: Set<number>;
+    refuseSectionUids: Set<number>;
   }
 ) {
   const writeLine = (s: string) => sock.write(Buffer.from(s + CRLF));
@@ -475,12 +485,27 @@ function handleUidFetch(
         sock.destroy();
         return;
       }
+      const sectionMatch = items.match(/BODY\.PEEK\[(HEADER|TEXT)\]/);
+      const section = sectionMatch ? sectionMatch[1] : '';
+      if (
+        (section === '' && ctrl.refuseBodyPeekUids.has(uid)) ||
+        (section !== '' && ctrl.refuseSectionUids.has(uid))
+      ) {
+        writeLine(`${tag} NO [UNAVAILABLE] fake server refuses this message`);
+        return;
+      }
+      let part = msg.raw;
+      if (section) {
+        const sep = msg.raw.indexOf('\r\n\r\n');
+        const cut = sep === -1 ? msg.raw.length : sep + 4;
+        part = section === 'HEADER' ? msg.raw.slice(0, cut) : msg.raw.slice(cut);
+      }
       sock.write(
         Buffer.from(
-          `* ${seq} FETCH (UID ${uid} RFC822.SIZE ${msg.raw.length} BODY[] {${msg.raw.length}}${CRLF}`
+          `* ${seq} FETCH (UID ${uid} RFC822.SIZE ${msg.raw.length} BODY[${section}] {${part.length}}${CRLF}`
         )
       );
-      sock.write(msg.raw);
+      sock.write(part);
       sock.write(Buffer.from(`)${CRLF}`));
       ctrl.successfulBodyPeeks += 1;
     } else {

@@ -168,6 +168,7 @@ export async function runSnapshotCli(
           sha256All: verified.sha256All,
           issues: verified.issues.length,
           sizeMismatches: verified.sizeMismatches.length,
+          incompleteMessages: verified.incompleteMessages,
         },
         null,
         2
@@ -297,6 +298,8 @@ export async function runSnapshotCli(
           unselectable: result.manifest.unselectable,
           empty: result.manifest.empty,
           examineFailed: result.manifest.examineFailed,
+          incompleteMessages: result.manifest.incompleteMessages.length,
+          recoveredMessages: result.manifest.recoveredMessages.length,
           disk: result.manifest.disk,
         },
         null,

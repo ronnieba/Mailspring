@@ -35,5 +35,6 @@ foreach ($arg in $args) {
 Set-Location -LiteralPath $Root
 $project = Join-Path $Root 'app\tsconfig.json'
 $cli = Join-Path $Root 'app\src\offline-snapshot\cli.ts'
-& npx --yes ts-node --project $project $cli @args
+$npxArgs = @('--yes', 'ts-node', '--project', $project, $cli, '--') + @($args)
+& npx.cmd @npxArgs
 exit $LASTEXITCODE
