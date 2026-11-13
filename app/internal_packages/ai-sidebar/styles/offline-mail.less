@@ -392,44 +392,104 @@
 }
 
 // ---------------------------------------------------------------------------
-// Theme palettes for the offline panes. Mailspring's colorful themes style the
-// native account sidebar / thread list, which the offline experiment replaces
-// with its own panes, so each theme's colors are mirrored here. ThemeManager
-// puts `theme-<package name>` on <body>. Light/Dark use the theme variables.
+// Theme palettes for the offline experiment. Mailspring's colorful themes
+// only style the native account sidebar / thread list, which the offline
+// experiment replaces with its own panes, and their less variables are light.
+// So each theme gets a full palette here that colors the whole window like
+// ui-dark does. ThemeManager puts `theme-<package name>` on <body>.
+// Light/Dark keep using the theme's own variables.
 // ---------------------------------------------------------------------------
-.ofl-palette(@side-bg; @side-fg; @active-bg; @active-fg; @list-bg; @list-fg; @reader-bg; @toolbar-bg; @toolbar-fg; @ai-bg; @ai-fg; @accent; @border) {
+.ofl-palette(@side-bg; @side-fg; @toolbar-bg; @toolbar-fg; @list-bg; @reader-bg; @ai-bg; @surface; @fg; @subtle; @border; @accent; @selected) {
   --ofl-side-bg: @side-bg;
   --ofl-side-fg: @side-fg;
-  --ofl-active-bg: @active-bg;
-  --ofl-active-fg: @active-fg;
-  --ofl-list-bg: @list-bg;
-  --ofl-list-fg: @list-fg;
-  --ofl-reader-bg: @reader-bg;
   --ofl-toolbar-bg: @toolbar-bg;
   --ofl-toolbar-fg: @toolbar-fg;
+  --ofl-list-bg: @list-bg;
+  --ofl-reader-bg: @reader-bg;
   --ofl-ai-bg: @ai-bg;
-  --ofl-ai-fg: @ai-fg;
-  --ofl-accent: @accent;
+  --ofl-surface: @surface;
+  --ofl-fg: @fg;
+  --ofl-subtle: @subtle;
   --ofl-border: @border;
+  --ofl-accent: @accent;
+  --ofl-selected: @selected;
 }
+// Darkside: dark purple-gray everywhere, coral accent.
 body.theme-ui-darkside {
-  .ofl-palette(#313042; #c3c2cf; #f18260; #ffffff; #ffffff; #313042; #f6f6f8; #ffffff; #313042; #f4f4f7; #313042; #f18260; #dcdbe3);
+  .ofl-palette(#313042; #c3c2cf; #262533; #e6e5ee; #2b2a3a; #262533; #2b2a3a; #3a394e; #e6e5ee; #a9a8b9; #46455c; #f18260; #4a3a45);
 }
-body.theme-ui-taiga {
-  .ofl-palette(#e8f3f8; #5f6a71; #5dade1; #ffffff; #ffffff; #5f6a71; #f7fbfd; #ddedf4; #4a555c; #f0f7fa; #4a555c; #5dade1; #cfe3ec);
-}
+// Ubuntu: warm dark gray everywhere, orange accent.
 body.theme-ui-ubuntu {
-  .ofl-palette(#3c3b37; #f2f1ef; #f07746; #ffffff; #ffffff; #2f2e2b; #f6f6f6; #41403b; #f6f6f6; #f6f6f6; #2f2e2b; #f07746; #e2e2e2);
+  .ofl-palette(#3c3b37; #f2f1ef; #2c2b28; #f2f1ef; #30302d; #2a2927; #30302d; #43423e; #f2f1ef; #b8b5ae; #4f4d48; #f07746; #4d3a2f);
 }
+// Taiga: blue-tinted light palette across all panes, blue accent.
+body.theme-ui-taiga {
+  .ofl-palette(#d6e9f3; #34444d; #c4dfee; #24333b; #eaf4f9; #f3f9fc; #e3f0f7; #ffffff; #24333b; #5a6a73; #b9d5e4; #3d97d3; #c6e1f1);
+}
+// Less Is More: intentionally light and minimal, slate accent.
 body.theme-less-is-more,
 body.theme-ui-less-is-more {
-  .ofl-palette(#ffffff; #7f949c; #eef3f5; #36474e; #ffffff; #566c75; #fafafa; #ffffff; #566c75; #ffffff; #566c75; #566c75; #dddddd);
+  .ofl-palette(#ffffff; #566c75; #ffffff; #566c75; #ffffff; #fafafa; #ffffff; #ffffff; #36474e; #7f949c; #dddddd; #566c75; #eef3f5);
 }
 
 body[class*='theme-ui-darkside'],
 body[class*='theme-ui-taiga'],
 body[class*='theme-ui-ubuntu'],
 body[class*='less-is-more'] {
+  // Window frame, top bar and toolbar.
+  .sheet-container,
+  .nav-rail-frame,
+  .sheet {
+    background: var(--ofl-list-bg);
+  }
+  .nav-rail {
+    background: var(--ofl-side-bg);
+    color: var(--ofl-side-fg);
+  }
+  .sheet-container .sheet-toolbar-container,
+  .sheet-toolbar-container > div,
+  .sheet-toolbar-container .toolbar-ThreadList,
+  .sheet-toolbar-container .toolbar-MessageList,
+  .sheet-toolbar-container .toolbar-MessageListSidebar {
+    background: var(--ofl-toolbar-bg);
+    background-image: none;
+    color: var(--ofl-toolbar-fg);
+    border-color: var(--ofl-border);
+  }
+  .sheet-toolbar-container .toolbar-RootSidebar {
+    background: var(--ofl-side-bg);
+    background-image: none;
+    color: var(--ofl-side-fg);
+  }
+  .sheet-container .sheet-toolbar-container .btn,
+  .sheet-container .sheet-toolbar-container .btn-toolbar {
+    color: var(--ofl-toolbar-fg);
+    background: transparent;
+  }
+  .sheet-toolbar-container img.content-mask,
+  .nav-rail img.content-mask {
+    background-color: var(--ofl-toolbar-fg);
+  }
+  .offline-pane-toggles {
+    color: var(--ofl-toolbar-fg);
+    .offline-pane-toggles-label {
+      color: var(--ofl-toolbar-fg);
+      opacity: 0.8;
+    }
+    .offline-pane-toggle {
+      color: var(--ofl-toolbar-fg);
+      border-color: var(--ofl-accent);
+      background: color-mix(in srgb, var(--ofl-accent) 22%, transparent);
+    }
+    .offline-pane-toggle.off {
+      color: var(--ofl-toolbar-fg);
+      border-color: color-mix(in srgb, var(--ofl-toolbar-fg) 35%, transparent);
+      background: transparent;
+      opacity: 0.75;
+    }
+  }
+
+  // Folder list.
   .column-RootSidebar,
   .offline-folder-sidebar {
     background: var(--ofl-side-bg);
@@ -444,63 +504,126 @@ body[class*='less-is-more'] {
       background: color-mix(in srgb, var(--ofl-side-fg) 12%, transparent);
     }
     .offline-folder-row.active {
-      background: var(--ofl-active-bg);
-      color: var(--ofl-active-fg);
+      background: var(--ofl-accent);
+      color: #fff;
       .offline-folder-count {
-        color: var(--ofl-active-fg);
+        color: #fff;
       }
     }
   }
+
+  // Message list.
+  .column-ThreadList,
   .offline-message-list {
     background: var(--ofl-list-bg);
-    color: var(--ofl-list-fg);
-    .offline-message-row {
-      border-bottom-color: var(--ofl-border);
-    }
-    .offline-message-row.selected {
-      background: color-mix(in srgb, var(--ofl-accent) 18%, var(--ofl-list-bg));
-      box-shadow: inset -3px 0 0 var(--ofl-accent);
-    }
-    .offline-list-selection {
-      color: var(--ofl-accent);
-    }
-  }
-  .offline-row-check.checked {
-    background: var(--ofl-accent);
-    border-color: var(--ofl-accent);
-  }
-  .offline-reader {
-    background: var(--ofl-reader-bg);
-    color: var(--ofl-list-fg);
-  }
-  .offline-reader-actions .btn,
-  .offline-list-clear {
+    color: var(--ofl-fg);
     border-color: var(--ofl-border);
   }
-  .sheet-toolbar-container,
-  .column-ThreadList .sheet-toolbar-container {
-    background: var(--ofl-toolbar-bg);
+  .offline-list-header {
+    border-bottom-color: var(--ofl-border);
   }
-  .offline-pane-toggles {
-    color: var(--ofl-toolbar-fg);
-    .offline-pane-toggles-label {
-      color: var(--ofl-toolbar-fg);
-      opacity: 0.8;
+  .offline-list-title .offline-list-count,
+  .offline-row-line1 .offline-row-date,
+  .offline-list-selectbar .offline-list-selection-hint {
+    color: var(--ofl-subtle);
+  }
+  .offline-row-subject {
+    color: color-mix(in srgb, var(--ofl-fg) 80%, var(--ofl-list-bg));
+  }
+  .offline-list-filter {
+    background: var(--ofl-surface);
+    color: var(--ofl-fg);
+    border: 1px solid var(--ofl-border);
+    border-radius: 4px;
+    &::placeholder {
+      color: var(--ofl-subtle);
     }
-    .offline-pane-toggle {
-      color: var(--ofl-toolbar-fg);
+  }
+  .offline-list-selectbar {
+    color: var(--ofl-fg);
+    .offline-list-clear {
+      color: var(--ofl-fg);
+      border-color: var(--ofl-border);
+      background: var(--ofl-surface);
+    }
+  }
+  .offline-list-selection {
+    color: var(--ofl-accent);
+  }
+  .offline-message-row {
+    border-bottom-color: var(--ofl-border);
+    &:hover {
+      background: color-mix(in srgb, var(--ofl-fg) 7%, transparent);
+    }
+    &.selected {
+      background: var(--ofl-selected);
+      box-shadow: inset -3px 0 0 var(--ofl-accent);
+    }
+  }
+  .offline-row-check {
+    border-color: color-mix(in srgb, var(--ofl-fg) 50%, transparent);
+    &:hover {
       border-color: var(--ofl-accent);
-      background: color-mix(in srgb, var(--ofl-accent) 22%, transparent);
     }
-    .offline-pane-toggle.off {
-      border-color: color-mix(in srgb, var(--ofl-toolbar-fg) 35%, transparent);
-      background: transparent;
+    &.checked {
+      background: var(--ofl-accent);
+      border-color: var(--ofl-accent);
+      color: #fff;
     }
+  }
+
+  // Reader chrome (the HTML body itself stays on its white card).
+  .column-MessageList,
+  .offline-reader {
+    background: var(--ofl-reader-bg);
+    color: var(--ofl-fg);
+  }
+  .offline-reader-placeholder,
+  .offline-reader-headers dt {
+    color: var(--ofl-subtle);
+  }
+  .offline-reader-attachments .offline-attachment {
+    background: var(--ofl-surface);
+    color: var(--ofl-fg);
+  }
+  .offline-reader-subject {
+    color: var(--ofl-fg);
+  }
+  .offline-reader .offline-reader-actions .btn {
+    background: var(--ofl-surface);
+    color: var(--ofl-fg);
+    border-color: var(--ofl-border);
+  }
+  .offline-reader-html {
+    border-color: var(--ofl-border);
+  }
+
+  // AI panel: remap the panel's own CSS variables so every part follows.
+  .column-MessageListSidebar {
+    background: var(--ofl-ai-bg);
   }
   .ai-sidebar {
-    background: var(--ofl-ai-bg);
-    color: var(--ofl-ai-fg);
+    --background-primary: var(--ofl-ai-bg);
+    --background-secondary: var(--ofl-surface);
+    --background-tertiary: color-mix(in srgb, var(--ofl-fg) 10%, transparent);
+    --text-color: var(--ofl-fg);
+    --text-color-subtle: var(--ofl-subtle);
+    --border-color-divider: var(--ofl-border);
     --color-primary: var(--ofl-accent);
+    background: var(--ofl-ai-bg);
+    color: var(--ofl-fg);
+  }
+  .ai-sidebar h1,
+  .ai-sidebar h2,
+  .ai-sidebar h3,
+  .ai-sidebar h4 {
+    color: var(--ofl-fg);
+  }
+  .ai-sidebar .ai-sidebar-scope .scope-btn,
+  .ai-sidebar .scope-btn {
+    background: var(--ofl-surface);
+    color: var(--ofl-fg);
+    border-color: var(--ofl-border);
   }
   .ai-sidebar .ai-sidebar-scope .scope-btn.active,
   .ai-sidebar .scope-btn.active {
@@ -508,7 +631,22 @@ body[class*='less-is-more'] {
     border-color: var(--ofl-accent);
     color: #fff;
   }
+  .ai-sidebar .gemini-usage button:not(.gemini-usage-line),
+  .ai-sidebar .gemini-usage input,
+  .ai-sidebar .gemini-billing-btn {
+    background: var(--ofl-surface);
+    color: var(--ofl-fg);
+    border-color: var(--ofl-border);
+  }
+
   .flexbox-handle-horizontal > div {
     background: var(--ofl-border);
   }
+}
+
+// The empty "selected" hint is guidance, not an error, on dark surfaces too.
+body.ai-dark-surface .ai-sidebar .ai-sidebar-scope .scope-status.empty.hint {
+  background: var(--background-secondary);
+  color: var(--text-color);
+  border: 1px solid var(--border-color-divider);
 }
