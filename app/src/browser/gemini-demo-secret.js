@@ -37,7 +37,7 @@
  */
 const fs = require('fs');
 const path = require('path');
-const { spawnSync } = require('child_process');
+const { spawnSync, execFile } = require('child_process');
 
 const KEY_ENV = 'MAILSPRING_DEMO_GEMINI_API_KEY';
 const PAID_ENV = 'MAILSPRING_DEMO_GEMINI_PAID';
@@ -272,6 +272,114 @@ function loadFromKeychainHelper(helperPath, namespace) {
   return parsed;
 }
 
+// Windows offline experiment: the key lives in Credential Manager, written once
+// by scripts/store-gemini-api-key.ps1 (blob: "paid=0|1" newline key). It is
+// read lazily (when the AI panel asks for Gemini status or a Summarize runs),
+// kept only in this module's memory, and never logged or sent to a renderer.
+// This is a separate item from the Yahoo IMAP one, which is never read here.
+const WINDOWS_CRED_TARGET = 'Mailspring-offline Gemini API|gemini-api-key';
+const WINDOWS_CRED_USER = 'gemini-api-key';
+const WINDOWS_RETRY_MS = 5000;
+let windowsLastAttempt = 0;
+let windowsLastReason = 'not-tried';
+let windowsInflight = null;
+
+function defaultWindowsCredReadScript() {
+  return path.join(__dirname, '../../../scripts/windows-cred-read.ps1');
+}
+
+function getWindowsGeminiCredentialReason() {
+  return windowsLastReason;
+}
+
+function loadGeminiFromWindowsCredentialManager(opts) {
+  const o = opts || {};
+  // Re-read while the paid confirmation is missing, so re-running the store
+  // script and answering y takes effect without restarting the app.
+  if (capturedKey && capturedPaid) {
+    return Promise.resolve({ ok: true, reason: 'cached' });
+  }
+  if (process.platform !== 'win32' && !o.scriptPath) {
+    windowsLastReason = 'not-win32';
+    return Promise.resolve({ ok: false, reason: windowsLastReason });
+  }
+  if (windowsInflight) {
+    return windowsInflight;
+  }
+  const now = Date.now();
+  if (!o.force && now - windowsLastAttempt < WINDOWS_RETRY_MS) {
+    return Promise.resolve({ ok: false, reason: windowsLastReason });
+  }
+  windowsLastAttempt = now;
+  const script = o.scriptPath || defaultWindowsCredReadScript();
+  if (!fs.existsSync(script)) {
+    windowsLastReason = 'missing-script';
+    return Promise.resolve({ ok: false, reason: windowsLastReason });
+  }
+  // argv holds only the item name, never the secret. The secret arrives on
+  // the child's stdout and is parsed here.
+  const args = [
+    '-NoProfile',
+    '-NonInteractive',
+    '-ExecutionPolicy',
+    'Bypass',
+    '-File',
+    script,
+    '-Target',
+    o.target || WINDOWS_CRED_TARGET,
+    '-UserName',
+    o.user || WINDOWS_CRED_USER,
+  ];
+  windowsInflight = new Promise(resolve => {
+    execFile(
+      o.powershell || 'powershell.exe',
+      args,
+      {
+        encoding: 'utf8',
+        timeout: 20000,
+        maxBuffer: 16 * 1024,
+        env: sanitizeSpawnEnv(process.env),
+        windowsHide: true,
+      },
+      (err, stdout) => {
+        windowsInflight = null;
+        const code = err ? (typeof err.code === 'number' ? err.code : -1) : 0;
+        if (code === 44) {
+          windowsLastReason = 'not-found';
+          resolve({ ok: false, reason: windowsLastReason });
+          return;
+        }
+        if (code === 128) {
+          windowsLastReason = 'denied';
+          resolve({ ok: false, reason: windowsLastReason });
+          return;
+        }
+        if (code !== 0) {
+          windowsLastReason = 'failed';
+          console.log('[Gemini] Credential Manager read failed (credential value not logged)');
+          resolve({ ok: false, reason: windowsLastReason });
+          return;
+        }
+        const parsed = parseCredentialFile(stdout || '');
+        if (!parsed.ok) {
+          windowsLastReason = 'format';
+          console.log('[Gemini] Credential Manager item has an unexpected format; re-run the store script');
+          resolve({ ok: false, reason: windowsLastReason });
+          return;
+        }
+        capturedKey = parsed.key;
+        capturedPaid = parsed.paidAcknowledged;
+        captured = true;
+        captureSource = 'windows-credential-manager';
+        windowsLastReason = 'loaded';
+        console.log(formatGeminiDemoCaptureLog());
+        resolve({ ok: true, reason: windowsLastReason });
+      }
+    );
+  });
+  return windowsInflight;
+}
+
 function captureAndStripGeminiDemoCredentials(env) {
   const target = env || process.env;
   if (!captured) {
@@ -337,6 +445,9 @@ function resetGeminiDemoCredentialsForTests() {
   capturedPaid = false;
   captured = false;
   captureSource = 'none';
+  windowsLastAttempt = 0;
+  windowsLastReason = 'not-tried';
+  windowsInflight = null;
   stripGeminiDemoCredentialNames(process.env);
 }
 
@@ -350,6 +461,10 @@ module.exports = {
   GEMINI_DEMO_KEYCHAIN_ACCOUNT: KEYCHAIN_ACCOUNT,
   GEMINI_DEMO_KEYCHAIN_DUMMY_SERVICE: KEYCHAIN_DUMMY_SERVICE,
   GEMINI_DEMO_KEYCHAIN_DUMMY_ACCOUNT: KEYCHAIN_DUMMY_ACCOUNT,
+  GEMINI_WINDOWS_CRED_TARGET: WINDOWS_CRED_TARGET,
+  GEMINI_WINDOWS_CRED_USER: WINDOWS_CRED_USER,
+  loadGeminiFromWindowsCredentialManager,
+  getWindowsGeminiCredentialReason,
   captureAndStripGeminiDemoCredentials,
   getCapturedGeminiDemoCredentials,
   getGeminiDemoCaptureSource,

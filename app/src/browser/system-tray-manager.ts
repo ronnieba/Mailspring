@@ -23,7 +23,29 @@ function _createTray(platform: string, icon: NativeImage) {
   return new Tray(icon);
 }
 
+const OFFLINE_TOOLTIP = 'Mailspring – מצב ניסוי לא מקוון';
+
+function _isOffline(application: Application) {
+  return !!(application && (application as any).offlineArchive);
+}
+
 function _getMenuTemplate(platform: string, application: Application) {
+  if (_isOffline(application)) {
+    // Offline experiment: no composer or account preferences, just open/quit.
+    return [
+      {
+        label: 'הצג חלון (Show)',
+        click: () => application.emit('application:show-main-window'),
+      },
+      {
+        type: 'separator',
+      },
+      {
+        label: 'יציאה (Quit)',
+        click: () => application.emit('application:quit'),
+      },
+    ];
+  }
   const template = [
     {
       label: localized('New Message'),
@@ -52,7 +74,10 @@ function _getMenuTemplate(platform: string, application: Application) {
   return template;
 }
 
-function _getTooltip(unreadString: string) {
+function _getTooltip(unreadString: string, offline = false) {
+  if (offline) {
+    return OFFLINE_TOOLTIP;
+  }
   return unreadString ? `${unreadString} unread messages` : '';
 }
 
@@ -165,7 +190,7 @@ class SystemTrayManager {
     }
 
     this._tray = _createTray(this._platform, _getIcon(this._iconPath || this._defaultIconPath()));
-    this._tray.setToolTip(_getTooltip(this._unreadString));
+    this._tray.setToolTip(_getTooltip(this._unreadString, _isOffline(this._application)));
     this._tray.addListener('click', this._onClick);
     this._tray.setContextMenu(
       Menu.buildFromTemplate(_getMenuTemplate(this._platform, this._application) as any)
@@ -190,7 +215,8 @@ class SystemTrayManager {
     }
     if (this._unreadString !== unreadString) {
       this._unreadString = unreadString;
-      if (this._tray) this._tray.setToolTip(_getTooltip(unreadString));
+      if (this._tray)
+        this._tray.setToolTip(_getTooltip(unreadString, _isOffline(this._application)));
     }
   }
 

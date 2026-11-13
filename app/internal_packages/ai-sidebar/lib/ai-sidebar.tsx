@@ -189,6 +189,28 @@ class AISidebarInner extends React.Component<Record<string, never>, AISidebarSta
     AISidebarStore.navigateToCitation(citation.messageId);
   };
 
+  _renderGeminiHowto() {
+    const reason = this.state.geminiStatus?.reason || '';
+    const cmd = (reason.match(/powershell [^\n]*?\.ps1"/) || [])[0];
+    const hebrew = reason.split(/ (?=Gemini key|Could not read)/)[0];
+    return (
+      <>
+        <div className="gemini-howto-text" dir="rtl">
+          {hebrew}
+        </div>
+        {cmd && (
+          <code className="gemini-howto-cmd" dir="ltr" data-gemini-store-command="true">
+            {cmd}
+          </code>
+        )}
+      </>
+    );
+  }
+
+  _onRecheckGemini = () => {
+    void AISidebarStore.refreshScope();
+  };
+
   _renderMockWarning() {
     const inDemoMode = isDemoMode();
     const realSelected = isRealSelectedSummaryMode();
@@ -197,8 +219,13 @@ class AISidebarInner extends React.Component<Record<string, never>, AISidebarSta
     const geminiStatus = geminiConfigured ? 'configured' : 'unconfigured';
 
     return (
-      <div className="ai-sidebar-mock-warning" data-gemini-status={geminiStatus}>
-        <span className="icon">⚠️</span>
+      <div
+        className={classNames('ai-sidebar-mock-warning', {
+          'gemini-on': offlineArchive && geminiConfigured,
+        })}
+        data-gemini-status={geminiStatus}
+      >
+        <span className="icon">{offlineArchive && geminiConfigured ? '✨' : '⚠️'}</span>
         <span className="text">
           {inDemoMode && geminiConfigured ? (
             <>
@@ -217,20 +244,28 @@ class AISidebarInner extends React.Component<Record<string, never>, AISidebarSta
             </>
           ) : offlineArchive && geminiConfigured ? (
             <>
-              ארכיון מקומי מנותק — Gemini על הודעה נבחרת בלבד
+              <b>🟢 Gemini מחובר</b> (בתשלום, פרויקט yahoo-agent). נשלחת הודעה אחת בלבד, ורק
+              כשלוחצים &quot;סכם עם Gemini&quot;. הכפתור &quot;שלח&quot; עונה מקומית (Mock).
               <br />
               <small>
-                Disconnected local archive · no Yahoo · no mailsync · Gemini is not bulk-upload
+                Gemini on · paid · one selected message per explicit click · no Yahoo · no sync
               </small>
             </>
           ) : offlineArchive ? (
             <>
-              מצב ניסוי לא מקוון — Mock AI (ללא חיבור חיצוני)
-              <br />
-              <small>
-                Local read-only copy · no Yahoo · no sync · answers come from the local mock
-                provider. Gemini is not configured and is used only via explicit Summarize.
-              </small>
+              <b>⚪ Mock AI בלבד</b> — Gemini לא מחובר. התשובות מקומיות (הדגמה), בלי חיבור חיצוני.
+              <button
+                type="button"
+                className="gemini-recheck-btn"
+                data-gemini-recheck="true"
+                onClick={this._onRecheckGemini}
+              >
+                בדוק שוב
+              </button>
+              <details className="gemini-howto">
+                <summary>איך מפעילים Gemini?</summary>
+                {this._renderGeminiHowto()}
+              </details>
             </>
           ) : realSelected && geminiConfigured ? (
             <>
@@ -376,9 +411,16 @@ class AISidebarInner extends React.Component<Record<string, never>, AISidebarSta
             לחץ <b>שלח</b>. לחיצה על מקור בתשובה פותחת את ההודעה.
           </li>
         </ol>
-        <div className="guide-note">
-          כרגע התשובות הן הדגמה בלבד (Mock) - חיפוש מקומי פשוט, לא AI אמיתי. Gemini כבוי.
-        </div>
+        {this.state.geminiStatus?.configured ? (
+          <div className="guide-note">
+            &quot;שלח&quot; עונה מקומית (Mock, לא AI אמיתי). לסיכום אמיתי עם Gemini: בחר הודעה אחת
+            ולחץ &quot;סכם עם Gemini&quot; (בתשלום, נשלחת רק ההודעה הזו).
+          </div>
+        ) : (
+          <div className="guide-note">
+            כרגע התשובות הן הדגמה בלבד (Mock) - חיפוש מקומי פשוט, לא AI אמיתי. Gemini כבוי.
+          </div>
+        )}
       </div>
     );
   }
@@ -720,16 +762,19 @@ class AISidebarInner extends React.Component<Record<string, never>, AISidebarSta
             <button
               className="clear-btn"
               onClick={this._onSummarizeSelected}
-              disabled={isProcessing || !this.state.geminiStatus?.configured}
+              // Enabled even when Gemini is off: the click re-reads the key and,
+              // if it is still missing, explains how to store it.
+              disabled={isProcessing}
               aria-label="Summarize selected message with Gemini"
               title={
                 this.state.geminiStatus?.configured
-                  ? 'Sends exactly one selected local message to Gemini'
-                  : 'Gemini is not configured on this computer (mock only)'
+                  ? 'שולח ל-Gemini (בתשלום) רק את ההודעה האחת שנבחרה'
+                  : 'Gemini לא מחובר - לחיצה תסביר איך להפעיל'
               }
               data-offline-archive-summarize="true"
+              data-gemini-configured={this.state.geminiStatus?.configured ? 'true' : 'false'}
             >
-              Summarize (Gemini)
+              ✨ סכם עם Gemini
             </button>
           )}
           {this.state.conversation.length > 0 && (
@@ -764,7 +809,19 @@ class AISidebarInner extends React.Component<Record<string, never>, AISidebarSta
       >
         <div className="ai-sidebar-header">
           <h2>🤖 עוזר AI</h2>
-          <span className="provider-badge">{this.state.providerName}</span>
+          <span
+            className={classNames('provider-badge', {
+              'gemini-on': offline && !!this.state.geminiStatus?.configured,
+            })}
+            data-provider-badge="true"
+            dir="rtl"
+          >
+            {offline
+              ? this.state.geminiStatus?.configured
+                ? 'מצב: Gemini מחובר'
+                : 'מצב: Mock (Gemini כבוי)'
+              : this.state.providerName}
+          </span>
         </div>
 
         {demo && (

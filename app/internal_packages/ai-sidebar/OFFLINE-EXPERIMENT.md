@@ -41,3 +41,12 @@ Not wired yet. The Gemini key store is the macOS Keychain helper (or a key file
 via `MAILSPRING_DEMO_GEMINI_KEY_FILE`). A Windows Credential Manager reader (same
 pattern as `scripts/windows-cred-read.ps1` / `store-yahoo-imap-password.ps1`)
 is required before Summarize can be enabled; the user enters the key locally.
+
+## Gemini on Windows (optional, paid project yahoo-agent)
+
+1. Store the key once, typing it yourself (hidden prompt; never printed or logged):
+   `powershell -NoProfile -ExecutionPolicy Bypass -File "C:\Users\Roni\Developer\Mailspring-AI-Dev\src\scripts\store-gemini-api-key.ps1"`
+   Answer `y` to confirm the key is from the paid project. Remove it with `-Remove`.
+2. Credential Manager item: `Mailspring-offline Gemini API|gemini-api-key` (separate from the Yahoo IMAP item, which the app never reads).
+3. The app reads it lazily (AI panel status / "Check again" / Summarize), keeps it in main-process memory only.
+4. Gemini runs only on an explicit click of "Summarize with Gemini" for exactly one selected message. "Send" stays local (Mock).

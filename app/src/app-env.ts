@@ -845,13 +845,19 @@ export default class AppEnvConstructor {
   Section: Messaging the User
   */
 
+  private _offlineMaximizedOnce = false;
+
   displayWindow({ maximize }: { maximize?: boolean } = {}) {
     if (this.inSpecMode()) {
       return;
     }
     this.show();
     this.focus();
-    if (maximize) this.maximize();
+    // Offline experiment: maximize once, after the first show. Maximizing the
+    // still-hidden window in restoreWindowDimensions is undone by show() on Windows.
+    const offlineFirstShow = isOfflineArchiveMode() && !this._offlineMaximizedOnce;
+    if (offlineFirstShow) this._offlineMaximizedOnce = true;
+    if (maximize || offlineFirstShow) this.maximize();
   }
 
   /*

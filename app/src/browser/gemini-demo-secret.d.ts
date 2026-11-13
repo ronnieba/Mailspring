@@ -18,7 +18,29 @@ export type GeminiDemoCaptureSource =
   | 'keychain'
   | 'keychain-denied'
   | 'launch-env-ignored'
+  | 'windows-credential-manager'
   | 'none';
+
+export const GEMINI_WINDOWS_CRED_TARGET: 'Mailspring-offline Gemini API|gemini-api-key';
+export const GEMINI_WINDOWS_CRED_USER: 'gemini-api-key';
+export type WindowsGeminiCredentialReason =
+  | 'not-tried'
+  | 'not-win32'
+  | 'missing-script'
+  | 'not-found'
+  | 'denied'
+  | 'failed'
+  | 'format'
+  | 'loaded'
+  | 'cached';
+export function loadGeminiFromWindowsCredentialManager(opts?: {
+  force?: boolean;
+  scriptPath?: string;
+  powershell?: string;
+  target?: string;
+  user?: string;
+}): Promise<{ ok: boolean; reason: WindowsGeminiCredentialReason }>;
+export function getWindowsGeminiCredentialReason(): WindowsGeminiCredentialReason;
 
 export function captureAndStripGeminiDemoCredentials(
   env?: NodeJS.ProcessEnv

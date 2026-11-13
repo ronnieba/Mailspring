@@ -912,4 +912,58 @@
   border: 1px solid var(--border-color-divider);
 }
 
+
+// Offline: Gemini on/off state (explicit colors; no less color functions on
+// theme values that are CSS variables).
+.ai-sidebar .ai-sidebar-mock-warning.gemini-on {
+  background: #e6f4ea;
+  color: #1e4620;
+  border-bottom-color: #34a853;
+  @media (prefers-color-scheme: dark) {
+    background: #12321b;
+    color: #b7e1c1;
+    border-color: #2d6a3e;
+  }
+}
+.ai-sidebar .gemini-recheck-btn {
+  margin-inline-start: 8px;
+  padding: 1px 8px;
+  font-size: 11px;
+  border-radius: 3px;
+  border: 1px solid currentColor;
+  background: transparent;
+  color: inherit;
+  cursor: pointer;
+}
+.ai-sidebar .gemini-howto {
+  margin-top: 4px;
+  summary {
+    cursor: pointer;
+    text-decoration: underline;
+  }
+  .gemini-howto-cmd {
+    display: block;
+    margin-top: 4px;
+    padding: 4px 6px;
+    font-size: 11px;
+    direction: ltr;
+    text-align: left;
+    user-select: all;
+    white-space: pre-wrap;
+    overflow-wrap: anywhere;
+    background: rgba(0, 0, 0, 0.25);
+    border-radius: 3px;
+  }
+  .gemini-howto-text {
+    margin-top: 4px;
+    font-size: 11px;
+    user-select: text;
+    overflow-wrap: anywhere;
+  }
+}
+.ai-sidebar .provider-badge.gemini-on {
+  background: #34a853;
+  color: #fff;
+}
+
 /*!rtl:end:ignore*/

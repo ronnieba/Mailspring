@@ -4,6 +4,7 @@
  * process.env). Renderer receives status booleans and payloads, never the
  * key. handleFromMailspringWindows rejects guest frames.
  */
+import path from 'path';
 import { IpcMain } from 'electron';
 import { handleFromMailspringWindows } from './trusted-ipc';
 import {
@@ -14,6 +15,35 @@ import {
   GeminiDemoQueryInput,
 } from './gemini-demo-protocol';
 import { GeminiFetch, resolveGeminiDemoStatus, runGeminiDemoQuery } from './gemini-demo-host';
+import {
+  getWindowsGeminiCredentialReason,
+  loadGeminiFromWindowsCredentialManager,
+} from './gemini-demo-secret';
+
+export function storeGeminiKeyCommand(): string {
+  const script = path.resolve(__dirname, '../../../scripts/store-gemini-api-key.ps1');
+  return `powershell -NoProfile -ExecutionPolicy Bypass -File "${script}"`;
+}
+
+/** Hebrew + English reason shown in the AI panel when Gemini is not ready on Windows. */
+export function windowsGeminiMissingReason(reason: string, keyPresent: boolean): string {
+  if (keyPresent) {
+    return (
+      'מפתח Gemini נשמר בלי אישור לפרויקט בתשלום (yahoo-agent). הרץ שוב את סקריפט השמירה וענה y. ' +
+      `Gemini key stored without paid-project confirmation; re-run: ${storeGeminiKeyCommand()}`
+    );
+  }
+  if (reason === 'denied' || reason === 'failed' || reason === 'format') {
+    return (
+      'לא הצלחתי לקרוא את מפתח Gemini מ-Credential Manager. הרץ שוב את סקריפט השמירה. ' +
+      `Could not read the Gemini key from Credential Manager (${reason}). Re-run: ${storeGeminiKeyCommand()}`
+    );
+  }
+  return (
+    'מפתח Gemini לא נמצא במחשב (Credential Manager). כדי להפעיל: הרץ בחלון PowerShell את הפקודה הבאה והקלד את המפתח בעצמך, ואז לחץ "בדוק שוב". ' +
+    `Gemini key not found in Windows Credential Manager. Run: ${storeGeminiKeyCommand()}`
+  );
+}
 
 export interface GeminiDemoIpcOptions {
   isDemoMode: () => boolean;
@@ -85,24 +115,46 @@ function parseQuery(raw: unknown): GeminiDemoQueryInput {
 }
 
 export function registerGeminiDemoIpcHandlers(ipcMain: IpcMain, opts: GeminiDemoIpcOptions) {
+  // Windows offline experiment: credentials come from Credential Manager,
+  // read lazily on a status check or an explicit Summarize (never on launch).
+  const windowsOffline = () =>
+    process.platform === 'win32' &&
+    !opts.credentials &&
+    !opts.env &&
+    !!(opts.isOfflineArchive && opts.isOfflineArchive()) &&
+    !opts.isDemoMode();
+
   const fetchImpl =
     opts.fetch ||
     ((typeof globalThis.fetch === 'function'
       ? (globalThis.fetch.bind(globalThis) as GeminiFetch)
       : undefined) as GeminiFetch | undefined);
 
-  handleFromMailspringWindows(ipcMain, GEMINI_IPC_STATUS, () => {
-    return resolveGeminiDemoStatus({
+  handleFromMailspringWindows(ipcMain, GEMINI_IPC_STATUS, async () => {
+    if (windowsOffline()) {
+      await loadGeminiFromWindowsCredentialManager();
+    }
+    const status = resolveGeminiDemoStatus({
       demoMode: opts.isDemoMode(),
       realSelectedSummary: opts.isRealSelectedSummary ? opts.isRealSelectedSummary() : false,
       offlineArchive: opts.isOfflineArchive ? opts.isOfflineArchive() : false,
       env: opts.env,
       credentials: opts.credentials,
     });
+    if (windowsOffline() && !status.configured) {
+      return {
+        ...status,
+        reason: windowsGeminiMissingReason(getWindowsGeminiCredentialReason(), status.keyPresent),
+      };
+    }
+    return status;
   });
 
   handleFromMailspringWindows(ipcMain, GEMINI_IPC_QUERY, async (_event, raw: unknown) => {
     const req = parseQuery(raw);
+    if (windowsOffline()) {
+      await loadGeminiFromWindowsCredentialManager();
+    }
     return runGeminiDemoQuery(req, {
       demoMode: opts.isDemoMode(),
       realSelectedSummary: opts.isRealSelectedSummary ? opts.isRealSelectedSummary() : false,
