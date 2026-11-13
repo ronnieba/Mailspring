@@ -1,13 +1,12 @@
-import React from 'react';
-import classNames from 'classnames';
-import { offlineDraftsStore } from './offline-drafts-store';
+/**
+ * Offline experiment: theme and language pickers used by the top ribbon
+ * (offline-ribbon.tsx). The old column toolbar buttons were replaced by it.
+ */
 import { OFFLINE_RELAUNCH_CHANNEL } from '../../../../src/browser/offline-relaunch';
-import { Actions, WorkspaceStore } from 'mailspring-exports';
 import {
   OfflineLang,
   OFFLINE_LANG_CONFIG_KEY,
   OFFLINE_LANG_LOCALES,
-  offlineDir,
   offlineLang,
   tr,
 } from '../core/offline-i18n';
@@ -50,7 +49,7 @@ export function offlineThemeChoices(): { name: string; label: string }[] {
 }
 
 /** Theme picker (native menu). Saved as core.theme in the offline profile. */
-function showThemeMenu(anchor: HTMLElement) {
+export function showThemeMenu(anchor: HTMLElement) {
   const { Menu, MenuItem } = require('@electron/remote');
   const current = AppEnv.themes.getActiveThemeSetting()?.name;
   const menu = new Menu();
@@ -103,7 +102,7 @@ export function switchOfflineLanguage(lang: OfflineLang): boolean {
   return true;
 }
 
-function showLanguageMenu(anchor: HTMLElement) {
+export function showLanguageMenu(anchor: HTMLElement) {
   const { Menu, MenuItem } = require('@electron/remote');
   const current = offlineLang();
   const menu = new Menu();
@@ -119,113 +118,4 @@ function showLanguageMenu(anchor: HTMLElement) {
   }
   const rect = anchor.getBoundingClientRect();
   menu.popup({ x: Math.round(rect.left), y: Math.round(rect.bottom) });
-}
-
-const PANES: { id: string; label: [string, string]; icon: string }[] = [
-  { id: 'RootSidebar', label: ['תיקיות', 'Folders'], icon: '📁' },
-  { id: 'MessageList', label: ['קורא', 'Reader'], icon: '📄' },
-  { id: 'MessageListSidebar', label: ['עוזר AI', 'AI assistant'], icon: '🤖' },
-];
-
-/**
- * Offline experiment: show/hide buttons for the folders, reader and AI panel
- * columns. Hidden columns are kept in core.workspace.hiddenLocations of the
- * offline profile, so the choice survives a restart.
- */
-export class OfflinePaneToggles extends React.Component {
-  static displayName = 'OfflinePaneToggles';
-
-  private _unlisten: (() => void) | null = null;
-
-  private _themeSub: { dispose: () => void } | null = null;
-
-  componentDidMount() {
-    this._unlisten = WorkspaceStore.listen(() => this.forceUpdate());
-    this._themeSub = AppEnv.themes.onDidChangeActiveThemes(() => this.forceUpdate());
-  }
-
-  componentWillUnmount() {
-    if (this._unlisten) {
-      this._unlisten();
-    }
-    if (this._themeSub) {
-      this._themeSub.dispose();
-    }
-  }
-
-  render() {
-    return (
-      <div
-        className="offline-pane-toggles"
-        dir={offlineDir()}
-        role="toolbar"
-        aria-label={tr('הצג או הסתר אזורים', 'Show or hide areas')}
-        data-offline-pane-toggles="true"
-      >
-        <span className="offline-pane-toggles-label">{tr('הצג:', 'Show:')}</span>
-        {PANES.map((p) => {
-          const loc = WorkspaceStore.Location[p.id];
-          if (!loc) {
-            return null;
-          }
-          const hidden = WorkspaceStore.isLocationHidden(loc);
-          const label = tr(p.label[0], p.label[1]);
-          return (
-            <button
-              key={p.id}
-              className={classNames('offline-pane-toggle', { off: hidden })}
-              data-pane={p.id}
-              aria-pressed={!hidden}
-              title={
-                hidden ? tr(`הצג ${label}`, `Show ${label}`) : tr(`הסתר ${label}`, `Hide ${label}`)
-              }
-              onClick={() => Actions.toggleWorkspaceLocationHidden(loc)}
-            >
-              <span className="offline-pane-toggle-icon">{p.icon}</span>
-              {label}
-            </button>
-          );
-        })}
-        <button
-          className="offline-pane-toggle offline-theme-btn"
-          data-offline-theme-picker="true"
-          title={tr(
-            'בחר ערכת צבעים (בהיר / כהה / צבעוני)',
-            'Choose a color theme (light / dark / colorful)'
-          )}
-          aria-haspopup="menu"
-          onClick={(e) => showThemeMenu(e.currentTarget)}
-        >
-          <span className="offline-pane-toggle-icon">🎨</span>
-          {tr('ערכה', 'Theme')}
-        </button>
-        <button
-          className="offline-pane-toggle offline-new-draft-btn"
-          data-offline-new-draft="true"
-          title={tr(
-            'טיוטה חדשה — נשמרת רק במחשב, אין שליחה',
-            'New draft — saved only on this computer, no sending'
-          )}
-          onClick={() => offlineDraftsStore.createNew()}
-        >
-          <span className="offline-pane-toggle-icon">✉️</span>
-          {tr('חדש', 'New')}
-        </button>
-        <button
-          className="offline-pane-toggle offline-lang-btn"
-          data-offline-language-picker="true"
-          data-offline-lang={offlineLang()}
-          title={tr(
-            'שפת הממשק (עברית / English) — האפליקציה תיפתח מחדש',
-            'Interface language (עברית / English) — the app restarts'
-          )}
-          aria-haspopup="menu"
-          onClick={(e) => showLanguageMenu(e.currentTarget)}
-        >
-          <span className="offline-pane-toggle-icon">🌐</span>
-          {tr('שפה', 'Language')}
-        </button>
-      </div>
-    );
-  }
 }

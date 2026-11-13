@@ -366,8 +366,8 @@ const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 
   console.log('\nCategory: button labels');
   await test('top bar "New", reader "Reply" / "Forward" (still local drafts)', () => {
-    const t = read('internal_packages/ai-sidebar/lib/offline-mail/offline-pane-toggles.tsx');
-    ok(t.includes("tr('חדש', 'New')") && t.includes('offlineDraftsStore.createNew()'));
+    const t = read('internal_packages/ai-sidebar/lib/offline-mail/offline-ribbon.tsx');
+    ok(t.includes("tr('טיוטה חדשה', 'New draft')") && t.includes('d.createNew()'));
     const r = read('internal_packages/ai-sidebar/lib/offline-mail/offline-message-reader.tsx');
     ok(r.includes("tr('השב', 'Reply')") && r.includes("tr('העבר', 'Forward')"));
     ok(

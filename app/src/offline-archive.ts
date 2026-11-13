@@ -85,6 +85,9 @@ export const OFFLINE_ARCHIVE_DISABLED_PACKAGES: ReadonlyArray<string> = [
   'translation',
   'undo-redo',
   'unread-notifications',
+  // "Views" (Create a View page, its side-rail button and sidebar views) needs
+  // the cloud agent / web content; not part of the offline experiment.
+  'views',
 ];
 
 export function isPackageDisabledInOfflineArchive(name: string): boolean {

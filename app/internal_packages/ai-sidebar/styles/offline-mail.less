@@ -2085,3 +2085,247 @@ body[class*='less-is-more'] {
     }
   }
 }
+
+// ---- Top ribbon: tabs + buttons above all columns (t201) ----
+// The column toolbar row only held the old buttons and the hamburger menu;
+// with the ribbon it is empty on Windows, so it is hidden there.
+/*!rtl:begin:ignore*/
+body.platform-win32.offline-ribbon-on .sheet-toolbar {
+  display: none;
+}
+/*!rtl:end:ignore*/
+.offline-ribbon {
+  flex-shrink: 0;
+  background: @background-secondary;
+  color: @text-color;
+  border-bottom: 1px solid @border-color-primary;
+  font-size: 12px;
+  user-select: none;
+  &.collapsed .offline-ribbon-panel {
+    display: none;
+  }
+}
+.offline-ribbon-tabs {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-end;
+  gap: 2px;
+  padding: 4px 10px 0;
+  min-width: 0;
+}
+.offline-ribbon-tab {
+  flex-shrink: 0;
+  padding: 5px 14px 4px;
+  border: none;
+  border-bottom: 3px solid transparent;
+  border-radius: 4px 4px 0 0;
+  background: transparent;
+  color: @text-color-subtle;
+  font-size: 13px;
+  white-space: nowrap;
+  cursor: pointer;
+  &:hover {
+    background: fade(@text-color, 6%);
+  }
+  &.active {
+    color: @text-color;
+    font-weight: 600;
+    border-bottom-color: @offline-accent;
+    background: @background-primary;
+  }
+}
+.offline-ribbon-backmail {
+  align-self: center;
+  flex-shrink: 0;
+  margin-inline-end: 8px;
+  padding: 3px 12px;
+  border: 1px solid @offline-accent;
+  border-radius: 4px;
+  background: @offline-accent;
+  color: #fff;
+  font-size: 13px;
+  font-weight: 600;
+  cursor: pointer;
+}
+body[class*='theme-ui-darkside'],
+body[class*='theme-ui-taiga'],
+body[class*='theme-ui-ubuntu'],
+body[class*='less-is-more'] {
+  .offline-ribbon-backmail {
+    background: var(--ofl-accent);
+    border-color: var(--ofl-accent);
+  }
+}
+.offline-ribbon-spacer {
+  flex: 1;
+  min-width: 8px;
+}
+.offline-ribbon-brand {
+  align-self: center;
+  padding: 0 8px;
+  font-size: 12px;
+  color: @text-color-very-subtle;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  min-width: 0;
+}
+.offline-ribbon-collapse {
+  align-self: center;
+  flex-shrink: 0;
+  padding: 0 8px;
+  border: none;
+  background: transparent;
+  color: @text-color-subtle;
+  font-size: 15px;
+  cursor: pointer;
+  &:hover {
+    color: @text-color;
+  }
+}
+.offline-ribbon-panel {
+  padding: 6px 8px 4px;
+  background: @background-primary;
+  border-top: 1px solid @border-color-primary;
+  overflow: hidden;
+}
+.offline-ribbon-groups {
+  display: flex;
+  flex-wrap: nowrap;
+  align-items: stretch;
+  width: max-content;
+  min-width: 100%;
+}
+.offline-ribbon.compact .offline-ribbon-groups {
+  flex-wrap: wrap;
+  width: auto;
+  row-gap: 4px;
+}
+.offline-ribbon.compact .offline-ribbon-group-buttons {
+  flex-wrap: wrap;
+}
+.offline-ribbon.compact .offline-ribbon-group {
+  flex-shrink: 1;
+  min-width: 0;
+}
+.offline-ribbon-group {
+  display: flex;
+  flex-direction: column;
+  flex-shrink: 0;
+  padding: 0 6px;
+  border-inline-end: 1px solid @border-color-primary;
+  &:last-child {
+    border-inline-end: none;
+  }
+}
+.offline-ribbon-group-buttons {
+  display: flex;
+  flex: 1;
+  align-items: stretch;
+  gap: 2px;
+}
+.offline-ribbon-group-label {
+  margin-top: 2px;
+  text-align: center;
+  font-size: 11px;
+  color: @text-color-very-subtle;
+  white-space: nowrap;
+}
+.offline-ribbon-btn {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: flex-start;
+  gap: 2px;
+  min-width: 54px;
+  padding: 4px 6px;
+  border: 1px solid transparent;
+  border-radius: 4px;
+  background: transparent;
+  color: inherit;
+  font-size: 12px;
+  line-height: 1.2;
+  cursor: pointer;
+  .offline-ribbon-icon {
+    font-size: 20px;
+    line-height: 24px;
+  }
+  .offline-ribbon-label {
+    white-space: nowrap;
+  }
+  &:hover:not([disabled]) {
+    background: fade(@text-color, 7%);
+    border-color: fade(@text-color, 12%);
+  }
+  &:focus-visible {
+    outline: 2px solid @offline-accent;
+    outline-offset: -2px;
+  }
+  &.pressed {
+    background: fade(@offline-accent, 14%);
+    border-color: fade(@offline-accent, 45%);
+  }
+  &[disabled] {
+    opacity: 0.4;
+    cursor: default;
+  }
+  &.is-info {
+    cursor: default;
+  }
+}
+.offline-ribbon.compact .offline-ribbon-btn {
+  min-width: 34px;
+  padding: 3px 5px;
+  .offline-ribbon-icon {
+    font-size: 18px;
+  }
+}
+
+body[class*='theme-ui-darkside'],
+body[class*='theme-ui-taiga'],
+body[class*='theme-ui-ubuntu'],
+body[class*='less-is-more'] {
+  .offline-ribbon {
+    background: var(--ofl-toolbar-bg);
+    color: var(--ofl-toolbar-fg);
+    border-bottom-color: var(--ofl-border);
+  }
+  .offline-ribbon-tab {
+    color: var(--ofl-subtle);
+    &:hover {
+      background: color-mix(in srgb, var(--ofl-fg) 7%, transparent);
+    }
+    &.active {
+      color: var(--ofl-fg);
+      background: var(--ofl-list-bg);
+      border-bottom-color: var(--ofl-accent);
+    }
+  }
+  .offline-ribbon-brand,
+  .offline-ribbon-collapse,
+  .offline-ribbon-group-label {
+    color: var(--ofl-subtle);
+  }
+  .offline-ribbon-panel {
+    background: var(--ofl-list-bg);
+    color: var(--ofl-fg);
+    border-top-color: var(--ofl-border);
+  }
+  .offline-ribbon-group {
+    border-inline-end-color: var(--ofl-border);
+  }
+  .offline-ribbon-btn {
+    color: var(--ofl-fg);
+    &:hover:not([disabled]) {
+      background: color-mix(in srgb, var(--ofl-fg) 8%, transparent);
+      border-color: var(--ofl-border);
+    }
+    &.pressed {
+      background: color-mix(in srgb, var(--ofl-accent) 22%, transparent);
+      border-color: color-mix(in srgb, var(--ofl-accent) 60%, transparent);
+    }
+    &:focus-visible {
+      outline-color: var(--ofl-accent);
+    }
+  }
+}

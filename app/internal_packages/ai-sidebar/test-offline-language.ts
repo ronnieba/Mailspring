@@ -250,6 +250,7 @@ test('language menu saves to the profile and relaunches', () => {
 test('offline panes have no hard-coded right-to-left', () => {
   for (const f of [
     'offline-pane-toggles.tsx',
+    'offline-ribbon.tsx',
     'offline-message-list.tsx',
     'offline-folder-sidebar.tsx',
     'offline-message-reader.tsx',
