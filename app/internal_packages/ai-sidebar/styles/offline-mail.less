@@ -269,6 +269,84 @@
   text-align: start;
 }
 
+// Expanded density: third line = start of the message text.
+.offline-row-preview {
+  font-size: 12px;
+  color: @text-color-very-subtle;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  unicode-bidi: plaintext;
+  text-align: start;
+}
+
+// Compact density: one line (sender · subject · icons · date).
+.offline-list-scroll.density-compact {
+  .offline-message-row {
+    padding: 3px 10px;
+    display: flex;
+    align-items: center;
+  }
+  .offline-row-main {
+    min-width: 0;
+  }
+  .offline-row-line1 {
+    align-items: baseline;
+    .offline-row-from {
+      flex: 0 1 32%;
+      min-width: 60px;
+    }
+    .offline-row-subject-inline {
+      flex: 1 1 auto;
+      min-width: 0;
+      font-weight: normal;
+    }
+  }
+}
+
+// Sort / attachments-only / density tools under the filter.
+.offline-list-tools {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 4px 6px;
+  margin-top: 4px;
+  font-size: 12px;
+  .offline-list-sort {
+    display: inline-flex;
+    align-items: center;
+    gap: 4px;
+    select {
+      font-size: 12px;
+      padding: 1px 2px;
+    }
+  }
+  .offline-list-tools-label {
+    color: @text-color-subtle;
+  }
+  .offline-list-tool-btn,
+  .offline-list-chip {
+    font-size: 12px;
+    padding: 1px 7px;
+    border: 1px solid @border-color-primary;
+    border-radius: 10px;
+    background: transparent;
+    color: inherit;
+    cursor: pointer;
+    white-space: nowrap;
+    &.active {
+      background: @offline-accent;
+      border-color: @offline-accent;
+      color: #fff;
+    }
+  }
+  .offline-list-density {
+    display: inline-flex;
+    gap: 2px;
+    margin-inline-start: auto;
+  }
+}
+
 .offline-reader {
   display: flex;
   flex-direction: column;
@@ -619,6 +697,29 @@ body[class*='less-is-more'] {
   }
   .offline-row-subject {
     color: color-mix(in srgb, var(--ofl-fg) 80%, var(--ofl-list-bg));
+  }
+  .offline-row-preview,
+  .offline-list-tools .offline-list-tools-label {
+    color: var(--ofl-subtle);
+  }
+  .offline-list-tools {
+    color: var(--ofl-fg);
+    select {
+      background: var(--ofl-surface);
+      color: var(--ofl-fg);
+      border: 1px solid var(--ofl-border);
+    }
+    .offline-list-tool-btn,
+    .offline-list-chip {
+      border-color: var(--ofl-border);
+      background: var(--ofl-surface);
+      color: var(--ofl-fg);
+      &.active {
+        background: var(--ofl-accent);
+        border-color: var(--ofl-accent);
+        color: #fff;
+      }
+    }
   }
   .offline-list-filter {
     background: var(--ofl-surface);

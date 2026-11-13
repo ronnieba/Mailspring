@@ -13,6 +13,7 @@ import {
   OfflineFolderNode,
   OfflineIndexEntry,
   OfflineMailIndex,
+  readOfflineMessageRaw,
   readOfflineMessageRawSync,
 } from '../core/offline-mail-index';
 import {
@@ -31,6 +32,18 @@ import {
   writeThreadedPref,
 } from '../core/offline-threads';
 import { OFFLINE_ARCHIVE_ACCOUNT_ID, OfflineArchiveMessage } from '../core/offline-archive-format';
+import {
+  DEFAULT_SORT,
+  OfflineListDensity,
+  OfflineSort,
+  OfflineSortKey,
+  defaultDirFor,
+  previewLine,
+  readListPrefs,
+  senderName,
+  sortRows,
+  writeListPrefs,
+} from '../core/offline-list-view';
 import {
   offlineFolderIdFor,
   setOfflineArchiveNavigator,
@@ -128,6 +141,15 @@ class OfflineMailStore {
   openThread: OpenThreadState | null = null;
   /** Conversations view (remembered in the offline profile). */
   threaded = true;
+  /** List rows: one line ('compact') or three lines ('expanded'); remembered. */
+  density: OfflineListDensity = 'expanded';
+  /** Quick filter "📎 only with attachments" (this session). */
+  attachmentsOnly = false;
+  /** Sort per folder (remembered); default newest first. */
+  private _sortByFolder: { [folder: string]: OfflineSort } = {};
+  private _previews = new Map<string, string>();
+  private _previewQueue = new Set<string>();
+  private _previewTimer: ReturnType<typeof setTimeout> | null = null;
   expanded = new Set<string>();
   /** Offline profile folder (opened attachment copies live under it). */
   configDir: string | null = null;
@@ -172,6 +194,9 @@ class OfflineMailStore {
       cleanAttachmentTemp(this.configDir);
     }
     this.threaded = readThreadedPref(this.configDir);
+    const listPrefs = readListPrefs(this.configDir);
+    this.density = listPrefs.density;
+    this._sortByFolder = listPrefs.sortByFolder;
     this._expandedFile = cachePath
       ? path.join(path.dirname(cachePath), OFFLINE_FOLDER_EXPANDED_FILE)
       : null;
@@ -231,6 +256,7 @@ class OfflineMailStore {
 
   private _applyIndex(index: OfflineMailIndex) {
     this.index = index;
+    this._previews.clear();
     this._byId.clear();
     this._byFolder.clear();
     for (const e of index.entries) {
@@ -379,12 +405,110 @@ class OfflineMailStore {
     this._emit();
   }
 
+  /** Current folder's sort (default: date, newest first). */
+  get sort(): OfflineSort {
+    return (this.currentFolder && this._sortByFolder[this.currentFolder]) || DEFAULT_SORT;
+  }
+
+  /** Sort the current folder by a key; picking the active key flips the direction. */
+  setSortKey(key: OfflineSortKey) {
+    const cur = this.sort;
+    this._setSort(
+      cur.key === key
+        ? { key, dir: cur.dir === 'asc' ? 'desc' : 'asc' }
+        : { key, dir: defaultDirFor(key) }
+    );
+  }
+
+  toggleSortDir() {
+    const cur = this.sort;
+    this._setSort({ key: cur.key, dir: cur.dir === 'asc' ? 'desc' : 'asc' });
+  }
+
+  private _setSort(sort: OfflineSort) {
+    if (!this.currentFolder) {
+      return;
+    }
+    if (sort.key === DEFAULT_SORT.key && sort.dir === DEFAULT_SORT.dir) {
+      delete this._sortByFolder[this.currentFolder];
+    } else {
+      this._sortByFolder[this.currentFolder] = sort;
+    }
+    this._rowsCache = null;
+    writeListPrefs(this.configDir, { density: this.density, sortByFolder: this._sortByFolder });
+    this._emit();
+  }
+
+  setDensity(density: OfflineListDensity) {
+    if (this.density === density) {
+      return;
+    }
+    this.density = density;
+    writeListPrefs(this.configDir, { density, sortByFolder: this._sortByFolder });
+    this._emit();
+  }
+
+  setAttachmentsOnly(on: boolean) {
+    if (this.attachmentsOnly === !!on) {
+      return;
+    }
+    this.attachmentsOnly = !!on;
+    this._visibleCache = null;
+    this._rowsCache = null;
+    this._emit();
+  }
+
+  /**
+   * One-line preview of a message for the expanded list (read lazily from
+   * the local copy, only for rows on screen). Null until loaded.
+   */
+  previewFor(id: string): string | null {
+    const p = this._previews.get(id);
+    if (p !== undefined) {
+      return p;
+    }
+    if (this.root && !this._previewQueue.has(id)) {
+      this._previewQueue.add(id);
+      if (!this._previewTimer) {
+        this._previewTimer = setTimeout(() => void this._loadPreviews(), 30);
+      }
+    }
+    return null;
+  }
+
+  private async _loadPreviews() {
+    const ids = Array.from(this._previewQueue).slice(0, 40);
+    const root = this.root;
+    for (const id of ids) {
+      const e = this._byId.get(id);
+      let text = '';
+      if (e && root) {
+        try {
+          text = previewLine(parseOfflineMail(await readOfflineMessageRaw(root, e.rel)).text);
+        } catch (err) {
+          text = '';
+        }
+      }
+      if (this._previews.size > 3000) {
+        this._previews.clear();
+      }
+      this._previews.set(id, text);
+      this._previewQueue.delete(id);
+    }
+    this._previewTimer = null;
+    if (this._previewQueue.size) {
+      this._previewTimer = setTimeout(() => void this._loadPreviews(), 30);
+    }
+    this._emit();
+  }
+
   visibleMessages(): OfflineIndexEntry[] {
-    const key = `${this.currentFolder}\u0000${this.filter}`;
+    const key = `${this.currentFolder}\u0000${this.filter}\u0000${this.attachmentsOnly ? 1 : 0}`;
     if (this._visibleCache && this._visibleCache.key === key) {
       return this._visibleCache.rows;
     }
-    const list = (this.currentFolder && this._byFolder.get(this.currentFolder)) || [];
+    const all = (this.currentFolder && this._byFolder.get(this.currentFolder)) || [];
+    const list = this.attachmentsOnly ? all.filter((e) => e.hasAttachments) : all;
     const q = this.filter.trim().toLowerCase();
     const rows = q ? list.filter((e) => `${e.subject} ${e.from}`.toLowerCase().includes(q)) : list;
     this._visibleCache = { key, rows };
@@ -422,7 +546,10 @@ class OfflineMailStore {
   }
 
   private _rows() {
-    const key = `${this.currentFolder}\u0000${this.filter}\u0000${this.threaded ? 1 : 0}`;
+    const sort = this.sort;
+    const key = `${this.currentFolder}\u0000${this.filter}\u0000${this.threaded ? 1 : 0}\u0000${
+      this.attachmentsOnly ? 1 : 0
+    }\u0000${sort.key}:${sort.dir}`;
     if (this._rowsCache && this._rowsCache.key === key) {
       return this._rowsCache;
     }
@@ -443,8 +570,34 @@ class OfflineMailStore {
       byKey.set(k, row);
       rows.push(row);
     }
-    this._rowsCache = { key, rows, byKey };
+    const sorted =
+      sort.key === DEFAULT_SORT.key && sort.dir === DEFAULT_SORT.dir && !this.threaded
+        ? rows // already newest first
+        : sortRows(rows, (r) => this._sortable(r), sort);
+    this._rowsCache = { key, rows: sorted, byKey };
     return this._rowsCache;
+  }
+
+  /** What a row sorts by: conversations use the latest date, first sender, any attachment. */
+  private _sortable(r: OfflineListRow) {
+    if (r.ids.length <= 1) {
+      const e = r.entry;
+      return {
+        ts: e.ts,
+        subject: e.subject,
+        from: e.from,
+        hasAttachments: e.hasAttachments,
+        size: e.size,
+      };
+    }
+    const ents = r.ids.map((x) => this._byId.get(x)).filter(Boolean) as OfflineIndexEntry[];
+    return {
+      ts: Math.max(...ents.map((x) => x.ts || 0)),
+      subject: (ents[0] || r.entry).subject,
+      from: senderName((ents[0] || r.entry).from),
+      hasAttachments: ents.some((x) => x.hasAttachments),
+      size: ents.reduce((n, x) => n + (x.hasAttachments ? x.size || 0 : 0), 0),
+    };
   }
 
   /** Switch between conversations and single messages; remembered. */

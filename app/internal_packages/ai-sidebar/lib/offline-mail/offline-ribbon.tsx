@@ -27,6 +27,7 @@ import { ParsedOfflineMail } from '../core/offline-mail-mime';
 import AISidebarStore from '../ai-sidebar-store';
 import { ScopeMode } from '../core/types';
 import { offlineVersionLabel } from '../../../../src/offline-menu';
+import { OfflineSortKey, SORT_LABELS } from '../core/offline-list-view';
 
 type Btn = {
   id: string;
@@ -369,6 +370,56 @@ export class OfflineRibbon extends React.Component<Record<string, never>, State>
                 label: tr('שיחות', 'Conversations'),
                 pressed: s.threaded,
                 onClick: () => s.setThreaded(!s.threaded),
+              },
+              {
+                id: 'density-compact',
+                icon: '☰',
+                label: tr('מצומצם', 'Compact'),
+                title: tr('שורה אחת להודעה (נשמר)', 'One line per message (remembered)'),
+                pressed: s.density === 'compact',
+                onClick: () => s.setDensity('compact'),
+              },
+              {
+                id: 'density-expanded',
+                icon: '▤',
+                label: tr('מורחב', 'Expanded'),
+                title: tr(
+                  'שלוש שורות: שולח ותאריך / נושא / תחילת ההודעה (נשמר)',
+                  'Three lines: sender and date / subject / preview (remembered)'
+                ),
+                pressed: s.density === 'expanded',
+                onClick: () => s.setDensity('expanded'),
+              },
+            ],
+          },
+          {
+            id: 'sort',
+            label: tr('מיון (לכל תיקייה)', 'Sort (per folder)'),
+            buttons: [
+              ...(['date', 'subject', 'from', 'attachments'] as OfflineSortKey[]).map((k) => ({
+                id: `sort-${k}`,
+                icon: { date: '📅', subject: '🔤', from: '👤', attachments: '📎' }[k],
+                label: tr(SORT_LABELS[k][0], SORT_LABELS[k][1]),
+                title: tr(
+                  'מיין לפי זה (לחיצה נוספת הופכת כיוון)',
+                  'Sort by this (click again to reverse)'
+                ),
+                pressed: s.sort.key === k,
+                onClick: () => s.setSortKey(k),
+              })),
+              {
+                id: 'sort-dir',
+                icon: s.sort.dir === 'asc' ? '↑' : '↓',
+                label: s.sort.dir === 'asc' ? tr('עולה', 'Ascending') : tr('יורד', 'Descending'),
+                title: tr('הפוך את כיוון המיון', 'Reverse the sort direction'),
+                onClick: () => s.toggleSortDir(),
+              },
+              {
+                id: 'attach-only',
+                icon: '📎',
+                label: tr('רק עם צרופות', 'Attachments only'),
+                pressed: s.attachmentsOnly,
+                onClick: () => s.setAttachmentsOnly(!s.attachmentsOnly),
               },
             ],
           },

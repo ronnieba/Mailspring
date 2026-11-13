@@ -239,8 +239,16 @@ export function writeThreadedPref(configDir: string | null, threaded: boolean): 
   }
   const file = path.join(configDir, OFFLINE_VIEW_PREFS_FILE);
   try {
+    // Keep the other list settings (sort per folder, density) in the same file.
+    let prev: Record<string, unknown> = {};
+    try {
+      const raw = JSON.parse(fs.readFileSync(file, 'utf8'));
+      prev = raw && typeof raw === 'object' && !Array.isArray(raw) ? raw : {};
+    } catch (e) {
+      prev = {};
+    }
     const tmp = `${file}.tmp`;
-    fs.writeFileSync(tmp, JSON.stringify({ version: 1, threaded }));
+    fs.writeFileSync(tmp, JSON.stringify({ ...prev, version: 1, threaded }));
     fs.renameSync(tmp, file);
   } catch (e) {
     console.warn('[Offline mail] could not save the view preference');

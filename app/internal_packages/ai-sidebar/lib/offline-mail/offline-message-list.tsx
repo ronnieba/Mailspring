@@ -5,9 +5,19 @@ import { offlineMailStore, OfflineListRow } from './offline-mail-store';
 import { offlineDraftsStore } from './offline-drafts-store';
 import { OfflineDraftsList } from './offline-drafts-view';
 import { OfflineStoreComponent } from './use-offline-store';
+import {
+  OFFLINE_SORT_KEYS,
+  OfflineSortKey,
+  ROW_HEIGHTS,
+  SORT_LABELS,
+} from '../core/offline-list-view';
 
-const ROW_HEIGHT = 54;
 const OVERSCAN = 8;
+
+/** Row height for the current density (compact = one line, expanded = three). */
+function rowHeight(): number {
+  return ROW_HEIGHTS[offlineMailStore.density] || ROW_HEIGHTS.expanded;
+}
 
 function formatDate(ts: number): string {
   if (!ts) {
@@ -124,6 +134,7 @@ export class OfflineMessageList extends OfflineStoreComponent<Record<string, nev
     if (idx === -1) {
       return;
     }
+    const ROW_HEIGHT = rowHeight();
     const top = idx * ROW_HEIGHT;
     if (top < el.scrollTop) {
       el.scrollTop = top;
@@ -155,6 +166,9 @@ export class OfflineMessageList extends OfflineStoreComponent<Record<string, nev
     const hasAttachments =
       e.hasAttachments ||
       (isThread && row.ids.some((id) => offlineMailStore.getEntry(id)?.hasAttachments));
+    const ROW_HEIGHT = rowHeight();
+    const compact = offlineMailStore.density === 'compact';
+    const preview = compact ? null : offlineMailStore.previewFor(e.id);
     return (
       <div
         key={row.key}
@@ -212,6 +226,15 @@ export class OfflineMessageList extends OfflineStoreComponent<Record<string, nev
                 {row.ids.length}
               </span>
             ) : null}
+            {compact ? (
+              <span
+                className="offline-row-subject offline-row-subject-inline"
+                dir="auto"
+                data-offline-subject="true"
+              >
+                {e.subject}
+              </span>
+            ) : null}
             {hasAttachments ? (
               <span className="offline-row-attach" title={tr('קבצים מצורפים', 'Attachments')}>
                 📎
@@ -219,10 +242,106 @@ export class OfflineMessageList extends OfflineStoreComponent<Record<string, nev
             ) : null}
             <span className="offline-row-date">{formatDate(e.ts)}</span>
           </div>
-          <div className="offline-row-subject" dir="auto" data-offline-subject="true">
-            {e.subject}
-          </div>
+          {compact ? null : (
+            <div className="offline-row-subject" dir="auto" data-offline-subject="true">
+              {e.subject}
+            </div>
+          )}
+          {compact ? null : (
+            <div className="offline-row-preview" dir="auto" data-offline-preview="true">
+              {preview === null ? '\u00a0' : preview || tr('(אין טקסט)', '(no text)')}
+            </div>
+          )}
         </div>
+      </div>
+    );
+  }
+
+  _renderTools() {
+    const s = offlineMailStore;
+    const sort = s.sort;
+    const asc = sort.dir === 'asc';
+    const dirLabel =
+      sort.key === 'date'
+        ? asc
+          ? tr('ישן לחדש', 'Oldest first')
+          : tr('חדש לישן', 'Newest first')
+        : sort.key === 'attachments'
+          ? asc
+            ? tr('בלי צרופות קודם', 'Without attachments first')
+            : tr('עם צרופות (גדולות) קודם', 'With (large) attachments first')
+          : asc
+            ? tr('א→ת / A→Z', 'A→Z / א→ת')
+            : tr('ת→א / Z→A', 'Z→A / ת→א');
+    return (
+      <div className="offline-list-tools" dir={offlineDir()} data-offline-list-tools="true">
+        <label
+          className="offline-list-sort"
+          title={tr('מיון הרשימה (נשמר לכל תיקייה)', 'Sort the list (remembered per folder)')}
+        >
+          <span className="offline-list-tools-label">{tr('מיון:', 'Sort:')}</span>
+          <select
+            data-offline-sort-key="true"
+            value={sort.key}
+            onChange={(e) => s.setSortKey(e.target.value as OfflineSortKey)}
+          >
+            {OFFLINE_SORT_KEYS.map((k) => (
+              <option key={k} value={k}>
+                {tr(SORT_LABELS[k][0], SORT_LABELS[k][1])}
+              </option>
+            ))}
+          </select>
+        </label>
+        <button
+          type="button"
+          className="offline-list-tool-btn"
+          data-offline-sort-dir={sort.dir}
+          title={tr(
+            `כיוון המיון: ${dirLabel} (לחץ להפוך)`,
+            `Sort direction: ${dirLabel} (click to reverse)`
+          )}
+          onClick={() => s.toggleSortDir()}
+        >
+          {asc ? '↑' : '↓'} {dirLabel}
+        </button>
+        <button
+          type="button"
+          className={classNames('offline-list-chip', { active: s.attachmentsOnly })}
+          data-offline-attach-only={s.attachmentsOnly ? 'true' : 'false'}
+          aria-pressed={s.attachmentsOnly}
+          title={tr(
+            'הצג רק הודעות/שיחות עם קבצים מצורפים',
+            'Show only messages/conversations with attachments'
+          )}
+          onClick={() => s.setAttachmentsOnly(!s.attachmentsOnly)}
+        >
+          {tr('📎 רק עם צרופות', '📎 Attachments only')}
+        </button>
+        <span className="offline-list-density" role="group" aria-label={tr('צפיפות', 'Density')}>
+          <button
+            type="button"
+            className={classNames('offline-list-tool-btn', { active: s.density === 'compact' })}
+            data-offline-density-btn="compact"
+            aria-pressed={s.density === 'compact'}
+            title={tr('שורה אחת להודעה (נשמר)', 'One line per message (remembered)')}
+            onClick={() => s.setDensity('compact')}
+          >
+            {tr('מצומצם', 'Compact')}
+          </button>
+          <button
+            type="button"
+            className={classNames('offline-list-tool-btn', { active: s.density === 'expanded' })}
+            data-offline-density-btn="expanded"
+            aria-pressed={s.density === 'expanded'}
+            title={tr(
+              'שלוש שורות: שולח ותאריך / נושא / תחילת ההודעה (נשמר)',
+              'Three lines: sender and date / subject / preview (remembered)'
+            )}
+            onClick={() => s.setDensity('expanded')}
+          >
+            {tr('מורחב', 'Expanded')}
+          </button>
+        </span>
       </div>
     );
   }
@@ -242,6 +361,7 @@ export class OfflineMessageList extends OfflineStoreComponent<Record<string, nev
     const checkedInView = rows.reduce((n, r) => n + (selectedSet.has(r.key) ? 1 : 0), 0);
     const allChecked = rows.length > 0 && checkedInView === rows.length;
     const someChecked = checkedInView > 0;
+    const ROW_HEIGHT = rowHeight();
     const start = Math.max(0, Math.floor(scrollTop / ROW_HEIGHT) - OVERSCAN);
     const end = Math.min(rows.length, Math.ceil((scrollTop + height) / ROW_HEIGHT) + OVERSCAN);
     // Rows not (fully) on screen below the visible part: shown as "N more below".
@@ -311,6 +431,7 @@ export class OfflineMessageList extends OfflineStoreComponent<Record<string, nev
             value={s.filter}
             onChange={(e) => s.setFilter(e.target.value)}
           />
+          {this._renderTools()}
           <div className="offline-list-selectbar" dir={offlineDir()}>
             <label className="offline-list-selectall" data-offline-select-all="true">
               <input
@@ -355,7 +476,8 @@ export class OfflineMessageList extends OfflineStoreComponent<Record<string, nev
           </div>
         </div>
         <div
-          className="offline-list-scroll"
+          className={`offline-list-scroll density-${s.density}`}
+          data-offline-density={s.density}
           ref={this._setScrollEl}
           tabIndex={0}
           role="listbox"
