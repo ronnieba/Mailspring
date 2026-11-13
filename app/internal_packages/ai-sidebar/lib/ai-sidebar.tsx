@@ -19,6 +19,11 @@ import {
 } from './offline-archive-catalog';
 import DemoComposer from './demo-composer';
 import classNames from 'classnames';
+import {
+  estimateGeminiSendCount,
+  GEMINI_SCOPED_COST_NOTE,
+  GEMINI_SCOPED_MAX_MESSAGES,
+} from './core/gemini-context';
 
 function isSelectedSummarySurface(): boolean {
   return isRealSelectedSummaryMode() || isOfflineArchiveMode();
@@ -39,6 +44,7 @@ interface AISidebarState {
   realPreview: RealSelectedPreview | null;
   demoTab: 'ai' | 'composer';
   geminiStatus: GeminiDemoStatus | null;
+  progressPhase: 'local' | 'gemini' | null;
 }
 
 class AISidebarInner extends React.Component<Record<string, never>, AISidebarState> {
@@ -65,6 +71,7 @@ class AISidebarInner extends React.Component<Record<string, never>, AISidebarSta
     realPreview: AISidebarStore.getState().realPreview,
     demoTab: 'ai',
     geminiStatus: AISidebarStore.getState().geminiStatus,
+    progressPhase: null,
   };
 
   componentDidMount() {
@@ -84,6 +91,7 @@ class AISidebarInner extends React.Component<Record<string, never>, AISidebarSta
         demoPreview: storeState.demoPreview,
         realPreview: storeState.realPreview,
         geminiStatus: storeState.geminiStatus,
+        progressPhase: storeState.progressPhase,
       });
     });
 
@@ -244,11 +252,13 @@ class AISidebarInner extends React.Component<Record<string, never>, AISidebarSta
             </>
           ) : offlineArchive && geminiConfigured ? (
             <>
-              <b>🟢 Gemini מחובר</b> (בתשלום, פרויקט yahoo-agent). נשלחת הודעה אחת בלבד, ורק
-              כשלוחצים &quot;סכם עם Gemini&quot;. הכפתור &quot;שלח&quot; עונה מקומית (Mock).
+              <b>🟢 Gemini מחובר</b> (בתשלום, פרויקט yahoo-agent). &quot;שלח&quot; שואל את Gemini על
+              הטווח שבחרת: קודם חיפוש מקומי, ואז נשלחות עד {GEMINI_SCOPED_MAX_MESSAGES} ההודעות
+              הרלוונטיות (טקסט בלבד, בלי קבצים מצורפים). רק בלחיצה.
               <br />
               <small>
-                Gemini on · paid · one selected message per explicit click · no Yahoo · no sync
+                Gemini on · paid · sent only on click · max {GEMINI_SCOPED_MAX_MESSAGES} messages ·
+                no attachments · no Yahoo · no sync
               </small>
             </>
           ) : offlineArchive ? (
@@ -369,6 +379,7 @@ class AISidebarInner extends React.Component<Record<string, never>, AISidebarSta
             )}
           </div>
         )}
+        {this._renderGeminiEstimate()}
 
         <div className="retrieval-mode" data-retrieval-mode={this.state.retrievalMode}>
           <label>
@@ -396,6 +407,29 @@ class AISidebarInner extends React.Component<Record<string, never>, AISidebarSta
     );
   }
 
+  _renderGeminiEstimate() {
+    const { resolvedScope, geminiStatus } = this.state;
+    if (!isOfflineArchiveMode() || !geminiStatus?.configured || !resolvedScope) {
+      return null;
+    }
+    const count = resolvedScope.messageCount || 0;
+    if (!count) {
+      return null;
+    }
+    const n = estimateGeminiSendCount(count);
+    const text =
+      resolvedScope.mode === 'selected-messages'
+        ? `בלחיצה על "שלח" יישלחו ל-Gemini ${n} הודעות נבחרות` +
+          (count > n ? ` (מתוך ${count}, החדשות ביותר)` : '')
+        : `בלחיצה על "שלח": חיפוש מקומי ב-${count.toLocaleString()} הודעות, ` +
+          `ואז יישלחו ל-Gemini עד ${n} הרלוונטיות ביותר`;
+    return (
+      <div className="gemini-estimate" dir="rtl" data-gemini-estimate={n}>
+        ✨ {text}. עלות משוערת: {GEMINI_SCOPED_COST_NOTE} לשאלה לכל היותר. בלי קבצים מצורפים.
+      </div>
+    );
+  }
+
   _renderOfflineGuide() {
     return (
       <div className="ai-sidebar-guide" dir="rtl" data-offline-guide="true">
@@ -413,8 +447,9 @@ class AISidebarInner extends React.Component<Record<string, never>, AISidebarSta
         </ol>
         {this.state.geminiStatus?.configured ? (
           <div className="guide-note">
-            &quot;שלח&quot; עונה מקומית (Mock, לא AI אמיתי). לסיכום אמיתי עם Gemini: בחר הודעה אחת
-            ולחץ &quot;סכם עם Gemini&quot; (בתשלום, נשלחת רק ההודעה הזו).
+            Gemini מחובר: &quot;שלח&quot; עונה עם Gemini (בתשלום). בתיקייה או בכל הדואר מתבצע קודם
+            חיפוש מקומי, ונשלחות רק ההודעות הרלוונטיות (עד {GEMINI_SCOPED_MAX_MESSAGES}). &quot;סכם
+            עם Gemini&quot; מסכם הודעה אחת שנבחרה.
           </div>
         ) : (
           <div className="guide-note">
@@ -499,11 +534,17 @@ class AISidebarInner extends React.Component<Record<string, never>, AISidebarSta
           </div>
         )}
 
-        {msg.isMock && <div className="mock-indicator">🔧 Mock Response</div>}
+        {msg.isMock && (
+          <div className="mock-indicator">
+            {isOfflineArchiveMode()
+              ? '🔧 תשובת הדגמה (Mock) — Gemini לא מחובר'
+              : '🔧 Mock Response'}
+          </div>
+        )}
         {msg.role === 'assistant' && msg.isMock === false && (
           <div className="live-indicator">
             {isOfflineArchiveMode()
-              ? 'Gemini Developer API · one local archive message · not bulk upload · paid project required'
+              ? '✨ Gemini (בתשלום · yahoo-agent)'
               : isRealSelectedSummaryMode()
                 ? 'Gemini Developer API · one selected message · paid project required'
                 : 'Gemini Developer API · DEMO synthetic · paid project required'}
@@ -522,7 +563,9 @@ class AISidebarInner extends React.Component<Record<string, never>, AISidebarSta
       .replace(/\*\*(.+?)\*\*/g, '<strong>$1</strong>')
       .replace(/\n/g, '<br />');
 
-    return <div className="message-text" dangerouslySetInnerHTML={{ __html: formatted }} />;
+    return (
+      <div className="message-text" dir="auto" dangerouslySetInnerHTML={{ __html: formatted }} />
+    );
   }
 
   _renderProgress() {
@@ -533,11 +576,17 @@ class AISidebarInner extends React.Component<Record<string, never>, AISidebarSta
       <div className="ai-sidebar-progress">
         <Spinner visible />
         <span className="progress-text">
-          {progress
-            ? `מעבד ${progress.processed || 0}${
-                progress.totalEligible ? ` מתוך ${progress.totalEligible}` : ''
-              } הודעות...`
-            : 'מעבד...'}
+          {this.state.progressPhase === 'local'
+            ? `מחפש בעותק המקומי... ${progress?.processed || 0}${
+                progress?.totalEligible ? ` / ${progress.totalEligible}` : ''
+              }`
+            : this.state.progressPhase === 'gemini'
+              ? `שולח ${progress?.totalEligible || 0} הודעות ל-Gemini וממתין לתשובה...`
+              : progress
+                ? `מעבד ${progress.processed || 0}${
+                    progress.totalEligible ? ` מתוך ${progress.totalEligible}` : ''
+                  } הודעות...`
+                : 'מעבד...'}
         </span>
         <button className="cancel-btn" onClick={this._onCancel} aria-label="ביטול">
           ביטול
@@ -613,7 +662,7 @@ class AISidebarInner extends React.Component<Record<string, never>, AISidebarSta
         >
           <p>
             {offline
-              ? 'בחר הודעה אחת מהארכיון המקומי. סיכום נשלח רק אחרי Summarize.'
+              ? 'שאל שאלה ולחץ "שלח" (לפי הטווח שנבחר), או בחר הודעה אחת ולחץ "סכם". שום דבר לא נשלח בלי לחיצה.'
               : 'בחר הודעה אחת בשרשור. סיכום נשלח רק אחרי לחיצה על Summarize.'}
           </p>
           <p>

@@ -54,6 +54,8 @@ export interface ResolvedScope {
   description: string;
   /** Whether scope is empty (nothing selected) */
   isEmpty: boolean;
+  /** Offline experiment: number of local messages in scope (for estimates). */
+  messageCount?: number;
 }
 
 /** Search/retrieval mode */

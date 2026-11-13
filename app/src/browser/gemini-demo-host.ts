@@ -15,6 +15,7 @@ import {
   GEMINI_DEMO_PAID_ENV,
   GEMINI_DISPLAY_NAME,
   GEMINI_OFFLINE_ARCHIVE_SYSTEM_INSTRUCTION,
+  GEMINI_OFFLINE_SCOPED_SYSTEM_INSTRUCTION,
   GEMINI_REAL_SELECTED_SYSTEM_INSTRUCTION,
   GEMINI_RESPONSE_FORMAT,
   GEMINI_SYSTEM_INSTRUCTION,
@@ -25,6 +26,9 @@ import {
   GeminiHostResult,
   NON_SYNTHETIC_SOURCE_REASON,
   OFFLINE_ARCHIVE_SCOPE_REASON,
+  OFFLINE_SCOPED_MAX_MESSAGES,
+  OFFLINE_SCOPED_MAX_TOTAL_CHARS,
+  OFFLINE_SCOPED_REASON,
   REAL_SELECTED_SCOPE_REASON,
   areSyntheticDemoMailRefs,
   isAllowedGeminiEndpoint,
@@ -34,7 +38,7 @@ import {
 } from './gemini-demo-protocol';
 import { getCapturedGeminiDemoCredentials } from './gemini-demo-secret';
 
-const DEFAULT_TIMEOUT_MS = 30000;
+const DEFAULT_TIMEOUT_MS = 60000;
 
 export type GeminiFetch = (
   url: string,
@@ -361,6 +365,29 @@ function admitOfflineArchiveQuery(req: GeminiDemoQueryInput): GeminiHostFailure 
   return null;
 }
 
+function admitOfflineScopedQuery(req: GeminiDemoQueryInput): GeminiHostFailure | null {
+  const msgs = req.messages;
+  if (!Array.isArray(msgs) || msgs.length < 1 || msgs.length > OFFLINE_SCOPED_MAX_MESSAGES) {
+    return fail('offline-archive-scope', OFFLINE_SCOPED_REASON);
+  }
+  let total = 0;
+  const seen = new Set<string>();
+  for (const m of msgs) {
+    if (isSyntheticDemoMailRef(m) || !isOfflineArchiveMailRef(m) || seen.has(m.id)) {
+      return fail('offline-archive-scope', OFFLINE_SCOPED_REASON);
+    }
+    seen.add(m.id);
+    if (typeof m.bodyText !== 'string') {
+      return fail('offline-archive-scope', OFFLINE_SCOPED_REASON);
+    }
+    total += m.bodyText.length + (m.subject || '').length + (m.from || '').length;
+  }
+  if (total > OFFLINE_SCOPED_MAX_TOTAL_CHARS) {
+    return fail('offline-archive-scope', OFFLINE_SCOPED_REASON);
+  }
+  return null;
+}
+
 function admitRealSelectedQuery(req: GeminiDemoQueryInput): GeminiHostFailure | null {
   if (req.mode !== 'real-selected-single') {
     return fail('real-selected-scope', REAL_SELECTED_SCOPE_REASON);
@@ -416,7 +443,13 @@ export async function runGeminiDemoQuery(
   if (!status.configured) {
     return fail('unconfigured', status.reason);
   }
-  if (offlineArchive) {
+  const offlineScoped = offlineArchive && req.mode === 'offline-archive-scoped';
+  if (offlineScoped) {
+    const scoped = admitOfflineScopedQuery(req);
+    if (scoped) {
+      return scoped;
+    }
+  } else if (offlineArchive) {
     const scoped = admitOfflineArchiveQuery(req);
     if (scoped) {
       return scoped;
@@ -469,11 +502,13 @@ export async function runGeminiDemoQuery(
 
     const body = JSON.stringify({
       model: GEMINI_DEMO_MODEL,
-      system_instruction: offlineArchive
-        ? GEMINI_OFFLINE_ARCHIVE_SYSTEM_INSTRUCTION
-        : realSelectedSummary
-          ? GEMINI_REAL_SELECTED_SYSTEM_INSTRUCTION
-          : GEMINI_SYSTEM_INSTRUCTION,
+      system_instruction: offlineScoped
+        ? GEMINI_OFFLINE_SCOPED_SYSTEM_INSTRUCTION
+        : offlineArchive
+          ? GEMINI_OFFLINE_ARCHIVE_SYSTEM_INSTRUCTION
+          : realSelectedSummary
+            ? GEMINI_REAL_SELECTED_SYSTEM_INSTRUCTION
+            : GEMINI_SYSTEM_INSTRUCTION,
       input: buildUntrustedGeminiInput(req.query, req.messages, {
         includeBody: realSelectedSummary || offlineArchive,
       }),

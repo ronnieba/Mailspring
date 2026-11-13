@@ -27,7 +27,11 @@ export interface GeminiDemoTransport {
     query: string;
     messages: MessageRef[];
     timeoutMs?: number;
-    mode?: 'demo-synthetic' | 'real-selected-single' | 'offline-archive-selected';
+    mode?:
+      | 'demo-synthetic'
+      | 'real-selected-single'
+      | 'offline-archive-selected'
+      | 'offline-archive-scoped';
     allowedMessageId?: string;
     snapshotEpoch?: number;
   }): Promise<GeminiHostResult>;
@@ -40,7 +44,11 @@ export class GeminiDemoProvider implements AIProvider {
   private _configured = false;
   private _generation = 0;
   private _queryExtras: {
-    mode?: 'demo-synthetic' | 'real-selected-single' | 'offline-archive-selected';
+    mode?:
+      | 'demo-synthetic'
+      | 'real-selected-single'
+      | 'offline-archive-selected'
+      | 'offline-archive-scoped';
     allowedMessageId?: string;
     snapshotEpoch?: number;
   } = {};
@@ -67,7 +75,11 @@ export class GeminiDemoProvider implements AIProvider {
   }
 
   setQueryExtras(extras: {
-    mode?: 'demo-synthetic' | 'real-selected-single' | 'offline-archive-selected';
+    mode?:
+      | 'demo-synthetic'
+      | 'real-selected-single'
+      | 'offline-archive-selected'
+      | 'offline-archive-scoped';
     allowedMessageId?: string;
     snapshotEpoch?: number;
   }) {

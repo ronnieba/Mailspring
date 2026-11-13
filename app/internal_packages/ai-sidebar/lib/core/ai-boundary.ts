@@ -46,6 +46,8 @@ export interface AIValidateContext {
    */
   allowLiveSynthetic?: boolean;
   allowLiveRealSelectedSingle?: boolean;
+  /** Offline experiment Send: live Gemini over 1-30 locally retrieved archive messages. */
+  allowLiveOfflineScoped?: boolean;
   sourcesAreSynthetic?: boolean;
 }
 
@@ -171,7 +173,20 @@ export function validateProviderPayload(raw: unknown, ctx: AIValidateContext): A
   }
   const p = raw;
   const liveSynthetic = p.isMock === false && ctx.allowLiveSynthetic === true;
-  const liveRealSingle = p.isMock === false && ctx.allowLiveRealSelectedSingle === true;
+  const liveOfflineScoped = p.isMock === false && ctx.allowLiveOfflineScoped === true;
+  const liveRealSingle =
+    p.isMock === false && ctx.allowLiveRealSelectedSingle === true && !liveOfflineScoped;
+  if (liveOfflineScoped && (liveSynthetic || ctx.allowLiveRealSelectedSingle === true)) {
+    return fail('local', 'invalid-schema', 'allowLiveOfflineScoped is exclusive');
+  }
+  if (liveOfflineScoped) {
+    if (ctx.sourcesAreSynthetic === true) {
+      return fail('local', 'real-selected-scope', 'Offline Send rejects synthetic DEMO fixtures');
+    }
+    if (ctx.allowedSourceIds.size < 1 || ctx.allowedSourceIds.size > 30) {
+      return fail('local', 'real-selected-scope', 'Offline Send requires 1-30 allowed sources');
+    }
+  }
   if (liveSynthetic && liveRealSingle) {
     return fail(
       'local',
@@ -179,10 +194,10 @@ export function validateProviderPayload(raw: unknown, ctx: AIValidateContext): A
       'allowLiveSynthetic and allowLiveRealSelectedSingle are mutually exclusive'
     );
   }
-  if (p.isMock === false && !liveSynthetic && !liveRealSingle) {
+  if (p.isMock === false && !liveSynthetic && !liveRealSingle && !liveOfflineScoped) {
     return fail('local', 'live-disabled', LIVE_AI_DISABLED_REASON);
   }
-  if (!liveSynthetic && !liveRealSingle && p.isMock !== true) {
+  if (!liveSynthetic && !liveRealSingle && !liveOfflineScoped && p.isMock !== true) {
     return fail(
       'local',
       p.isMock === false ? 'not-mock' : 'invalid-schema',
@@ -222,7 +237,7 @@ export function validateProviderPayload(raw: unknown, ctx: AIValidateContext): A
     }
     citations.push(parsed);
   }
-  const live = liveSynthetic || liveRealSingle;
+  const live = liveSynthetic || liveRealSingle || liveOfflineScoped;
   const mockLabel =
     typeof p.mockLabel === 'string' && p.mockLabel.trim()
       ? p.mockLabel

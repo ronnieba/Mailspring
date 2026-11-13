@@ -11,6 +11,11 @@ import {
   OfflineArchiveMessage,
   readOfflineArchive,
 } from './core/offline-archive-format';
+import {
+  GEMINI_SCOPED_BODY_SCAN,
+  planScopedRetrieval,
+  selectScopedForGemini,
+} from './core/gemini-context';
 
 let catalog: OfflineArchiveMessage[] = [];
 let selectedId: string | null = null;
@@ -214,6 +219,7 @@ function browserScope(mode: ResolvedScope['mode']): ResolvedScope {
         ? `${selected.length} הודעות נבחרות מהעותק המקומי / ${selected.length} selected local message(s)`
         : 'לא נבחרה הודעה — בחר הודעה ברשימה / No message selected',
       isEmpty: selected.length === 0,
+      messageCount: selected.length,
     };
   }
   if (mode === 'current-folder') {
@@ -234,6 +240,7 @@ function browserScope(mode: ResolvedScope['mode']): ResolvedScope {
         ? `תיקייה: ${folder.name} (${count}) / Folder (${count})`
         : 'לא נבחרה תיקייה / No folder selected',
       isEmpty: count === 0,
+      messageCount: count,
     };
   }
   return {
@@ -241,6 +248,7 @@ function browserScope(mode: ResolvedScope['mode']): ResolvedScope {
     accountIds: [OFFLINE_ARCHIVE_ACCOUNT_ID],
     description: `כל העותק המקומי (${catalog.length} הודעות) / Whole offline copy (${catalog.length})`,
     isEmpty: catalog.length === 0,
+    messageCount: catalog.length,
   };
 }
 
@@ -336,6 +344,91 @@ export function searchOfflineArchive(
       isCancelled: false,
     },
     retrievalMode: retrieval,
+  };
+}
+
+function rowsInScope(scope: ResolvedScope): OfflineArchiveMessage[] {
+  if (scope.mode === 'selected-messages') {
+    const allowed = new Set(scope.messageIds || []);
+    return catalog.filter((m) => allowed.has(m.id));
+  }
+  if (scope.mode === 'current-folder') {
+    if (!scope.folder) {
+      return [];
+    }
+    return catalog.filter(
+      (m) => m.folderId === scope.folder.id || m.folderPath === scope.folder.name
+    );
+  }
+  return catalog;
+}
+
+export interface OfflineGeminiContext {
+  messages: MessageRef[];
+  inScope: number;
+  scanned: number;
+  matched: number;
+  sent: number;
+  totalChars: number;
+}
+
+/**
+ * Local retrieval for a Gemini "Send" over a scope. Reads bodies only for the
+ * best header candidates (read-only, from the local copy), never attachments,
+ * and returns a bounded, cleaned set. No network here.
+ */
+export async function buildOfflineGeminiContext(
+  scope: ResolvedScope,
+  query: string,
+  opts: { signal?: AbortSignal; onProgress?: (scanned: number, toScan: number) => void } = {}
+): Promise<OfflineGeminiContext> {
+  const rows = rowsInScope(scope);
+  const selectedScope = scope.mode === 'selected-messages';
+  const candidates = rows.map((m) => ({
+    id: m.id,
+    subject: m.subject,
+    from: m.from,
+    ts: dateMs(m),
+    m,
+  }));
+  const plan = planScopedRetrieval(
+    candidates,
+    selectedScope ? '' : query,
+    selectedScope ? candidates.length : GEMINI_SCOPED_BODY_SCAN
+  );
+  const scanned: Array<(typeof candidates)[number] & { body: string }> = [];
+  for (let i = 0; i < plan.toScan.length; i++) {
+    if (opts.signal?.aborted) {
+      throw new Error('Operation cancelled');
+    }
+    const c = plan.toScan[i];
+    scanned.push({ ...c, body: bodyOf(c.m) || '' });
+    if (i % 10 === 9) {
+      opts.onProgress?.(i + 1, plan.toScan.length);
+      await new Promise((r) => setTimeout(r, 0));
+    }
+  }
+  opts.onProgress?.(scanned.length, plan.toScan.length);
+  // Selected scope: send the selected messages themselves (newest first).
+  const selection = selectScopedForGemini(scanned, selectedScope ? [] : plan.terms);
+  const messages: MessageRef[] = selection.chosen.map((c) => ({
+    id: c.m.id,
+    threadId: c.m.threadId,
+    accountId: c.m.accountId,
+    subject: c.m.subject,
+    from: c.m.from,
+    date: c.m.date ? new Date(c.m.date) : new Date(0),
+    snippet: c.cleanBody.replace(/\s+/g, ' ').slice(0, 160),
+    folderId: c.m.folderId,
+    bodyText: c.cleanBody,
+  }));
+  return {
+    messages,
+    inScope: rows.length,
+    scanned: scanned.length,
+    matched: selection.matched,
+    sent: messages.length,
+    totalChars: selection.totalChars,
   };
 }
 

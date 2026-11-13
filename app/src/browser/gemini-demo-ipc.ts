@@ -95,7 +95,8 @@ function parseQuery(raw: unknown): GeminiDemoQueryInput {
   const mode =
     r.mode === 'real-selected-single' ||
     r.mode === 'demo-synthetic' ||
-    r.mode === 'offline-archive-selected'
+    r.mode === 'offline-archive-selected' ||
+    r.mode === 'offline-archive-scoped'
       ? r.mode
       : undefined;
   const allowedMessageId = typeof r.allowedMessageId === 'string' ? r.allowedMessageId : undefined;

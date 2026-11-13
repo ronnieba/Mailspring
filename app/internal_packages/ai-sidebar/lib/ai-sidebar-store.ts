@@ -3,6 +3,7 @@
  */
 import MailspringStore from 'mailspring-store';
 import {
+  Citation,
   ScopeMode,
   ResolvedScope,
   RetrievalMode,
@@ -39,6 +40,7 @@ import {
   RealSelectedPreview,
 } from './core/real-selected-mail';
 import {
+  buildOfflineGeminiContext,
   isOfflineArchiveBrowserDriven,
   navigateOfflineArchive,
   setOfflineArchiveSelected,
@@ -77,7 +79,11 @@ interface AISidebarState {
   demoPreview: DemoMessagePreview | null;
   realPreview: RealSelectedPreview | null;
   geminiStatus: GeminiDemoStatus;
+  /** Offline Gemini Send: 'local' while searching the copy, 'gemini' while waiting. */
+  progressPhase: 'local' | 'gemini' | null;
 }
+
+const OFFLINE_SEND_TIMEOUT_MS = 60000;
 
 class AISidebarStore extends MailspringStore {
   private _state: AISidebarState = {
@@ -94,6 +100,7 @@ class AISidebarStore extends MailspringStore {
     demoPreview: null,
     realPreview: null,
     geminiStatus: unconfiguredGeminiStatus(isDemoMode(), 'Gemini status not refreshed yet'),
+    progressPhase: null,
   };
   private _realSnapshotEpoch = 0;
   private _inFlightMessageId: string | null = null;
@@ -324,6 +331,18 @@ class AISidebarStore extends MailspringStore {
 
     try {
       await this.refreshGeminiStatus();
+      // Offline experiment: when Gemini is connected, Send asks Gemini about the
+      // chosen scope (local retrieval first, bounded set). Mock only when off.
+      if (
+        isOfflineArchiveMode() &&
+        !isDemoMode() &&
+        !opts?.allowRealSelected &&
+        isOfflineArchiveBrowserDriven() &&
+        this._state.geminiStatus.configured
+      ) {
+        await this._runOfflineGeminiSend(query, scope, startedGeneration, stillCurrent);
+        return;
+      }
       const searchResult = await mailspringAdapter.searchMessages(
         scope,
         query,
@@ -509,9 +528,152 @@ class AISidebarStore extends MailspringStore {
       if (startedGeneration === this._queryGeneration) {
         this._state.isProcessing = false;
         this._state.abortController = null;
+        this._state.progressPhase = null;
         this.trigger();
       }
     }
+  }
+
+  /**
+   * Offline Send with Gemini over the resolved scope. Local search first (no
+   * network), then ONE request with at most 30 cleaned plain-text messages.
+   * Throws on failure; never substitutes mock answers for Gemini errors.
+   */
+  private async _runOfflineGeminiSend(
+    query: string,
+    scope: ResolvedScope,
+    startedGeneration: number,
+    stillCurrent: () => boolean
+  ) {
+    const signal = this._state.abortController.signal;
+    this._state.progressPhase = 'local';
+    this.trigger();
+    const ctx = await buildOfflineGeminiContext(scope, query, {
+      signal,
+      onProgress: (scanned, toScan) => {
+        if (!stillCurrent()) {
+          return;
+        }
+        this._state.progress = {
+          totalEligible: toScan,
+          processed: scanned,
+          withBodies: scanned,
+          missingBodies: 0,
+          syncCoverage: 100,
+          isComplete: false,
+          isCancelled: false,
+        };
+        this.trigger();
+      },
+    });
+    if (!stillCurrent()) {
+      return;
+    }
+    if (ctx.messages.length === 0) {
+      this._state.conversation.push({
+        id: `system-${Date.now()}`,
+        role: 'system',
+        content: 'לא נמצאו הודעות בטווח הזה. לא נשלח דבר ל-Gemini.',
+        timestamp: new Date(),
+      });
+      return;
+    }
+    this._state.progressPhase = 'gemini';
+    this._state.progress = {
+      totalEligible: ctx.sent,
+      processed: ctx.sent,
+      withBodies: ctx.sent,
+      missingBodies: 0,
+      syncCoverage: 100,
+      isComplete: false,
+      isCancelled: false,
+    };
+    this.trigger();
+
+    this._gemini.setGeneration(startedGeneration);
+    this._gemini.setQueryExtras({ mode: 'offline-archive-scoped' });
+    const result = await this._gemini.processQuery(
+      query,
+      ctx.messages,
+      scope,
+      { ...DEFAULT_BUDGET, timeoutMs: OFFLINE_SEND_TIMEOUT_MS },
+      undefined,
+      signal
+    );
+    if (!stillCurrent()) {
+      return;
+    }
+    // Rebuild citations from the local copy: the model often returns only the
+    // id. Ids that were not sent are dropped (never shown, never opened).
+    const sentById = new Map(ctx.messages.map((m) => [m.id, m]));
+    const citations: Citation[] = [];
+    for (const c of Array.isArray(result.citations) ? result.citations : []) {
+      const m = c ? sentById.get(c.messageId) : undefined;
+      if (!m || citations.some((x) => x.messageId === m.id)) {
+        continue;
+      }
+      citations.push({
+        messageId: m.id,
+        threadId: m.threadId || m.id,
+        subject: m.subject || '(ללא נושא)',
+        from: m.from || '(לא ידוע)',
+        date: m.date,
+        snippet: m.snippet || '',
+      });
+    }
+    const validated = validateProviderPayload(
+      {
+        response: result.response,
+        citations,
+        tokensUsed: result.tokensUsed,
+        isMock: false,
+        mockLabel: GEMINI_DISPLAY_NAME,
+      },
+      {
+        allowedSourceIds: new Set(ctx.messages.map((m) => m.id)),
+        startedGeneration,
+        currentGeneration: this._queryGeneration,
+        aborted: !!this._state.abortController?.signal.aborted,
+        allowLiveOfflineScoped: true,
+        sourcesAreSynthetic: false,
+      }
+    );
+    if (!isAIBoundaryOk(validated)) {
+      if (isAIBoundaryFailure(validated)) {
+        this._state.error = validated.message;
+        this._state.conversation.push({
+          id: `error-${Date.now()}`,
+          role: 'system',
+          content: `❌ שגיאה: תשובת Gemini נדחתה (${validated.reason}). ${validated.message}`,
+          timestamp: new Date(),
+        });
+      }
+      return;
+    }
+    const scopeWord =
+      scope.mode === 'selected-messages'
+        ? 'בהודעות שנבחרו'
+        : scope.mode === 'current-folder'
+          ? 'בתיקייה'
+          : 'בכל העותק המקומי';
+    const coverage =
+      scope.mode === 'selected-messages'
+        ? `🔎 נשלחו ל-Gemini ${ctx.sent} מתוך ${ctx.inScope} ההודעות שנבחרו (טקסט בלבד, בלי קבצים מצורפים).`
+        : `🔎 חיפוש מקומי ${scopeWord}: ${ctx.inScope.toLocaleString()} הודעות, נקראו ${ctx.scanned}, ` +
+          `התאימו לשאלה ${ctx.matched}. נשלחו ל-Gemini ${ctx.sent} הרלוונטיות ביותר ` +
+          `(טקסט בלבד, בלי קבצים מצורפים).` +
+          (ctx.matched === 0
+            ? ' לא נמצאה התאמה למילים בשאלה, לכן נשלחו ההודעות החדשות ביותר.'
+            : '');
+    const tokens = validated.result.tokensUsed ? ` · ${validated.result.tokensUsed} טוקנים` : '';
+    this._state.conversation.push({
+      id: `assistant-${Date.now()}`,
+      role: 'assistant',
+      content: `${validated.result.response}\n\n---\n${coverage}${tokens}`,
+      citations: validated.result.citations,
+      timestamp: new Date(),
+      isMock: false,
+    });
   }
 
   /**
