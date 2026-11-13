@@ -23,7 +23,7 @@ import {
 } from './core/ai-boundary';
 import { GeminiDemoProvider } from './core/gemini-demo-provider';
 import { nextQueryGeneration, shouldAcceptAssistantResponse } from './core/query-generation';
-import { createGeminiIpcTransport } from './gemini-ipc-transport';
+import { createGeminiIpcTransport, geminiUsageIpc } from './gemini-ipc-transport';
 import { mailspringAdapter } from './mailspring-adapter';
 import {
   areSyntheticDemoSources,
@@ -48,6 +48,7 @@ import {
 import { isRealSelectedSummaryMode } from '../../../src/real-selected-summary';
 import { isOfflineArchiveMode } from '../../../src/offline-archive';
 import {
+  GeminiUsageSummary,
   GEMINI_DISPLAY_NAME,
   GeminiDemoStatus,
   OFFLINE_ARCHIVE_SCOPE_REASON,
@@ -81,6 +82,8 @@ interface AISidebarState {
   geminiStatus: GeminiDemoStatus;
   /** Offline Gemini Send: 'local' while searching the copy, 'gemini' while waiting. */
   progressPhase: 'local' | 'gemini' | null;
+  /** Local usage ledger summary (offline experiment). Null when unavailable. */
+  geminiUsage: GeminiUsageSummary | null;
 }
 
 const OFFLINE_SEND_TIMEOUT_MS = 60000;
@@ -101,6 +104,7 @@ class AISidebarStore extends MailspringStore {
     realPreview: null,
     geminiStatus: unconfiguredGeminiStatus(isDemoMode(), 'Gemini status not refreshed yet'),
     progressPhase: null,
+    geminiUsage: null,
   };
   private _realSnapshotEpoch = 0;
   private _inFlightMessageId: string | null = null;
@@ -175,9 +179,44 @@ class AISidebarStore extends MailspringStore {
     }
     if (isRealSelectedSummaryMode() || isOfflineArchiveMode()) {
       this._state.geminiStatus = await this._gemini.refreshStatus();
+      if (isOfflineArchiveMode()) {
+        await this.refreshGeminiUsage(false);
+      }
       return;
     }
     this._state.geminiStatus = unconfiguredGeminiStatus(false, 'Gemini DEMO host is --demo only');
+  }
+
+  async refreshGeminiUsage(trigger = true) {
+    if (!isOfflineArchiveMode()) {
+      return;
+    }
+    try {
+      this._state.geminiUsage = await geminiUsageIpc.get();
+    } catch {
+      this._state.geminiUsage = null;
+    }
+    if (trigger) {
+      this.trigger();
+    }
+  }
+
+  async resetGeminiUsage() {
+    try {
+      this._state.geminiUsage = await geminiUsageIpc.reset();
+    } catch {
+      // keep previous summary
+    }
+    this.trigger();
+  }
+
+  async setGeminiBudget(ils: number) {
+    try {
+      this._state.geminiUsage = await geminiUsageIpc.setBudget(ils);
+    } catch {
+      // keep previous summary
+    }
+    this.trigger();
   }
 
   private async _resolveScope() {
@@ -514,13 +553,23 @@ class AISidebarStore extends MailspringStore {
         return;
       }
       const errorMsg = (err as Error).message;
+      const geminiReason = (err as Error & { geminiReason?: string }).geminiReason;
       if (errorMsg !== 'Operation cancelled') {
         this._state.error = errorMsg;
+        const icon =
+          geminiReason === 'billing-exhausted'
+            ? '💳'
+            : geminiReason === 'rate-limited'
+              ? '⏳'
+              : geminiReason === 'invalid-key'
+                ? '🔑'
+                : '❌';
         const errorMessage: ConversationMessage = {
           id: `error-${Date.now()}`,
           role: 'system',
-          content: `❌ שגיאה: ${errorMsg}`,
+          content: `${icon} ${icon === '❌' ? 'שגיאה: ' : ''}${errorMsg}`,
           timestamp: new Date(),
+          geminiErrorKind: geminiReason,
         };
         this._state.conversation.push(errorMessage);
       }
@@ -531,6 +580,7 @@ class AISidebarStore extends MailspringStore {
         this._state.progressPhase = null;
         this.trigger();
       }
+      void this.refreshGeminiUsage();
     }
   }
 

@@ -305,6 +305,92 @@ function parseModelJson(
   }
 }
 
+export function readUsage(body: Record<string, unknown>): {
+  inputTokens: number;
+  outputTokens: number;
+  totalTokens: number;
+} {
+  const usage = isRecord(body.usage)
+    ? body.usage
+    : isRecord(body.usageMetadata)
+      ? body.usageMetadata
+      : null;
+  const num = (v: unknown) => (typeof v === 'number' && Number.isFinite(v) && v > 0 ? v : 0);
+  if (!usage) {
+    return { inputTokens: 0, outputTokens: 0, totalTokens: 0 };
+  }
+  const inputTokens = num(usage.total_input_tokens) || num(usage.promptTokenCount);
+  const outputTokens =
+    num(usage.total_output_tokens) +
+      num(usage.total_thought_tokens) +
+      num(usage.total_reasoning_tokens) ||
+    num(usage.candidatesTokenCount) + num(usage.thoughtsTokenCount);
+  const totalTokens =
+    num(usage.total_tokens) || num(usage.totalTokenCount) || inputTokens + outputTokens;
+  return { inputTokens, outputTokens, totalTokens };
+}
+
+/**
+ * Maps a non-2xx Gemini response to a reason the panel can explain:
+ * billing-exhausted (credit ran out / billing off), rate-limited, invalid-key.
+ * Only the HTTP code and Google's status enum are surfaced, never the body.
+ */
+export function classifyGeminiHttpError(
+  status: number,
+  bodyText: string
+): { reason: string; message: string } {
+  let gStatus = '';
+  let gMessage = '';
+  try {
+    const parsed = JSON.parse(bodyText);
+    const err = parsed && (Array.isArray(parsed) ? parsed[0]?.error : parsed.error);
+    if (err && typeof err === 'object') {
+      gStatus = typeof err.status === 'string' ? err.status : '';
+      gMessage = typeof err.message === 'string' ? err.message : '';
+      const details = Array.isArray(err.details) ? JSON.stringify(err.details) : '';
+      gMessage = `${gMessage} ${details}`;
+    }
+  } catch {
+    gMessage = bodyText || '';
+  }
+  const tag = `HTTP ${status}${gStatus ? ` ${gStatus}` : ''}`;
+  const billingWords =
+    /billing|credit|prepa|balance|spend(ing)? cap|payment|plan and billing|insufficient funds|top.?up/i;
+  const keyWords = /API_KEY_INVALID|API key not valid|API key expired|invalid api key|API_KEY_/i;
+  if (keyWords.test(gMessage) || status === 401) {
+    return {
+      reason: 'invalid-key',
+      message: `מפתח Gemini לא תקין או בוטל. צור מפתח חדש ב-AI Studio ושמור אותו שוב. (${tag})`,
+    };
+  }
+  if (
+    status === 402 ||
+    ((status === 429 || status === 403 || status === 400) && billingWords.test(gMessage)) ||
+    (status === 400 && gStatus === 'FAILED_PRECONDITION')
+  ) {
+    return {
+      reason: 'billing-exhausted',
+      message: `נגמר הקרדיט או שהחיוב ב-Google כבוי — Gemini לא יענה עד שתטעין יתרה בדף החיוב של AI Studio. (${tag})`,
+    };
+  }
+  if (status === 429) {
+    return {
+      reason: 'rate-limited',
+      message: `יותר מדי בקשות ל-Gemini בזמן קצר (מגבלת קצב). נסה שוב בעוד דקה. (${tag})`,
+    };
+  }
+  if (status === 403) {
+    return {
+      reason: 'invalid-key',
+      message: `אין הרשאה למפתח Gemini (ייתכן שהוגבל או בוטל). בדוק את המפתח ב-AI Studio. (${tag})`,
+    };
+  }
+  return {
+    reason: `http-${status}`,
+    message: `${GEMINI_DISPLAY_NAME} ${tag}. No model substitution. Local abort does not guarantee the provider stopped.`,
+  };
+}
+
 function readTokens(body: Record<string, unknown>): number {
   const usage = isRecord(body.usage) ? body.usage : null;
   if (!usage) {
@@ -527,10 +613,14 @@ export async function runGeminiDemoQuery(
     });
 
     if (!res.ok) {
-      return fail(
-        `http-${res.status}`,
-        `${GEMINI_DISPLAY_NAME} HTTP ${res.status}. No model substitution. Local abort does not guarantee the provider stopped.`
-      );
+      let errText = '';
+      try {
+        errText = await res.text();
+      } catch {
+        errText = '';
+      }
+      const classified = classifyGeminiHttpError(res.status, redactSecret(errText || '', key));
+      return fail(classified.reason, classified.message);
     }
 
     let rawText = '';
@@ -575,6 +665,8 @@ export async function runGeminiDemoQuery(
         response: modelJson.response,
         citations: modelJson.citations,
         tokensUsed: readTokens(envelope),
+        usage: readUsage(envelope),
+        model: GEMINI_DEMO_MODEL,
       },
     };
   } catch (err) {

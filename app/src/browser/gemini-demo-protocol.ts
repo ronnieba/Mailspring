@@ -51,6 +51,12 @@ export const GEMINI_DEMO_KEYCHAIN_DUMMY_ACCOUNT = 'gemini-demo-api-key-dummy';
 export const GEMINI_IPC_STATUS = 'gemini-demo:status';
 export const GEMINI_IPC_QUERY = 'gemini-demo:query';
 export const GEMINI_IPC_CANCEL = 'gemini-demo:cancel';
+export const GEMINI_IPC_USAGE = 'gemini-demo:usage';
+export const GEMINI_IPC_USAGE_RESET = 'gemini-demo:usage-reset';
+export const GEMINI_IPC_USAGE_BUDGET = 'gemini-demo:usage-budget';
+
+/** Google AI Studio billing page: the exact prepaid balance lives there (no public API). */
+export const GEMINI_BILLING_URL = 'https://aistudio.google.com/billing';
 
 export const GEMINI_DISPLAY_NAME = 'Gemini Developer API (paid project required)';
 
@@ -61,6 +67,49 @@ export const GEMINI_DISPLAY_NAME = 'Gemini Developer API (paid project required)
  */
 export const GEMINI_PAID_INPUT_USD_PER_MILLION = 0.3;
 export const GEMINI_PAID_OUTPUT_USD_PER_MILLION = 2.5;
+
+/**
+ * ESTIMATE ONLY. Price table used by the local usage ledger (USD per 1M tokens,
+ * paid tier, standard). Source: https://ai.google.dev/gemini-api/docs/pricing
+ * (checked 2026-11-13). Unknown models fall back to the pinned model's price.
+ */
+export const GEMINI_PRICING_USD_PER_MILLION: Record<string, { input: number; output: number }> = {
+  'gemini-3.5-flash-lite': {
+    input: GEMINI_PAID_INPUT_USD_PER_MILLION,
+    output: GEMINI_PAID_OUTPUT_USD_PER_MILLION,
+  },
+};
+export const GEMINI_PRICING_CHECKED = '2026-11-13';
+/** ESTIMATE ONLY: USD to ILS for display (Bank of Israel ~3.19 on 2026-11-12). */
+export const USD_TO_ILS_ESTIMATE = 3.19;
+/** Default prepaid budget for yahoo-agent (user-editable in the panel). */
+export const GEMINI_DEFAULT_BUDGET_ILS = 60;
+export const GEMINI_BUDGET_WARN_RATIO = 0.8;
+
+export interface GeminiUsageTotals {
+  calls: number;
+  inputTokens: number;
+  outputTokens: number;
+  totalTokens: number;
+  usd: number;
+  ils: number;
+}
+
+export interface GeminiUsageSummary {
+  /** ISO time the ledger started (first record after install or the last reset). */
+  since: string | null;
+  today: GeminiUsageTotals;
+  session: GeminiUsageTotals;
+  total: GeminiUsageTotals;
+  budgetIls: number;
+  budgetUsedRatio: number;
+  warn: boolean;
+  model: string;
+  pricing: { input: number; output: number };
+  pricingChecked: string;
+  usdToIls: number;
+  available: boolean;
+}
 
 export const SYNTHETIC_DEMO_ACCOUNT_ID = 'demo-synthetic-account';
 const DEMO_MSG_ID = /^demo-msg-\d+$/;
@@ -198,6 +247,9 @@ export type GeminiHostSuccess = {
     response: string;
     citations: unknown[];
     tokensUsed: number;
+    /** From the Interactions usage block, when present. */
+    usage?: { inputTokens: number; outputTokens: number; totalTokens: number };
+    model?: string;
   };
 };
 

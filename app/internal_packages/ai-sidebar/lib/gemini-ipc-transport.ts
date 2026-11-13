@@ -6,7 +6,11 @@ import {
   GEMINI_IPC_CANCEL,
   GEMINI_IPC_QUERY,
   GEMINI_IPC_STATUS,
+  GEMINI_IPC_USAGE,
+  GEMINI_IPC_USAGE_BUDGET,
+  GEMINI_IPC_USAGE_RESET,
   GeminiDemoStatus,
+  GeminiUsageSummary,
   GeminiHostResult,
 } from '../../../src/browser/gemini-demo-protocol';
 import { GeminiDemoTransport } from './core/gemini-demo-provider';
@@ -37,3 +41,16 @@ export function createGeminiIpcTransport(): GeminiDemoTransport {
     },
   };
 }
+
+/** Local usage ledger (main process). Counts and estimates only. */
+export const geminiUsageIpc = {
+  get(): Promise<GeminiUsageSummary | null> {
+    return ipcRenderer.invoke(GEMINI_IPC_USAGE);
+  },
+  reset(): Promise<GeminiUsageSummary | null> {
+    return ipcRenderer.invoke(GEMINI_IPC_USAGE_RESET);
+  },
+  setBudget(ils: number): Promise<GeminiUsageSummary | null> {
+    return ipcRenderer.invoke(GEMINI_IPC_USAGE_BUDGET, ils);
+  },
+};

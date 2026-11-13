@@ -11,6 +11,9 @@ import {
   GEMINI_IPC_CANCEL,
   GEMINI_IPC_QUERY,
   GEMINI_IPC_STATUS,
+  GEMINI_IPC_USAGE,
+  GEMINI_IPC_USAGE_BUDGET,
+  GEMINI_IPC_USAGE_RESET,
   GeminiDemoMailRef,
   GeminiDemoQueryInput,
 } from './gemini-demo-protocol';
@@ -19,6 +22,7 @@ import {
   getWindowsGeminiCredentialReason,
   loadGeminiFromWindowsCredentialManager,
 } from './gemini-demo-secret';
+import { GeminiUsageLedger } from './gemini-usage-ledger';
 
 export function storeGeminiKeyCommand(): string {
   const script = path.resolve(__dirname, '../../../scripts/store-gemini-api-key.ps1');
@@ -52,6 +56,8 @@ export interface GeminiDemoIpcOptions {
   env?: NodeJS.ProcessEnv;
   credentials?: { key: string; paidAcknowledged: boolean };
   fetch?: GeminiFetch;
+  /** Profile config dir: enables the local usage ledger (gemini-usage.json). */
+  configDirPath?: string;
 }
 
 const inflight = new Map<number, AbortController>();
@@ -131,6 +137,18 @@ export function registerGeminiDemoIpcHandlers(ipcMain: IpcMain, opts: GeminiDemo
       ? (globalThis.fetch.bind(globalThis) as GeminiFetch)
       : undefined) as GeminiFetch | undefined);
 
+  // Offline experiment only (keeps other modes and macOS behavior unchanged).
+  let ledgerInstance: GeminiUsageLedger | null = null;
+  const getLedger = (): GeminiUsageLedger | null => {
+    if (!opts.configDirPath || !(opts.isOfflineArchive && opts.isOfflineArchive())) {
+      return null;
+    }
+    if (!ledgerInstance) {
+      ledgerInstance = new GeminiUsageLedger(opts.configDirPath);
+    }
+    return ledgerInstance;
+  };
+
   handleFromMailspringWindows(ipcMain, GEMINI_IPC_STATUS, async () => {
     if (windowsOffline()) {
       await loadGeminiFromWindowsCredentialManager();
@@ -156,7 +174,7 @@ export function registerGeminiDemoIpcHandlers(ipcMain: IpcMain, opts: GeminiDemo
     if (windowsOffline()) {
       await loadGeminiFromWindowsCredentialManager();
     }
-    return runGeminiDemoQuery(req, {
+    const result = await runGeminiDemoQuery(req, {
       demoMode: opts.isDemoMode(),
       realSelectedSummary: opts.isRealSelectedSummary ? opts.isRealSelectedSummary() : false,
       offlineArchive: opts.isOfflineArchive ? opts.isOfflineArchive() : false,
@@ -170,6 +188,44 @@ export function registerGeminiDemoIpcHandlers(ipcMain: IpcMain, opts: GeminiDemo
         inflight.delete(generation);
       },
     });
+    const ledger = getLedger();
+    if (ledger && result.ok === true) {
+      const u = result.payload.usage;
+      ledger.record({
+        model: result.payload.model,
+        mode: req.mode || 'demo-synthetic',
+        input: u ? u.inputTokens : 0,
+        output: u ? u.outputTokens : 0,
+        total: u ? u.totalTokens : result.payload.tokensUsed || 0,
+      });
+    }
+    return result;
+  });
+
+  handleFromMailspringWindows(ipcMain, GEMINI_IPC_USAGE, () => {
+    const ledger = getLedger();
+    if (!ledger) {
+      return null;
+    }
+    return ledger.summary();
+  });
+
+  handleFromMailspringWindows(ipcMain, GEMINI_IPC_USAGE_RESET, () => {
+    const ledger = getLedger();
+    if (!ledger) {
+      return null;
+    }
+    ledger.reset();
+    return ledger.summary();
+  });
+
+  handleFromMailspringWindows(ipcMain, GEMINI_IPC_USAGE_BUDGET, (_event, raw: unknown) => {
+    const ledger = getLedger();
+    if (!ledger) {
+      return null;
+    }
+    ledger.setBudget(typeof raw === 'number' ? raw : Number(raw));
+    return ledger.summary();
   });
 
   handleFromMailspringWindows(ipcMain, GEMINI_IPC_CANCEL, (_event, generationRaw: unknown) => {

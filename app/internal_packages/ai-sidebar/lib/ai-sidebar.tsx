@@ -8,7 +8,57 @@ import { FluxContainer, Spinner } from 'mailspring-component-kit';
 import AISidebarStore from './ai-sidebar-store';
 import { ScopeMode, RetrievalMode, ConversationMessage, Citation } from './core/types';
 import { DemoMessagePreview, isDemoMode } from './synthetic-demo';
-import { GEMINI_DISPLAY_NAME, GeminiDemoStatus } from '../../../src/browser/gemini-demo-protocol';
+import { shell } from 'electron';
+import {
+  GEMINI_BILLING_URL,
+  GEMINI_DISPLAY_NAME,
+  GeminiDemoStatus,
+  GeminiUsageSummary,
+  GeminiUsageTotals,
+} from '../../../src/browser/gemini-demo-protocol';
+
+/**
+ * Dark colors for the panel's own warning/preview boxes follow the ACTIVE
+ * Mailspring theme in the offline experiment (body.ai-dark-surface), and the
+ * OS setting elsewhere (unchanged behavior).
+ */
+function isDarkColor(css: string): boolean | null {
+  const m = /rgba?\((\d+),\s*(\d+),\s*(\d+)(?:,\s*([\d.]+))?/.exec(css || '');
+  if (!m || (m[4] !== undefined && Number(m[4]) === 0)) {
+    return null;
+  }
+  const lum = 0.2126 * Number(m[1]) + 0.7152 * Number(m[2]) + 0.0722 * Number(m[3]);
+  return lum < 128;
+}
+
+export function updateAIDarkSurface(root?: Element | null) {
+  let dark = false;
+  if (isOfflineArchiveMode()) {
+    const el = root || document.querySelector('.ai-sidebar') || document.body;
+    let node: Element | null = el;
+    let found: boolean | null = null;
+    while (node && found === null) {
+      found = isDarkColor(getComputedStyle(node).backgroundColor);
+      node = node.parentElement;
+    }
+    dark = !!found;
+  } else {
+    dark = !!(window.matchMedia && window.matchMedia('(prefers-color-scheme: dark)').matches);
+  }
+  document.body.classList.toggle('ai-dark-surface', dark);
+}
+
+const GEMINI_API_KEYS_URL = 'https://aistudio.google.com/apikey';
+
+function fmtTokens(n: number): string {
+  return Math.round(n).toLocaleString('en-US');
+}
+function fmtUsd(n: number): string {
+  return n < 0.01 ? `$${n.toFixed(4)}` : `$${n.toFixed(2)}`;
+}
+function fmtIls(n: number): string {
+  return n < 0.1 ? `₪${n.toFixed(3)}` : `₪${n.toFixed(2)}`;
+}
 import { isRealSelectedSummaryMode } from '../../../src/real-selected-summary';
 import { isOfflineArchiveMode } from '../../../src/offline-archive';
 import { RealSelectedPreview } from './core/real-selected-mail';
@@ -47,6 +97,10 @@ interface AISidebarState {
   progressPhase: 'local' | 'gemini' | null;
   /** Selected-message disclosure: collapsed to one line by default. */
   previewExpanded: boolean;
+  geminiUsage: GeminiUsageSummary | null;
+  usageExpanded: boolean;
+  usageResetArmed: boolean;
+  budgetDraft: string;
 }
 
 /** Within this many px of the bottom counts as "following" the conversation. */
@@ -58,6 +112,13 @@ class AISidebarInner extends React.Component<Record<string, never>, AISidebarSta
   private _inputRef = React.createRef<HTMLTextAreaElement>();
   private _messagesEndRef = React.createRef<HTMLDivElement>();
   private _scrollRef = React.createRef<HTMLDivElement>();
+  private _rootRef = React.createRef<HTMLDivElement>();
+  private _themeSub: { dispose: () => void } | null = null;
+  private _darkMql: MediaQueryList | null = null;
+
+  _updateDarkSurface = () => {
+    updateAIDarkSurface(this._rootRef.current);
+  };
   /** False once the user scrolls up while an answer is loading. */
   private _stickToBottom = true;
   private _programmaticScrollAt = 0;
@@ -82,6 +143,10 @@ class AISidebarInner extends React.Component<Record<string, never>, AISidebarSta
     geminiStatus: AISidebarStore.getState().geminiStatus,
     progressPhase: null,
     previewExpanded: false,
+    geminiUsage: null,
+    usageExpanded: false,
+    usageResetArmed: false,
+    budgetDraft: '',
   };
 
   componentDidMount() {
@@ -102,8 +167,20 @@ class AISidebarInner extends React.Component<Record<string, never>, AISidebarSta
         realPreview: storeState.realPreview,
         geminiStatus: storeState.geminiStatus,
         progressPhase: storeState.progressPhase,
+        geminiUsage: storeState.geminiUsage,
       });
     });
+
+    this._updateDarkSurface();
+    this._themeSub = AppEnv.themes.onDidChangeActiveThemes(() => {
+      // Styles recompute asynchronously after a theme switch.
+      window.setTimeout(this._updateDarkSurface, 300);
+      window.setTimeout(this._updateDarkSurface, 1200);
+    });
+    if (window.matchMedia) {
+      this._darkMql = window.matchMedia('(prefers-color-scheme: dark)');
+      this._darkMql.addEventListener('change', this._updateDarkSurface);
+    }
 
     // Initial scope resolution — preview only, never generates.
     AISidebarStore.refreshScope();
@@ -158,6 +235,12 @@ class AISidebarInner extends React.Component<Record<string, never>, AISidebarSta
   }
 
   componentWillUnmount() {
+    if (this._themeSub) {
+      this._themeSub.dispose();
+    }
+    if (this._darkMql) {
+      this._darkMql.removeEventListener('change', this._updateDarkSurface);
+    }
     if (this._unsubscribe) {
       this._unsubscribe();
     }
@@ -494,6 +577,144 @@ class AISidebarInner extends React.Component<Record<string, never>, AISidebarSta
     );
   }
 
+  _openExternal(url: string) {
+    if (url === GEMINI_BILLING_URL || url === GEMINI_API_KEYS_URL) {
+      void shell.openExternal(url);
+    }
+  }
+
+  _usageRow(label: string, t: GeminiUsageTotals) {
+    return (
+      <tr key={label}>
+        <th scope="row">{label}</th>
+        <td>{t.calls}</td>
+        <td>{fmtTokens(t.totalTokens)}</td>
+        <td dir="ltr">{fmtUsd(t.usd)}</td>
+        <td dir="ltr">{fmtIls(t.ils)}</td>
+      </tr>
+    );
+  }
+
+  _onSaveBudget = () => {
+    const n = Number(String(this.state.budgetDraft).replace(/[^\d.]/g, ''));
+    if (Number.isFinite(n) && n > 0) {
+      void AISidebarStore.setGeminiBudget(n);
+      this.setState({ budgetDraft: '' });
+    }
+  };
+
+  _onResetUsage = () => {
+    if (!this.state.usageResetArmed) {
+      this.setState({ usageResetArmed: true });
+      return;
+    }
+    this.setState({ usageResetArmed: false });
+    void AISidebarStore.resetGeminiUsage();
+  };
+
+  _renderGeminiUsage() {
+    const u = this.state.geminiUsage;
+    if (!isOfflineArchiveMode() || !u || !u.available) {
+      return null;
+    }
+    const pct = Math.round(u.budgetUsedRatio * 100);
+    const since = u.since ? new Date(u.since).toLocaleString('he-IL') : null;
+    return (
+      <div
+        className={classNames('gemini-usage', { warn: u.warn })}
+        dir="rtl"
+        data-gemini-usage="true"
+        data-gemini-usage-warn={u.warn ? 'true' : 'false'}
+      >
+        <button
+          type="button"
+          className="gemini-usage-line"
+          data-gemini-usage-toggle="true"
+          aria-expanded={this.state.usageExpanded}
+          onClick={() => this.setState({ usageExpanded: !this.state.usageExpanded })}
+        >
+          <span>
+            📊 Gemini היום: {u.today.calls} קריאות · {fmtTokens(u.today.totalTokens)} טוקנים · ≈
+            {fmtIls(u.today.ils)}
+            {u.warn ? ` · ⚠️ ${pct}% מהתקציב` : ''}
+          </span>
+          <span className="gemini-usage-more">
+            {this.state.usageExpanded ? 'הסתר ▴' : 'פרטים ▾'}
+          </span>
+        </button>
+        {u.warn && (
+          <div className="gemini-usage-warning" data-gemini-budget-warning="true">
+            ⚠️ לפי הספירה המקומית נוצלו כ-{pct}% מהתקציב ({fmtIls(u.total.ils)} מתוך ₪{u.budgetIls}
+            ). זו הערכה בלבד — היתרה המדויקת מוצגת בדף החיוב של Google.
+          </div>
+        )}
+        {this.state.usageExpanded && (
+          <div className="gemini-usage-details" data-gemini-usage-details="true">
+            <table>
+              <thead>
+                <tr>
+                  <th />
+                  <th>קריאות</th>
+                  <th>טוקנים</th>
+                  <th>$ משוער</th>
+                  <th>₪ משוער</th>
+                </tr>
+              </thead>
+              <tbody>
+                {this._usageRow('היום', u.today)}
+                {this._usageRow('בהפעלה הזו', u.session)}
+                {this._usageRow(since ? `מאז ${since}` : 'מאז החיבור', u.total)}
+              </tbody>
+            </table>
+            <div className="gemini-usage-budget">
+              <span>
+                תקציב: ₪{u.budgetIls} · נוצל כ-{pct}% (הערכה)
+              </span>
+              <input
+                type="number"
+                min={1}
+                step={1}
+                dir="ltr"
+                placeholder={String(u.budgetIls)}
+                aria-label="תקציב בשקלים"
+                data-gemini-budget-input="true"
+                value={this.state.budgetDraft}
+                onChange={(e) => this.setState({ budgetDraft: e.target.value })}
+              />
+              <button type="button" onClick={this._onSaveBudget} data-gemini-budget-save="true">
+                שמור
+              </button>
+            </div>
+            <div className="gemini-usage-actions">
+              <button
+                type="button"
+                className="gemini-billing-btn"
+                data-gemini-open-billing="true"
+                onClick={() => this._openExternal(GEMINI_BILLING_URL)}
+              >
+                💳 פתח יתרה ב-Google
+              </button>
+              <button
+                type="button"
+                className={classNames('gemini-usage-reset', { armed: this.state.usageResetArmed })}
+                data-gemini-usage-reset="true"
+                onClick={this._onResetUsage}
+              >
+                {this.state.usageResetArmed ? 'לחץ שוב לאישור איפוס' : 'אפס מונה'}
+              </button>
+            </div>
+            <p className="gemini-usage-note">
+              הערכה בלבד: {u.model} לפי ${u.pricing.input} / ${u.pricing.output} למיליון טוקנים
+              (קלט/פלט, מחירון Google מ-{u.pricingChecked}), ₪ לפי שער {u.usdToIls}. אין API רשמי
+              ליתרת הקרדיט — היתרה המדויקת (יעד הטענה ₪60 ל-yahoo-agent) מוצגת רק בדף החיוב של
+              Google. שימוש לפני {since || 'החיבור'} לא נרשם כאן.
+            </p>
+          </div>
+        )}
+      </div>
+    );
+  }
+
   _renderGeminiEstimate() {
     const { resolvedScope, geminiStatus } = this.state;
     if (!isOfflineArchiveMode() || !geminiStatus?.configured || !resolvedScope) {
@@ -598,6 +819,22 @@ class AISidebarInner extends React.Component<Record<string, never>, AISidebarSta
         })}
       >
         <div className="message-content">{this._renderMessageContent(msg.content)}</div>
+        {(msg.geminiErrorKind === 'billing-exhausted' || msg.geminiErrorKind === 'invalid-key') && (
+          <button
+            type="button"
+            className="gemini-billing-btn"
+            data-gemini-error-action={msg.geminiErrorKind}
+            onClick={() =>
+              this._openExternal(
+                msg.geminiErrorKind === 'invalid-key' ? GEMINI_API_KEYS_URL : GEMINI_BILLING_URL
+              )
+            }
+          >
+            {msg.geminiErrorKind === 'invalid-key'
+              ? '🔑 פתח את מפתחות ה-API ב-Google'
+              : '💳 פתח יתרה וחיוב ב-Google'}
+          </button>
+        )}
 
         {msg.citations && msg.citations.length > 0 && (
           <div className="message-citations">
@@ -968,6 +1205,7 @@ class AISidebarInner extends React.Component<Record<string, never>, AISidebarSta
     return (
       <div
         className="ai-sidebar"
+        ref={this._rootRef}
         dir="rtl"
         data-demo-ready={demo ? 'true' : undefined}
         data-real-selected-summary={realSelected ? 'true' : undefined}
@@ -1016,6 +1254,7 @@ class AISidebarInner extends React.Component<Record<string, never>, AISidebarSta
         )}
 
         {this._renderMockWarning()}
+        {this._renderGeminiUsage()}
         {!composerTab && this._renderScopeSelector()}
         {this._renderError()}
 

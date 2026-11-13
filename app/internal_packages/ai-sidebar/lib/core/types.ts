@@ -103,6 +103,8 @@ export interface ConversationMessage {
   timestamp: Date;
   /** Whether this is from mock provider */
   isMock?: boolean;
+  /** Gemini failure class (billing-exhausted, rate-limited, invalid-key...). */
+  geminiErrorKind?: string;
 }
 
 /** Processing budget/limits */

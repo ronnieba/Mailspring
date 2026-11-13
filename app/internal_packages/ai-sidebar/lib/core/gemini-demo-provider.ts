@@ -141,7 +141,9 @@ export class GeminiDemoProvider implements AIProvider {
         if (result.reason === 'cancelled' || signal?.aborted) {
           throw new Error('Operation cancelled');
         }
-        throw new Error(result.message);
+        const failure = new Error(result.message) as Error & { geminiReason?: string };
+        failure.geminiReason = result.reason;
+        throw failure;
       }
       if (!isGeminiHostOk(result) || result.payload.isMock !== false) {
         throw new Error('Live Gemini payload was not marked isMock: false');

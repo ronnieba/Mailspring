@@ -104,7 +104,7 @@
       }
     }
     
-    @media (prefers-color-scheme: dark) {
+    body.ai-dark-surface & {
       background: #3d3200;
       color: #ffc107;
       border-color: #664d00;
@@ -165,7 +165,7 @@
         background: #ffebee;
         color: #c62828;
         
-        @media (prefers-color-scheme: dark) {
+        body.ai-dark-surface & {
           background: #3d0000;
           color: #ff5252;
         }
@@ -208,7 +208,7 @@
     font-size: 12px;
     border-bottom: 1px solid #ef9a9a;
     
-    @media (prefers-color-scheme: dark) {
+    body.ai-dark-surface & {
       background: #3d0000;
       color: #ff5252;
       border-color: #660000;
@@ -311,7 +311,7 @@
       background: #ffebee;
       color: #c62828;
       
-      @media (prefers-color-scheme: dark) {
+      body.ai-dark-surface & {
         background: #3d0000;
         color: #ff5252;
       }
@@ -418,7 +418,7 @@
     border-radius: 8px;
     background: #fff8e1;
 
-    @media (prefers-color-scheme: dark) {
+    body.ai-dark-surface & {
       background: #3d3200;
       border-color: #ffc107;
     }
@@ -429,7 +429,7 @@
       margin-bottom: 8px;
       color: #856404;
 
-      @media (prefers-color-scheme: dark) {
+      body.ai-dark-surface & {
         color: #ffc107;
       }
     }
@@ -832,7 +832,7 @@
       padding: 8px;
     }
 
-    @media (prefers-color-scheme: dark) {
+    body.ai-dark-surface & {
       .demo-composer-banner,
       .demo-composer-backend {
         color: #ffe08a;
@@ -919,7 +919,7 @@
   background: #e6f4ea;
   color: #1e4620;
   border-bottom-color: #34a853;
-  @media (prefers-color-scheme: dark) {
+  body.ai-dark-surface & {
     background: #12321b;
     color: #b7e1c1;
     border-color: #2d6a3e;
@@ -1012,6 +1012,105 @@
   flex: 0 0 auto;
   font-weight: 600;
   text-decoration: underline;
+}
+
+
+.ai-sidebar .gemini-usage {
+  margin: 0 12px 6px;
+  padding: 4px 8px;
+  font-size: 11px;
+  border-radius: 6px;
+  border: 1px solid color-mix(in srgb, currentColor 25%, transparent);
+  color: var(--text-color);
+}
+.ai-sidebar .gemini-usage.warn {
+  border-color: #e0a800;
+}
+.ai-sidebar .gemini-usage-line {
+  display: flex;
+  width: 100%;
+  justify-content: space-between;
+  gap: 8px;
+  border: 0;
+  padding: 2px 0;
+  background: transparent;
+  color: inherit;
+  font-size: 11px;
+  text-align: right;
+  direction: rtl;
+  cursor: pointer;
+}
+.ai-sidebar .gemini-usage-more {
+  flex: 0 0 auto;
+  text-decoration: underline;
+}
+.ai-sidebar .gemini-usage-warning {
+  margin: 4px 0;
+  padding: 4px 6px;
+  border-radius: 4px;
+  background: color-mix(in srgb, #ffc107 22%, transparent);
+}
+.ai-sidebar .gemini-usage-details table {
+  width: 100%;
+  border-collapse: collapse;
+  margin: 4px 0;
+}
+.ai-sidebar .gemini-usage-details th,
+.ai-sidebar .gemini-usage-details td {
+  padding: 2px 4px;
+  text-align: right;
+  font-weight: normal;
+  border-bottom: 1px solid color-mix(in srgb, currentColor 12%, transparent);
+}
+.ai-sidebar .gemini-usage-details thead th {
+  font-weight: 600;
+}
+.ai-sidebar .gemini-usage-budget,
+.ai-sidebar .gemini-usage-actions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+  margin: 4px 0;
+}
+.ai-sidebar .gemini-usage-budget input {
+  width: 70px;
+  font-size: 11px;
+}
+.ai-sidebar .gemini-usage-reset.armed {
+  color: #fff;
+  background: #c0392b;
+}
+.ai-sidebar .gemini-usage-note {
+  margin: 4px 0 0;
+  opacity: 0.8;
+  line-height: 1.4;
+}
+.ai-sidebar .gemini-billing-btn {
+  margin-top: 4px;
+  font-size: 12px;
+}
+
+
+// Buttons/inputs in the usage box and error actions follow the active theme.
+.ai-sidebar .gemini-usage button:not(.gemini-usage-line),
+.ai-sidebar .gemini-usage input,
+.ai-sidebar .gemini-billing-btn {
+  padding: 1px 8px;
+  font-size: 11px;
+  color: @text-color;
+  background: @background-secondary;
+  border: 1px solid @border-color-primary;
+  border-radius: 4px;
+  cursor: pointer;
+}
+.ai-sidebar .gemini-usage input {
+  cursor: text;
+}
+.ai-sidebar .gemini-usage .gemini-usage-reset.armed {
+  color: #fff;
+  background: #c0392b;
+  border-color: #c0392b;
 }
 
 /*!rtl:end:ignore*/

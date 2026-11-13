@@ -1276,6 +1276,7 @@ export default class Application extends EventEmitter {
       isDemoMode: () => this.demoMode,
       isRealSelectedSummary: () => this.realSelectedSummary,
       isOfflineArchive: () => this.offlineArchive,
+      configDirPath: this.configDirPath,
     });
   }
 
