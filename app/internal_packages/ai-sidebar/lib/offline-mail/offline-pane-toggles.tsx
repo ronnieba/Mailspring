@@ -1,6 +1,7 @@
 import React from 'react';
 import classNames from 'classnames';
 import { offlineDraftsStore } from './offline-drafts-store';
+import { OFFLINE_RELAUNCH_CHANNEL } from '../../../../src/browser/offline-relaunch';
 import { Actions, WorkspaceStore } from 'mailspring-exports';
 import {
   OfflineLang,
@@ -83,10 +84,21 @@ export function switchOfflineLanguage(lang: OfflineLang): boolean {
   }
   AppEnv.config.set(OFFLINE_LANG_CONFIG_KEY, OFFLINE_LANG_LOCALES[lang]);
   // Give the config a moment to reach config.json before restarting.
+  // The main process restarts the app hidden (no console window on Windows)
+  // and only after this copy has fully exited, so there is never a second one.
   window.setTimeout(() => {
-    const { app } = require('@electron/remote');
-    app.relaunch();
-    app.quit();
+    const fallback = () => {
+      const { app } = require('@electron/remote');
+      app.relaunch();
+      app.quit();
+    };
+    try {
+      // eslint-disable-next-line @typescript-eslint/no-var-requires
+      const { ipcRenderer } = require('electron');
+      ipcRenderer.invoke(OFFLINE_RELAUNCH_CHANNEL).catch(fallback);
+    } catch {
+      fallback();
+    }
   }, 700);
   return true;
 }
@@ -197,7 +209,7 @@ export class OfflinePaneToggles extends React.Component {
           onClick={() => offlineDraftsStore.createNew()}
         >
           <span className="offline-pane-toggle-icon">✉️</span>
-          {tr('טיוטה', 'Draft')}
+          {tr('חדש', 'New')}
         </button>
         <button
           className="offline-pane-toggle offline-lang-btn"

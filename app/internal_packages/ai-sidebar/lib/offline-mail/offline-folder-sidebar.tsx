@@ -5,6 +5,8 @@ import { offlineMailStore } from './offline-mail-store';
 import { offlineDraftsStore } from './offline-drafts-store';
 import { OfflineStoreComponent } from './use-offline-store';
 import { OfflineFolderNode } from '../core/offline-mail-index';
+import { offlineFolderIconKind } from '../core/offline-folder-roles';
+import { OfflineFolderIcon } from './offline-folder-icon';
 
 export class OfflineFolderSidebar extends OfflineStoreComponent {
   static displayName = 'OfflineFolderSidebar';
@@ -15,6 +17,13 @@ export class OfflineFolderSidebar extends OfflineStoreComponent {
     const hasChildren = node.children.length > 0;
     const open = s.expanded.has(node.path);
     const active = s.currentFolder === node.path;
+    const iconKind = offlineFolderIconKind({
+      name: node.name,
+      depth: node.depth,
+      hasChildren,
+      open,
+    });
+    const count = hasChildren && !open ? node.totalCount : node.count;
     return (
       <div
         key={node.path}
@@ -24,7 +33,13 @@ export class OfflineFolderSidebar extends OfflineStoreComponent {
       >
         <div
           className={classNames('offline-folder-row', { active, empty: node.totalCount === 0 })}
-          style={{ paddingInlineStart: 4 + node.depth * 16 }}
+          style={
+            {
+              paddingInlineStart: 4 + node.depth * 16,
+              '--ofl-depth-x': `${node.depth * 16}px`,
+            } as React.CSSProperties
+          }
+          data-depth={node.depth}
           data-offline-folder-row="true"
           data-folder-count={node.count}
           onClick={() => {
@@ -61,12 +76,20 @@ export class OfflineFolderSidebar extends OfflineStoreComponent {
           ) : (
             <span className="offline-folder-toggle-spacer" aria-hidden="true" />
           )}
+          <OfflineFolderIcon kind={iconKind} />
           <span className="offline-folder-name" dir="auto">
             {node.name}
+          </span>
+          <span
+            className={classNames('offline-folder-count', { zero: count === 0 })}
+            title={tr(`${count} הודעות`, `${count} messages`)}
+          >
+            {count.toLocaleString()}
           </span>
           {hasChildren && !open ? (
             <span
               className="offline-folder-subcount"
+              dir="ltr"
               title={tr(
                 `${node.children.length} תיקיות משנה`,
                 `${node.children.length} subfolders`
@@ -76,11 +99,16 @@ export class OfflineFolderSidebar extends OfflineStoreComponent {
               +{node.children.length}
             </span>
           ) : null}
-          <span className="offline-folder-count">
-            {hasChildren && !open ? node.totalCount : node.count}
-          </span>
         </div>
-        {hasChildren && open ? node.children.map((c) => this._renderNode(c)) : null}
+        {hasChildren && open ? (
+          <div
+            className="offline-folder-children"
+            role="group"
+            style={{ '--ofl-guide-x': `${(node.depth + 1) * 16}px` } as React.CSSProperties}
+          >
+            {node.children.map((c) => this._renderNode(c))}
+          </div>
+        ) : null}
       </div>
     );
   }
@@ -137,8 +165,13 @@ export class OfflineFolderSidebar extends OfflineStoreComponent {
           onClick={() => offlineDraftsStore.showList()}
         >
           <span className="offline-folder-toggle-spacer" aria-hidden="true" />
-          <span className="offline-folder-name">📝 {tr('טיוטות מקומיות', 'Local drafts')}</span>
-          <span className="offline-folder-count">{offlineDraftsStore.count}</span>
+          <OfflineFolderIcon kind="local-drafts" />
+          <span className="offline-folder-name">{tr('טיוטות מקומיות', 'Local drafts')}</span>
+          <span
+            className={classNames('offline-folder-count', { zero: offlineDraftsStore.count === 0 })}
+          >
+            {offlineDraftsStore.count.toLocaleString()}
+          </span>
         </div>
         <div className="offline-folder-tree" role="tree" aria-label={tr('תיקיות', 'Folders')}>
           {s.folders.map((n) => this._renderNode(n))}

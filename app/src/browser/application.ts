@@ -44,6 +44,11 @@ import { resolveGeminiDemoStatus } from './gemini-demo-host';
 import { registerGeminiDemoIpcHandlers } from './gemini-demo-ipc';
 import { applyAndTrackOfflineWindowState } from './offline-window-state';
 import { configureOfflineSpellcheck, ensureOfflineSpellDictionaries } from './offline-spellcheck';
+import {
+  OFFLINE_RELAUNCH_CHANNEL,
+  offlineRelaunchPlan,
+  startHiddenRelaunch,
+} from './offline-relaunch';
 import { formatGeminiDemoStatusLog } from './gemini-demo-secret';
 import { registerViewSessionIPCHandlers } from './view-sessions';
 import { guardAuxiliaryWindowNavigation } from './auxiliary-window-guard';
@@ -175,6 +180,24 @@ export default class Application extends EventEmitter {
         }
       } else if (this.offlineArchive) {
         installOfflineNetworkGuard();
+        // Language switch restarts the app: hidden on Windows, like the shortcut.
+        handleFromMailspringWindows(ipcMain, OFFLINE_RELAUNCH_CHANNEL, () => {
+          const plan = offlineRelaunchPlan({
+            platform: process.platform,
+            execPath: process.execPath,
+            argv: process.argv,
+            cwd: process.cwd(),
+            configDir: this.configDirPath,
+            pid: process.pid,
+          });
+          if (plan.mode === 'hidden' && startHiddenRelaunch(plan)) {
+            console.log('[Offline archive] Restarting hidden (no console window)');
+          } else {
+            app.relaunch();
+          }
+          setTimeout(() => app.quit(), 50);
+          return true;
+        });
         // Local Hebrew + English spell check for drafts: no dictionary downloads.
         try {
           const dict = ensureOfflineSpellDictionaries(this.configDirPath);

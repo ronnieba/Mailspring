@@ -120,7 +120,7 @@ export class OfflineMessageReader extends OfflineStoreComponent<Record<string, n
               }
             }}
           >
-            ↩️ {tr('השב (טיוטה)', 'Reply (draft)')}
+            ↩️ {tr('השב', 'Reply')}
           </button>
           <button
             className="btn btn-small offline-forward-btn"
@@ -136,7 +136,7 @@ export class OfflineMessageReader extends OfflineStoreComponent<Record<string, n
               }
             }}
           >
-            ↪️ {tr('העבר (טיוטה)', 'Forward (draft)')}
+            ↪️ {tr('העבר', 'Forward')}
           </button>
           {m.html ? (
             <button

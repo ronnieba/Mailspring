@@ -1034,3 +1034,177 @@ body.theme-ui-dark {
     }
   }
 }
+
+// ---- Folder tree look (t192): folder icons, indent guides, count badges ----
+.offline-folder-tree {
+  padding-top: 2px;
+}
+.offline-folder-node {
+  position: relative;
+}
+.offline-folder-row {
+  position: relative;
+  gap: 5px;
+  margin: 0;
+  border-radius: 0;
+  .offline-folder-name {
+    flex: 0 1 auto;
+    min-width: 0;
+  }
+}
+// Children hang off a thin guide line under the parent's chevron.
+.offline-folder-children {
+  position: relative;
+  &::before {
+    content: '';
+    position: absolute;
+    top: 0;
+    bottom: 14px;
+    inset-inline-start: var(--ofl-guide-x, 16px);
+    border-inline-start: 1px solid color-mix(in srgb, currentColor 24%, transparent);
+    pointer-events: none;
+  }
+  > .offline-folder-node > .offline-folder-row::before {
+    content: '';
+    position: absolute;
+    top: 50%;
+    inset-inline-start: var(--ofl-depth-x, 0);
+    width: 9px;
+    border-top: 1px solid color-mix(in srgb, currentColor 24%, transparent);
+    pointer-events: none;
+  }
+}
+.offline-folder-row.active::before,
+.offline-folder-row:hover::before {
+  border-top-color: transparent;
+}
+
+.ofl-ficon {
+  flex: 0 0 16px;
+  width: 16px;
+  height: 16px;
+  color: color-mix(in srgb, currentColor 78%, transparent);
+  .ofl-ficon-soft {
+    fill: color-mix(in srgb, currentColor 16%, transparent);
+  }
+}
+// Folders: warm folder color, filled when closed, open shape when expanded.
+.ofl-ficon-folder,
+.ofl-ficon-folder-open,
+.ofl-ficon-folder-leaf {
+  color: #b7791f;
+  .ofl-ficon-fill {
+    fill: #f3c35c;
+  }
+  .ofl-ficon-back {
+    fill: #e2a73a;
+  }
+  .ofl-ficon-light {
+    fill: #fbe3a6;
+  }
+}
+.ofl-ficon-local-drafts {
+  color: @offline-accent;
+}
+.offline-folder-row.active .ofl-ficon,
+.offline-drafts-entry.selected .ofl-ficon {
+  color: #fff;
+}
+.offline-folder-row.active .ofl-ficon-folder,
+.offline-folder-row.active .ofl-ficon-folder-open,
+.offline-folder-row.active .ofl-ficon-folder-leaf {
+  color: #fff;
+  .ofl-ficon-fill,
+  .ofl-ficon-back,
+  .ofl-ficon-light {
+    fill: rgba(255, 255, 255, 0.35);
+  }
+}
+
+// Message count: small muted pill right after the name.
+.offline-folder-count {
+  flex: 0 0 auto;
+  min-width: 18px;
+  padding: 0 6px;
+  border-radius: 9px;
+  font-size: 10.5px;
+  line-height: 16px;
+  text-align: center;
+  font-variant-numeric: tabular-nums;
+  background: color-mix(in srgb, currentColor 11%, transparent);
+  &.zero {
+    background: transparent;
+    opacity: 0.6;
+  }
+}
+// +N subfolders: outlined badge at the far end, distinct from the count.
+.offline-folder-subcount {
+  margin-inline-start: auto;
+  margin-inline-end: 0;
+  padding: 0 5px;
+  border: 1px dashed color-mix(in srgb, currentColor 45%, transparent);
+  background: transparent;
+  line-height: 14px;
+  font-size: 10px;
+}
+.offline-folder-row.active .offline-folder-count {
+  background: rgba(255, 255, 255, 0.25);
+  color: #fff;
+}
+.offline-folder-row.active .offline-folder-subcount {
+  border-color: rgba(255, 255, 255, 0.7);
+}
+.offline-drafts-entry {
+  padding-inline-start: 4px;
+  .offline-folder-name {
+    flex: 0 1 auto;
+  }
+}
+
+// Dark surfaces: deeper folder colors read better on dark backgrounds.
+body.theme-ui-dark,
+body[class*='theme-ui-darkside'],
+body[class*='theme-ui-ubuntu'],
+body.ai-dark-surface {
+  .ofl-ficon-folder,
+  .ofl-ficon-folder-open,
+  .ofl-ficon-folder-leaf {
+    color: #f0c463;
+    .ofl-ficon-fill {
+      fill: #c9922e;
+    }
+    .ofl-ficon-back {
+      fill: #9c6f1e;
+    }
+    .ofl-ficon-light {
+      fill: rgba(240, 196, 99, 0.28);
+    }
+  }
+  .ofl-ficon-local-drafts {
+    color: #f6a560;
+  }
+}
+body[class*='theme-ui-darkside'],
+body[class*='theme-ui-taiga'],
+body[class*='theme-ui-ubuntu'],
+body[class*='less-is-more'] {
+  .ofl-ficon-local-drafts {
+    color: var(--ofl-accent);
+  }
+  .offline-folder-sidebar .offline-folder-count {
+    color: var(--ofl-side-fg);
+    opacity: 0.8;
+  }
+  .offline-folder-sidebar .offline-folder-row.active .offline-folder-count,
+  .offline-folder-sidebar .offline-drafts-entry.selected .offline-folder-count {
+    color: #fff;
+    opacity: 1;
+  }
+}
+
+// Expanded chevron points down in both directions (RTLCSS must not flip it).
+/*!rtl:begin:ignore*/
+body .offline-folder-sidebar .offline-folder-toggle.open svg {
+  transform: rotate(90deg);
+}
+/*!rtl:end:ignore*/
