@@ -45,13 +45,22 @@ interface AISidebarState {
   demoTab: 'ai' | 'composer';
   geminiStatus: GeminiDemoStatus | null;
   progressPhase: 'local' | 'gemini' | null;
+  /** Selected-message disclosure: collapsed to one line by default. */
+  previewExpanded: boolean;
 }
+
+/** Within this many px of the bottom counts as "following" the conversation. */
+const STICK_THRESHOLD_PX = 80;
 
 class AISidebarInner extends React.Component<Record<string, never>, AISidebarState> {
   static displayName = 'AISidebar';
 
   private _inputRef = React.createRef<HTMLTextAreaElement>();
   private _messagesEndRef = React.createRef<HTMLDivElement>();
+  private _scrollRef = React.createRef<HTMLDivElement>();
+  /** False once the user scrolls up while an answer is loading. */
+  private _stickToBottom = true;
+  private _programmaticScrollAt = 0;
   private _unsubscribe: (() => void) | null = null;
   private _unsubFocus: (() => void) | null = null;
   private _unsubMsg: (() => void) | null = null;
@@ -72,6 +81,7 @@ class AISidebarInner extends React.Component<Record<string, never>, AISidebarSta
     demoTab: 'ai',
     geminiStatus: AISidebarStore.getState().geminiStatus,
     progressPhase: null,
+    previewExpanded: false,
   };
 
   componentDidMount() {
@@ -124,8 +134,25 @@ class AISidebarInner extends React.Component<Record<string, never>, AISidebarSta
   }
 
   componentDidUpdate(_prevProps: Record<string, never>, prevState: AISidebarState) {
-    // Auto-scroll to bottom on new messages
-    if (this.state.conversation.length !== prevState.conversation.length) {
+    const conv = this.state.conversation;
+    const grew = conv.length > prevState.conversation.length;
+    const last = conv[conv.length - 1];
+    if (grew && last && last.role === 'user') {
+      // A new question always brings the conversation back into focus.
+      this._stickToBottom = true;
+    }
+    if (!this._stickToBottom) {
+      return;
+    }
+    if (grew && last && last.role !== 'user') {
+      // Answer arrived: show the question and the start of the answer.
+      this._scrollToLatestQuestion();
+    } else if (
+      grew ||
+      this.state.isProcessing !== prevState.isProcessing ||
+      this.state.progress !== prevState.progress ||
+      this.state.progressPhase !== prevState.progressPhase
+    ) {
       this._scrollToBottom();
     }
   }
@@ -145,9 +172,69 @@ class AISidebarInner extends React.Component<Record<string, never>, AISidebarSta
     }
   }
 
+  _setScrollTop(top: number) {
+    const el = this._scrollRef.current;
+    if (!el) {
+      return;
+    }
+    this._programmaticScrollAt = Date.now();
+    el.scrollTop = Math.max(0, Math.min(top, el.scrollHeight - el.clientHeight));
+  }
+
   _scrollToBottom = () => {
-    this._messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
+    const el = this._scrollRef.current;
+    if (!el) {
+      this._messagesEndRef.current?.scrollIntoView({ block: 'end' });
+      return;
+    }
+    this._setScrollTop(el.scrollHeight);
   };
+
+  /** Bottom, unless the answer is taller than the view: then the question's top. */
+  _scrollToLatestQuestion = () => {
+    const el = this._scrollRef.current;
+    if (!el) {
+      this._scrollToBottom();
+      return;
+    }
+    const users = el.querySelectorAll('.message.message-user');
+    const q = users[users.length - 1] as HTMLElement | undefined;
+    if (!q) {
+      this._scrollToBottom();
+      return;
+    }
+    const qTop = q.getBoundingClientRect().top - el.getBoundingClientRect().top + el.scrollTop;
+    this._setScrollTop(Math.min(qTop - 8, el.scrollHeight));
+  };
+
+  _onBodyScroll = () => {
+    const el = this._scrollRef.current;
+    if (!el || Date.now() - this._programmaticScrollAt < 150) {
+      return;
+    }
+    const fromBottom = el.scrollHeight - el.scrollTop - el.clientHeight;
+    this._stickToBottom = fromBottom <= STICK_THRESHOLD_PX;
+  };
+
+  _onTogglePreview = () => {
+    this.setState({ previewExpanded: !this.state.previewExpanded });
+  };
+
+  _renderPreviewToggle(label: string) {
+    const expanded = this.state.previewExpanded;
+    return (
+      <button
+        type="button"
+        className="preview-toggle"
+        data-preview-toggle="true"
+        aria-expanded={expanded}
+        onClick={this._onTogglePreview}
+      >
+        <span className="preview-toggle-label">{label}</span>
+        <span className="preview-toggle-action">{expanded ? 'הסתר ▴' : 'הצג ▾'}</span>
+      </button>
+    );
+  }
 
   _onScopeModeChange = (mode: ScopeMode) => {
     AISidebarStore.setScopeMode(mode);
@@ -675,13 +762,35 @@ class AISidebarInner extends React.Component<Record<string, never>, AISidebarSta
     }
     return (
       <div
-        className="ai-sidebar-real-preview"
+        className={classNames('ai-sidebar-real-preview', {
+          collapsed: !this.state.previewExpanded,
+        })}
         role="region"
         aria-label="Selected message disclosure"
         data-real-selected-id={preview.messageId}
         data-real-selected-epoch={String(preview.snapshotEpoch)}
         data-offline-archive-id={offline ? preview.messageId : undefined}
+        data-preview-collapsed={this.state.previewExpanded ? 'false' : 'true'}
       >
+        {this._renderPreviewToggle(
+          `📄 ההודעה שתישלח: ${this._selectedSendCount()} · נשלחת רק בלחיצה`
+        )}
+        {this.state.previewExpanded && this._renderRealPreviewDetails(preview, offline)}
+      </div>
+    );
+  }
+
+  _selectedSendCount(): number {
+    const { resolvedScope } = this.state;
+    if (resolvedScope && resolvedScope.mode === 'selected-messages' && resolvedScope.messageCount) {
+      return estimateGeminiSendCount(resolvedScope.messageCount);
+    }
+    return 1;
+  }
+
+  _renderRealPreviewDetails(preview: RealSelectedPreview, offline: boolean) {
+    return (
+      <>
         <div className="demo-preview-banner">
           {offline
             ? 'הודעה מארכיון מקומי — תישלח ל-Gemini רק אחרי Summarize'
@@ -701,7 +810,7 @@ class AISidebarInner extends React.Component<Record<string, never>, AISidebarSta
           {preview.bodyPreview}
         </pre>
         <p className="real-disclosure">{preview.disclosure}</p>
-      </div>
+      </>
     );
   }
 
@@ -713,38 +822,46 @@ class AISidebarInner extends React.Component<Record<string, never>, AISidebarSta
 
     return (
       <div
-        className="ai-sidebar-demo-preview"
+        className={classNames('ai-sidebar-demo-preview', {
+          collapsed: !this.state.previewExpanded,
+        })}
         role="region"
         aria-label={realSelected || offline ? 'Selected message preview' : 'DEMO source preview'}
         data-demo-preview={preview.messageId}
+        data-preview-collapsed={this.state.previewExpanded ? 'false' : 'true'}
       >
-        <div className="demo-preview-banner">
-          {offline
-            ? 'תצוגת אותה הודעה מארכיון מקומי — Yahoo לא בשימוש'
-            : realSelected
-              ? 'תצוגת אותה הודעה נבחרת — לא סומן כנקרא'
-              : '🧪 DEMO מקור סינתטי — לא תיבת דואר אמיתית'}
-        </div>
-        <dl className="demo-preview-meta">
-          <dt>מזהה</dt>
-          <dd>{preview.messageId}</dd>
-          <dt>נושא</dt>
-          <dd>{preview.subject}</dd>
-          <dt>מאת</dt>
-          <dd>{preview.from}</dd>
-          <dt>תיקייה</dt>
-          <dd>{preview.folderName}</dd>
-        </dl>
-        <pre className="demo-preview-body" data-preview-wrap="true">
-          {preview.body}
-        </pre>
-        <button
-          className="demo-preview-close"
-          onClick={() => AISidebarStore.closeDemoPreview()}
-          aria-label="סגור תצוגת מקור DEMO"
-        >
-          סגור תצוגת מקור
-        </button>
+        {this._renderPreviewToggle('📄 תצוגת מקור · 1')}
+        {this.state.previewExpanded && (
+          <>
+            <div className="demo-preview-banner">
+              {offline
+                ? 'תצוגת אותה הודעה מארכיון מקומי — Yahoo לא בשימוש'
+                : realSelected
+                  ? 'תצוגת אותה הודעה נבחרת — לא סומן כנקרא'
+                  : '🧪 DEMO מקור סינתטי — לא תיבת דואר אמיתית'}
+            </div>
+            <dl className="demo-preview-meta">
+              <dt>מזהה</dt>
+              <dd>{preview.messageId}</dd>
+              <dt>נושא</dt>
+              <dd>{preview.subject}</dd>
+              <dt>מאת</dt>
+              <dd>{preview.from}</dd>
+              <dt>תיקייה</dt>
+              <dd>{preview.folderName}</dd>
+            </dl>
+            <pre className="demo-preview-body" data-preview-wrap="true">
+              {preview.body}
+            </pre>
+            <button
+              className="demo-preview-close"
+              onClick={() => AISidebarStore.closeDemoPreview()}
+              aria-label="סגור תצוגת מקור DEMO"
+            >
+              סגור תצוגת מקור
+            </button>
+          </>
+        )}
       </div>
     );
   }
@@ -906,7 +1023,12 @@ class AISidebarInner extends React.Component<Record<string, never>, AISidebarSta
           <DemoComposer />
         ) : (
           <>
-            <div className="ai-sidebar-body" data-ai-scrollport="true">
+            <div
+              className="ai-sidebar-body"
+              data-ai-scrollport="true"
+              ref={this._scrollRef}
+              onScroll={this._onBodyScroll}
+            >
               {this._renderOfflineArchivePicker()}
               {this._renderRealSelectionPreview()}
               {this._renderDemoPreview()}

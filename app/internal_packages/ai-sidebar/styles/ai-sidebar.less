@@ -981,4 +981,37 @@
   unicode-bidi: plaintext;
 }
 
+
+.ai-sidebar .ai-sidebar-real-preview.collapsed,
+.ai-sidebar .ai-sidebar-demo-preview.collapsed {
+  padding: 4px 8px;
+  margin-bottom: 8px;
+}
+.ai-sidebar .preview-toggle {
+  display: flex;
+  width: 100%;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 2px 0;
+  border: 0;
+  background: transparent;
+  color: inherit;
+  font-size: 12px;
+  text-align: right;
+  direction: rtl;
+  cursor: pointer;
+}
+.ai-sidebar .preview-toggle-label {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.ai-sidebar .preview-toggle-action {
+  flex: 0 0 auto;
+  font-weight: 600;
+  text-decoration: underline;
+}
+
 /*!rtl:end:ignore*/
