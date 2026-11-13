@@ -83,9 +83,38 @@ class SystemTrayManager {
         this.initTray();
       }
     });
+
+    // Keep the Windows fallback icon readable when the taskbar switches
+    // between light and dark (only while no renderer-supplied icon is set).
+    if (platform === 'win32') {
+      nativeTheme.on('updated', () => {
+        if (this._tray && !this._iconPath) {
+          this._tray.setImage(_getIcon(this._defaultIconPath()));
+        }
+      });
+    }
   }
 
   _defaultIconPath() {
+    if (this._platform === 'win32') {
+      // The renderer's system-tray package normally supplies the icon. When it
+      // is not running (e.g. the offline experiment), Windows would show an
+      // empty slot, so start from the inbox icon. "-dark" is the white glyph
+      // for a dark taskbar; the taskbar theme can differ from the app theme.
+      const nt = nativeTheme as any;
+      const darkTaskbar =
+        typeof nt.shouldUseDarkColorsForSystemIntegratedUI === 'boolean'
+          ? nt.shouldUseDarkColorsForSystemIntegratedUI
+          : nativeTheme.shouldUseDarkColors;
+      return path.join(
+        this._application.resourcePath,
+        'internal_packages',
+        'system-tray',
+        'assets',
+        'win32',
+        `MenuItem-Inbox-Full${darkTaskbar ? '-dark' : ''}.ico`
+      );
+    }
     if (this._platform !== 'linux') return null;
 
     const traySystemTheme =

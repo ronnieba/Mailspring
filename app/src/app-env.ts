@@ -10,6 +10,7 @@ import { localized, isRTL, initializeLocalization } from './intl';
 import { APIError } from './flux/errors';
 import WindowEventHandler from './window-event-handler';
 import { isWaylandSession } from './browser/is-wayland';
+import { isOfflineArchiveMode } from './offline-archive';
 
 function ensureInteger(f: number, fallback: number) {
   let int = f;
@@ -692,7 +693,10 @@ export default class AppEnvConstructor {
       this.setWindowDimensions(dimensions);
     }
 
-    if (dimensions.maximized && !settings.initializeInBackground) {
+    // The offline experiment shows four columns side by side; always start it
+    // maximized (the main process maximize can race with the restore above).
+    const maximize = dimensions.maximized || isOfflineArchiveMode();
+    if (maximize && !settings.initializeInBackground) {
       this.maximize();
     }
     if (dimensions.fullScreen) {

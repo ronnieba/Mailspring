@@ -113,19 +113,39 @@ export class OfflineMessageList extends OfflineStoreComponent<Record<string, nev
           offlineMailStore.select(e.id, { additive: ev.ctrlKey || ev.metaKey, range: ev.shiftKey })
         }
       >
-        <div className="offline-row-line1">
-          <span className="offline-row-from" dir="auto">
-            {shortFrom(e.from)}
-          </span>
-          {e.hasAttachments ? (
-            <span className="offline-row-attach" title="Attachments">
-              📎
+        <span
+          className={classNames('offline-row-check', { checked: selected })}
+          role="checkbox"
+          aria-checked={selected}
+          aria-label={selected ? 'בטל בחירה' : 'בחר הודעה'}
+          title={selected ? 'בטל בחירה' : 'בחר הודעה (אפשר לבחור כמה)'}
+          data-offline-row-check="true"
+          onClick={(ev) => {
+            ev.stopPropagation();
+            if (ev.shiftKey) {
+              offlineMailStore.select(e.id, { range: true });
+            } else {
+              offlineMailStore.toggleChecked(e.id);
+            }
+          }}
+        >
+          {selected ? '✓' : ''}
+        </span>
+        <div className="offline-row-main">
+          <div className="offline-row-line1">
+            <span className="offline-row-from" dir="auto">
+              {shortFrom(e.from)}
             </span>
-          ) : null}
-          <span className="offline-row-date">{formatDate(e.ts)}</span>
-        </div>
-        <div className="offline-row-subject" dir="auto" data-offline-subject="true">
-          {e.subject}
+            {e.hasAttachments ? (
+              <span className="offline-row-attach" title="Attachments">
+                📎
+              </span>
+            ) : null}
+            <span className="offline-row-date">{formatDate(e.ts)}</span>
+          </div>
+          <div className="offline-row-subject" dir="auto" data-offline-subject="true">
+            {e.subject}
+          </div>
         </div>
       </div>
     );
@@ -136,6 +156,10 @@ export class OfflineMessageList extends OfflineStoreComponent<Record<string, nev
     const rows = s.visibleMessages();
     const folder = s.findFolder(s.currentFolder);
     const { scrollTop, height } = this.state;
+    const selectedSet = new Set(s.selectedIds);
+    const checkedInView = rows.reduce((n, r) => n + (selectedSet.has(r.id) ? 1 : 0), 0);
+    const allChecked = rows.length > 0 && checkedInView === rows.length;
+    const someChecked = checkedInView > 0;
     const start = Math.max(0, Math.floor(scrollTop / ROW_HEIGHT) - OVERSCAN);
     const end = Math.min(rows.length, Math.ceil((scrollTop + height) / ROW_HEIGHT) + OVERSCAN);
     const visible: React.ReactNode[] = [];
@@ -161,9 +185,30 @@ export class OfflineMessageList extends OfflineStoreComponent<Record<string, nev
             value={s.filter}
             onChange={(e) => s.setFilter(e.target.value)}
           />
-          {s.selectedIds.length > 1 ? (
-            <div className="offline-list-selection">{s.selectedIds.length} selected</div>
-          ) : null}
+          <div className="offline-list-selectbar" dir="rtl">
+            <label className="offline-list-selectall" data-offline-select-all="true">
+              <input
+                type="checkbox"
+                checked={allChecked}
+                ref={(el) => {
+                  if (el) el.indeterminate = someChecked && !allChecked;
+                }}
+                disabled={!rows.length}
+                onChange={() => (allChecked ? s.clearSelection() : s.selectAllVisible())}
+              />
+              בחר הכל
+            </label>
+            {s.selectedIds.length > 0 ? (
+              <span className="offline-list-selection">
+                {s.selectedIds.length.toLocaleString()} נבחרו
+                <button className="offline-list-clear" onClick={() => s.clearSelection()}>
+                  נקה
+                </button>
+              </span>
+            ) : (
+              <span className="offline-list-selection-hint">סמן עיגול ליד הודעה כדי לבחור כמה</span>
+            )}
+          </div>
         </div>
         <div
           className="offline-list-scroll"

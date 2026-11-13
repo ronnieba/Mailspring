@@ -6,7 +6,7 @@ import { OfflineFolderNode } from '../core/offline-mail-index';
 
 export class OfflineFolderSidebar extends OfflineStoreComponent {
   static displayName = 'OfflineFolderSidebar';
-  static containerStyles = { minWidth: 180, maxWidth: 360 };
+  static containerStyles = { minWidth: 180, maxWidth: 520 };
 
   _renderNode(node: OfflineFolderNode): React.ReactNode {
     const s = offlineMailStore;

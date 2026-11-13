@@ -284,3 +284,110 @@
   border: 1px solid @border-color-primary;
   border-radius: 4px;
 }
+
+// Per-row selection circle (works with Ctrl/Shift and the AI "selected" scope).
+.offline-message-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  .offline-row-main {
+    flex: 1;
+    min-width: 0;
+  }
+}
+.offline-row-check {
+  flex: 0 0 auto;
+  width: 18px;
+  height: 18px;
+  border-radius: 50%;
+  border: 2px solid fade(@text-color, 45%);
+  box-sizing: border-box;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 12px;
+  font-weight: 700;
+  line-height: 1;
+  color: @text-color-inverse;
+  cursor: pointer;
+  &:hover {
+    border-color: @component-active-color;
+  }
+  &.checked {
+    background: @component-active-color;
+    border-color: @component-active-color;
+    color: #fff;
+  }
+}
+
+.offline-list-selectbar {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-top: 6px;
+  font-size: 12px;
+  .offline-list-selectall {
+    display: inline-flex;
+    align-items: center;
+    gap: 4px;
+    cursor: pointer;
+    input {
+      margin: 0;
+    }
+  }
+  .offline-list-selection {
+    margin-top: 0;
+  }
+  .offline-list-selection-hint {
+    color: @text-color-subtle;
+  }
+  .offline-list-clear {
+    margin-inline-start: 6px;
+    padding: 0 6px;
+    font-size: 11px;
+    border: 1px solid @border-color-primary;
+    border-radius: 3px;
+    background: transparent;
+    color: @text-color;
+    cursor: pointer;
+  }
+}
+
+// Show/hide buttons for the columns (toolbar above the message list).
+.offline-pane-toggles {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  padding: 4px 8px;
+  font-size: 12px;
+  white-space: nowrap;
+  overflow: hidden;
+  -webkit-app-region: no-drag;
+  .offline-pane-toggles-label {
+    color: @text-color-subtle;
+  }
+  .offline-pane-toggle {
+    display: inline-flex;
+    align-items: center;
+    gap: 3px;
+    padding: 2px 8px;
+    border-radius: 12px;
+    border: 1px solid @component-active-color;
+    background: color-mix(in srgb, @component-active-color 18%, transparent);
+    color: @text-color;
+    font-size: 12px;
+    cursor: pointer;
+    &.off {
+      border-color: @border-color-primary;
+      background: transparent;
+      color: @text-color-subtle;
+      text-decoration: line-through;
+    }
+  }
+}
+
+// Make the column dividers easier to find and grab.
+.sheet .flexbox-handle-horizontal:hover > div {
+  background: color-mix(in srgb, @component-active-color 60%, transparent);
+}
+

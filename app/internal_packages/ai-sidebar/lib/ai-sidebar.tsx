@@ -837,7 +837,7 @@ AISidebar.displayName = 'AISidebar';
 AISidebar.containerStyles = {
   order: 99,
   minWidth: 360,
-  maxWidth: 560,
+  maxWidth: 900,
 };
 
 // Mark as sidebar panel for the panel switcher

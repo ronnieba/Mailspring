@@ -293,6 +293,35 @@ class OfflineMailStore {
     this._emit();
   }
 
+  /** Row checkbox: add/remove one message without dropping the others. */
+  toggleChecked(id: string) {
+    this.select(id, { additive: true });
+  }
+
+  /** Select every message in the current (filtered) folder view. */
+  selectAllVisible() {
+    const rows = this.visibleMessages();
+    if (!rows.length) {
+      return;
+    }
+    this.selectedIds = rows.map((r) => r.id);
+    this.anchorId = rows[0].id;
+    setOfflineArchiveSelection(this.selectedIds);
+    if (this.selectedIds.length === 1) {
+      void this._open(this.selectedIds[0]);
+    } else {
+      this.openMessage = null;
+    }
+    this._emit();
+  }
+
+  clearSelection() {
+    this.selectedIds = [];
+    this.openMessage = null;
+    setOfflineArchiveSelection([]);
+    this._emit();
+  }
+
   /** Open a message by id (e.g. from an AI citation): switch folder, select it. */
   reveal(id: string): boolean {
     const entry = this._byId.get(id);
