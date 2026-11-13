@@ -3,6 +3,7 @@
  * reader). Data comes only from a local read-only work copy. No account, no
  * mailsync, no Mailspring database, no network.
  */
+import * as fs from 'fs';
 import * as path from 'path';
 import {
   buildFolderTree,
@@ -17,6 +18,7 @@ import {
 import { parseOfflineMail, ParsedOfflineMail } from '../core/offline-mail-mime';
 import { OFFLINE_ARCHIVE_ACCOUNT_ID, OfflineArchiveMessage } from '../core/offline-archive-format';
 import {
+  offlineFolderIdFor,
   setOfflineArchiveNavigator,
   setOfflineArchiveBrowserCatalog,
   setOfflineArchiveCurrentFolder,
@@ -34,8 +36,39 @@ export type OpenMessageState = {
 
 type Listener = () => void;
 
+// Which folders are open in the tree; kept in the offline profile (config dir).
+export const OFFLINE_FOLDER_EXPANDED_FILE = 'offline-folder-expanded.json';
+
+export function readExpandedFolders(file: string | null): Set<string> | null {
+  if (!file) {
+    return null;
+  }
+  try {
+    const raw = JSON.parse(fs.readFileSync(file, 'utf8'));
+    if (raw && raw.version === 1 && Array.isArray(raw.expanded)) {
+      return new Set(raw.expanded.filter((p: any) => typeof p === 'string'));
+    }
+  } catch {
+    // first run or unreadable: start collapsed
+  }
+  return null;
+}
+
+export function writeExpandedFolders(file: string | null, expanded: Iterable<string>) {
+  if (!file) {
+    return;
+  }
+  try {
+    const tmp = `${file}.tmp`;
+    fs.writeFileSync(tmp, JSON.stringify({ version: 1, expanded: Array.from(expanded).sort() }));
+    fs.renameSync(tmp, file);
+  } catch (err) {
+    console.warn('[Offline mail] could not save open folders', (err as any)?.code);
+  }
+}
+
 function folderIdFor(p: string): string {
-  return p.replace(/[\\/]/g, '-').replace(/[^A-Za-z0-9._-]/g, '_') || 'INBOX';
+  return offlineFolderIdFor(p);
 }
 
 class OfflineMailStore {
@@ -58,6 +91,7 @@ class OfflineMailStore {
   private _visibleCache: { key: string; rows: OfflineIndexEntry[] } | null = null;
   private _parsedCache = new Map<string, ParsedOfflineMail>();
   private _openSeq = 0;
+  private _expandedFile: string | null = null;
 
   listen(cb: Listener): () => void {
     this._listeners.add(cb);
@@ -79,6 +113,13 @@ class OfflineMailStore {
       return;
     }
     this.root = root;
+    this._expandedFile = cachePath
+      ? path.join(path.dirname(cachePath), OFFLINE_FOLDER_EXPANDED_FILE)
+      : null;
+    const saved = readExpandedFolders(this._expandedFile);
+    if (saved) {
+      this.expanded = saved;
+    }
     this.status = 'indexing';
     this.error = null;
     this.progress = { phase: 'scan', done: 0, total: 0 };
@@ -236,6 +277,11 @@ class OfflineMailStore {
     } else {
       this.expanded.add(p);
     }
+    const known = new Set(this._allFolderPaths());
+    writeExpandedFolders(
+      this._expandedFile,
+      Array.from(this.expanded).filter((x) => known.size === 0 || known.has(x))
+    );
     this._emit();
   }
 

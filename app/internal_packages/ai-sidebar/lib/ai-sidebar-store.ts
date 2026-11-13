@@ -22,6 +22,13 @@ import {
   validateProviderPayload,
 } from './core/ai-boundary';
 import { GeminiDemoProvider } from './core/gemini-demo-provider';
+import {
+  answerScopeMetadataLocally,
+  OFFLINE_SUMMARY_LABEL,
+  OFFLINE_SUMMARY_LANGUAGE_HINT,
+  rebuildCitationsFromSources,
+  scopePhrase,
+} from './core/scope-answers';
 import { nextQueryGeneration, shouldAcceptAssistantResponse } from './core/query-generation';
 import { createGeminiIpcTransport, geminiUsageIpc } from './gemini-ipc-transport';
 import { mailspringAdapter } from './mailspring-adapter';
@@ -41,6 +48,7 @@ import {
 } from './core/real-selected-mail';
 import {
   buildOfflineGeminiContext,
+  getOfflineScopeFacts,
   isOfflineArchiveBrowserDriven,
   navigateOfflineArchive,
   setOfflineArchiveSelected,
@@ -287,6 +295,8 @@ class AISidebarStore extends MailspringStore {
     opts?: {
       allowRealSelected?: boolean;
       sentSnapshot?: { messageId: string; snapshotEpoch: number };
+      /** What the user bubble shows instead of the internal prompt. */
+      displayLabel?: string;
     }
   ) {
     if (isExplicitSelectedSurface() && !isOfflineArchiveMode() && !opts?.allowRealSelected) {
@@ -333,7 +343,7 @@ class AISidebarStore extends MailspringStore {
     const userMessage: ConversationMessage = {
       id: `user-${Date.now()}`,
       role: 'user',
-      content: query,
+      content: opts?.displayLabel || query,
       timestamp: new Date(),
     };
     this._state.conversation.push(userMessage);
@@ -369,6 +379,26 @@ class AISidebarStore extends MailspringStore {
       });
 
     try {
+      // Offline: pure metadata questions (how many messages, date range, how
+      // many senders) are answered exactly from the local scope, for free.
+      if (
+        isOfflineArchiveMode() &&
+        !isDemoMode() &&
+        !opts?.allowRealSelected &&
+        isOfflineArchiveBrowserDriven()
+      ) {
+        const local = answerScopeMetadataLocally(query, getOfflineScopeFacts(scope));
+        if (local) {
+          this._state.conversation.push({
+            id: `assistant-${Date.now()}`,
+            role: 'assistant',
+            content: local,
+            citations: [],
+            timestamp: new Date(),
+          });
+          return;
+        }
+      }
       await this.refreshGeminiStatus();
       // Offline experiment: when Gemini is connected, Send asks Gemini about the
       // chosen scope (local retrieval first, bounded set). Mock only when off.
@@ -507,7 +537,11 @@ class AISidebarStore extends MailspringStore {
       const validated = validateProviderPayload(
         {
           response: result.response,
-          citations: result.citations,
+          // Gemini often returns only ids: rebuild citations from the local
+          // metadata of the messages that were sent; unknown ids are dropped.
+          citations: useGemini
+            ? rebuildCitationsFromSources(result.citations, searchResult.messages)
+            : result.citations,
           tokensUsed: result.tokensUsed,
           isMock: useGemini ? false : true,
           mockLabel: useGemini ? GEMINI_DISPLAY_NAME : this._provider.name,
@@ -641,7 +675,7 @@ class AISidebarStore extends MailspringStore {
     this.trigger();
 
     this._gemini.setGeneration(startedGeneration);
-    this._gemini.setQueryExtras({ mode: 'offline-archive-scoped' });
+    this._gemini.setQueryExtras({ mode: 'offline-archive-scoped', scopeFacts: ctx.facts });
     const result = await this._gemini.processQuery(
       query,
       ctx.messages,
@@ -655,22 +689,7 @@ class AISidebarStore extends MailspringStore {
     }
     // Rebuild citations from the local copy: the model often returns only the
     // id. Ids that were not sent are dropped (never shown, never opened).
-    const sentById = new Map(ctx.messages.map((m) => [m.id, m]));
-    const citations: Citation[] = [];
-    for (const c of Array.isArray(result.citations) ? result.citations : []) {
-      const m = c ? sentById.get(c.messageId) : undefined;
-      if (!m || citations.some((x) => x.messageId === m.id)) {
-        continue;
-      }
-      citations.push({
-        messageId: m.id,
-        threadId: m.threadId || m.id,
-        subject: m.subject || '(ללא נושא)',
-        from: m.from || '(לא ידוע)',
-        date: m.date,
-        snippet: m.snippet || '',
-      });
-    }
+    const citations: Citation[] = rebuildCitationsFromSources(result.citations, ctx.messages);
     const validated = validateProviderPayload(
       {
         response: result.response,
@@ -700,19 +719,16 @@ class AISidebarStore extends MailspringStore {
       }
       return;
     }
-    const scopeWord =
-      scope.mode === 'selected-messages'
-        ? 'בהודעות שנבחרו'
-        : scope.mode === 'current-folder'
-          ? 'בתיקייה'
-          : 'בכל העותק המקומי';
+    const inScope = ctx.facts.totalInScope;
+    const sentAll = ctx.sent === inScope;
     const coverage =
       scope.mode === 'selected-messages'
-        ? `🔎 נשלחו ל-Gemini ${ctx.sent} מתוך ${ctx.inScope} ההודעות שנבחרו (טקסט בלבד, בלי קבצים מצורפים).`
-        : `🔎 חיפוש מקומי ${scopeWord}: ${ctx.inScope.toLocaleString()} הודעות, נקראו ${ctx.scanned}, ` +
-          `התאימו לשאלה ${ctx.matched}. נשלחו ל-Gemini ${ctx.sent} הרלוונטיות ביותר ` +
+        ? `🔎 נשלחו ל-Gemini ${ctx.sent} מתוך ${inScope} ההודעות שנבחרו (טקסט בלבד, בלי קבצים מצורפים).`
+        : `🔎 ${scopePhrase(ctx.facts)}: ${inScope.toLocaleString()} הודעות. ` +
+          `נקראו מקומית ${ctx.scanned}, התאימו לשאלה ${ctx.matched}, ` +
+          `נשלחו ל-Gemini ${ctx.sent}${sentAll ? ' (כולן)' : ` מתוך ${inScope.toLocaleString()}`} ` +
           `(טקסט בלבד, בלי קבצים מצורפים).` +
-          (ctx.matched === 0
+          (ctx.matched === 0 && !sentAll
             ? ' לא נמצאה התאמה למילים בשאלה, לכן נשלחו ההודעות החדשות ביותר.'
             : '');
     const tokens = validated.result.tokensUsed ? ` · ${validated.result.tokensUsed} טוקנים` : '';
@@ -752,10 +768,15 @@ class AISidebarStore extends MailspringStore {
       this.trigger();
       return;
     }
-    await this.submitQuery(REAL_SELECTED_QUERY, {
-      allowRealSelected: true,
-      sentSnapshot: { messageId: preview.messageId, snapshotEpoch: preview.snapshotEpoch },
-    });
+    const offline = isOfflineArchiveMode();
+    await this.submitQuery(
+      offline ? `${REAL_SELECTED_QUERY}${OFFLINE_SUMMARY_LANGUAGE_HINT}` : REAL_SELECTED_QUERY,
+      {
+        allowRealSelected: true,
+        sentSnapshot: { messageId: preview.messageId, snapshotEpoch: preview.snapshotEpoch },
+        displayLabel: offline ? OFFLINE_SUMMARY_LABEL : undefined,
+      }
+    );
   }
 
   selectOfflineArchiveMessage(messageId: string) {

@@ -12,6 +12,7 @@ import {
   SearchProgress,
 } from './types';
 import {
+  GeminiScopeFacts,
   GEMINI_DISPLAY_NAME,
   GeminiDemoStatus,
   GeminiHostResult,
@@ -34,6 +35,7 @@ export interface GeminiDemoTransport {
       | 'offline-archive-scoped';
     allowedMessageId?: string;
     snapshotEpoch?: number;
+    scopeFacts?: GeminiScopeFacts;
   }): Promise<GeminiHostResult>;
   cancel(generation: number): Promise<{ aborted: boolean }>;
 }
@@ -51,6 +53,7 @@ export class GeminiDemoProvider implements AIProvider {
       | 'offline-archive-scoped';
     allowedMessageId?: string;
     snapshotEpoch?: number;
+    scopeFacts?: GeminiScopeFacts;
   } = {};
 
   constructor(private readonly transport: GeminiDemoTransport) {}
@@ -82,6 +85,7 @@ export class GeminiDemoProvider implements AIProvider {
       | 'offline-archive-scoped';
     allowedMessageId?: string;
     snapshotEpoch?: number;
+    scopeFacts?: GeminiScopeFacts;
   }) {
     this._queryExtras = extras;
   }

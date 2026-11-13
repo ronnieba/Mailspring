@@ -184,6 +184,8 @@ class AISidebarInner extends React.Component<Record<string, never>, AISidebarSta
 
     // Initial scope resolution — preview only, never generates.
     AISidebarStore.refreshScope();
+    // The panel just opened: put the cursor in the question box.
+    window.setTimeout(this._focusInput, 400);
 
     if (isRealSelectedSummaryMode()) {
       try {
@@ -211,6 +213,10 @@ class AISidebarInner extends React.Component<Record<string, never>, AISidebarSta
   }
 
   componentDidUpdate(_prevProps: Record<string, never>, prevState: AISidebarState) {
+    if (prevState.isProcessing && !this.state.isProcessing) {
+      // Answer finished: ready for the next question.
+      window.setTimeout(this._focusInput, 50);
+    }
     const conv = this.state.conversation;
     const grew = conv.length > prevState.conversation.length;
     const last = conv[conv.length - 1];
@@ -254,6 +260,17 @@ class AISidebarInner extends React.Component<Record<string, never>, AISidebarSta
       delete (window as any).__mailspringDemoSidebar;
     }
   }
+
+  _focusInput = () => {
+    // Offline experiment only, so the regular app keeps its keyboard focus.
+    if (!isOfflineArchiveMode()) {
+      return;
+    }
+    const el = this._inputRef.current;
+    if (el && !el.disabled && document.activeElement !== el) {
+      el.focus({ preventScroll: true });
+    }
+  };
 
   _setScrollTop(top: number) {
     const el = this._scrollRef.current;
@@ -1137,14 +1154,22 @@ class AISidebarInner extends React.Component<Record<string, never>, AISidebarSta
     }
     const { isProcessing, resolvedScope } = this.state;
     const isDisabled = isProcessing || (resolvedScope && resolvedScope.isEmpty);
+    const hasText = !!this.state.inputValue.trim();
+    const canSend = !isDisabled && hasText;
 
     return (
       <div className="ai-sidebar-input">
+        <label className="input-label" htmlFor="ai-sidebar-question">
+          ✍️ שאלה ל-AI
+        </label>
         <textarea
+          id="ai-sidebar-question"
           ref={this._inputRef}
-          className="input-textarea"
+          className={classNames('input-textarea', { 'has-text': hasText })}
           placeholder={
-            resolvedScope?.isEmpty ? 'בחר הודעות או תיקייה תחילה...' : 'שאל שאלה... (Enter לשליחה)'
+            resolvedScope?.isEmpty
+              ? 'בחר הודעות או תיקייה תחילה…'
+              : '✍️ כתוב כאן שאלה ל-AI… (Enter לשליחה)'
           }
           value={this.state.inputValue}
           onChange={this._onInputChange}
@@ -1154,12 +1179,19 @@ class AISidebarInner extends React.Component<Record<string, never>, AISidebarSta
         />
         <div className="input-actions">
           <button
-            className="submit-btn"
+            className={classNames('submit-btn', { ready: canSend })}
             onClick={this._onSubmit}
-            disabled={isDisabled || !this.state.inputValue.trim()}
+            disabled={!canSend}
             aria-label="שלח"
+            title={
+              canSend
+                ? 'שלח את השאלה (Enter)'
+                : isProcessing
+                  ? 'ממתין לתשובה…'
+                  : 'כתוב שאלה כדי לשלוח'
+            }
           >
-            שלח
+            {canSend ? 'שלח ➤' : 'שלח'}
           </button>
           {isOfflineArchiveMode() && (
             <button

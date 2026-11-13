@@ -68,11 +68,69 @@
   }
 }
 
+.offline-folder-row {
+  height: 28px;
+}
+
+// Expand/collapse chevron: big click target, points to the inline end when
+// collapsed (right in LTR, left in RTL) and turns down when open.
+.offline-folder-toggle,
+.offline-folder-toggle-spacer {
+  flex: 0 0 24px;
+  width: 24px;
+  height: 24px;
+}
 .offline-folder-toggle {
-  width: 14px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0;
+  margin: 0;
+  border: 0;
+  border-radius: 5px;
+  background: transparent;
+  color: inherit;
+  opacity: 0.85;
+  cursor: pointer;
+  -webkit-app-region: no-drag;
+  svg {
+    display: block;
+    transition: transform 0.15s ease;
+  }
+  &.open svg {
+    transform: rotate(90deg);
+  }
+  &:hover {
+    opacity: 1;
+    background: color-mix(in srgb, currentColor 16%, transparent);
+  }
+  &:focus-visible {
+    outline: 2px solid currentColor;
+    outline-offset: -2px;
+  }
+}
+.offline-folder-toggle:dir(rtl) svg {
+  transform: scaleX(-1);
+}
+.offline-folder-toggle.open:dir(rtl) svg {
+  transform: scaleX(-1) rotate(90deg);
+}
+[dir='rtl'] .offline-folder-toggle svg {
+  transform: scaleX(-1);
+}
+[dir='rtl'] .offline-folder-toggle.open svg {
+  transform: scaleX(-1) rotate(90deg);
+}
+
+.offline-folder-subcount {
   flex-shrink: 0;
-  text-align: center;
+  margin-inline-end: 4px;
+  padding: 0 5px;
+  border-radius: 8px;
   font-size: 10px;
+  line-height: 15px;
+  background: color-mix(in srgb, currentColor 14%, transparent);
+  opacity: 0.85;
 }
 
 .offline-folder-name {

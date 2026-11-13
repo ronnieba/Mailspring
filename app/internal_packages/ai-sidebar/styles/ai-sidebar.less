@@ -1113,4 +1113,67 @@
   border-color: #c0392b;
 }
 
+// Question box: clearly writable in every theme (lighter surface than the
+// panel, accent border, readable placeholder, focus glow) and a Send button
+// that is obviously enabled once there is text.
+.ai-sidebar .ai-sidebar-input .input-label {
+  display: block;
+  margin: 0 0 4px;
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--text-color);
+}
+.ai-sidebar .ai-sidebar-input .input-textarea {
+  box-sizing: border-box;
+  min-height: 3.2em;
+  border: 2px solid color-mix(in srgb, var(--color-primary) 70%, var(--border-color-divider));
+  background: color-mix(in srgb, var(--background-primary) 80%, #ffffff);
+  color: var(--text-color);
+  font-size: 13.5px;
+  transition: border-color 0.15s, box-shadow 0.15s;
+  &::placeholder {
+    color: var(--text-color);
+    opacity: 0.72;
+  }
+  &:hover:not(:disabled) {
+    border-color: var(--color-primary);
+  }
+  &:focus {
+    outline: none;
+    border-color: var(--color-primary);
+    box-shadow: 0 0 0 3px color-mix(in srgb, var(--color-primary) 35%, transparent);
+  }
+  &:disabled {
+    opacity: 1;
+    border-style: dashed;
+    border-color: var(--border-color-divider);
+    background: var(--background-secondary);
+    &::placeholder {
+      opacity: 0.6;
+    }
+  }
+}
+.ai-sidebar .ai-sidebar-input .input-actions .submit-btn {
+  min-width: 64px;
+  font-weight: 600;
+  border: 1px solid var(--border-color-divider);
+  &:disabled {
+    opacity: 1;
+    background: var(--background-secondary);
+    color: var(--text-color-subtle);
+    border-style: dashed;
+    filter: none;
+    cursor: default;
+  }
+  &.ready {
+    opacity: 1;
+    background: var(--color-primary);
+    border-color: var(--color-primary);
+    color: #fff;
+    font-weight: 700;
+    box-shadow: 0 1px 4px color-mix(in srgb, var(--color-primary) 45%, transparent);
+    cursor: pointer;
+  }
+}
+
 /*!rtl:end:ignore*/

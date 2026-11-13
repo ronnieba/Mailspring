@@ -44,32 +44,8 @@ export function registerOfflineMailBrowser(archivePath: string, sidebar: any) {
     store: offlineMailStore,
   };
   void offlineMailStore.start(archivePath, cachePath);
-  maximizeOnceWhenShown();
-}
-
-// The experiment shows four columns, so open maximized. Done here, after the
-// window is visible, because maximizing the still-hidden window is undone by
-// the first show() on Windows.
-function maximizeOnceWhenShown() {
-  let tries = 0;
-  const tick = () => {
-    tries++;
-    try {
-      const win = AppEnv.getCurrentWindow();
-      if (win.isVisible()) {
-        if (!win.isMaximized()) {
-          win.maximize();
-        }
-        return;
-      }
-    } catch {
-      return;
-    }
-    if (tries < 40) {
-      setTimeout(tick, 250);
-    }
-  };
-  setTimeout(tick, 250);
+  // Window size/position/maximized state is restored by the main process
+  // (offline-window-state.ts); only the first launch opens maximized.
 }
 
 export function unregisterOfflineMailBrowser(sidebar: any) {

@@ -12,6 +12,7 @@ import {
   dialog,
   nativeImage,
   powerMonitor,
+  screen,
   shell,
 } from 'electron';
 
@@ -40,6 +41,7 @@ import { registerQuickpreviewIPCHandlers } from './quickpreview-ipc';
 import { registerLocalAIIPCHandlers } from './local-ai-service';
 import { resolveGeminiDemoStatus } from './gemini-demo-host';
 import { registerGeminiDemoIpcHandlers } from './gemini-demo-ipc';
+import { applyAndTrackOfflineWindowState } from './offline-window-state';
 import { formatGeminiDemoStatusLog } from './gemini-demo-secret';
 import { registerViewSessionIPCHandlers } from './view-sessions';
 import { guardAuxiliaryWindowNavigation } from './auxiliary-window-guard';
@@ -466,14 +468,14 @@ export default class Application extends EventEmitter {
         },
         behavior
       );
-      // Offline experiment: four columns (folders, list, reader, AI panel)
-      // need the room, so open maximized once the window has loaded.
+      // Offline experiment: restore the last size/position/maximized state
+      // from the offline profile; only the first launch opens maximized.
       const offlineWin = this.windowManager.get(WindowManager.MAIN_WINDOW);
       if (offlineWin) {
         offlineWin.waitForLoad(() => {
           const bw = offlineWin.browserWindow;
-          if (bw && !bw.isDestroyed() && !bw.isMaximized()) {
-            bw.maximize();
+          if (bw && !bw.isDestroyed()) {
+            applyAndTrackOfflineWindowState(bw as any, this.configDirPath, screen as any);
           }
         });
       }

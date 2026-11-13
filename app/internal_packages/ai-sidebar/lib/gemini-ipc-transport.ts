@@ -3,6 +3,7 @@
  */
 import { ipcRenderer } from 'electron';
 import {
+  GeminiScopeFacts,
   GEMINI_IPC_CANCEL,
   GEMINI_IPC_QUERY,
   GEMINI_IPC_STATUS,
@@ -33,6 +34,7 @@ export function createGeminiIpcTransport(): GeminiDemoTransport {
         | 'offline-archive-scoped';
       allowedMessageId?: string;
       snapshotEpoch?: number;
+      scopeFacts?: GeminiScopeFacts;
     }): Promise<GeminiHostResult> {
       return ipcRenderer.invoke(GEMINI_IPC_QUERY, req);
     },

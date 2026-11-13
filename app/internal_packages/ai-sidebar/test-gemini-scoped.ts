@@ -166,6 +166,35 @@ function recordingFetch(response: object) {
     ok(input.includes('גוף 2'), 'body included');
     ok(String(calls[0].body.system_instruction).includes('same language'));
   });
+  await test('scope facts reach Gemini; sent is forced to the real count', async () => {
+    const msgs = [offlineRef(1, 'גוף 1'), offlineRef(2, 'גוף 2')];
+    const { fetch, calls } = recordingFetch({ response: 'תשובה', citations: [] });
+    const out = await runGeminiDemoQuery(
+      {
+        generation: 1,
+        query: 'כמה מיילים יש בתיקייה הזו?',
+        messages: msgs,
+        mode: 'offline-archive-scoped',
+        scopeFacts: {
+          scopeKind: 'folder',
+          includesSubfolders: false,
+          totalInScope: 16,
+          sent: 30,
+          oldest: '2024-01-02T00:00:00.000Z',
+          newest: '2024-11-05T00:00:00.000Z',
+          distinctSenders: 4,
+        },
+      },
+      { demoMode: false, offlineArchive: true, env: paidEnv, fetch }
+    );
+    ok(isGeminiHostOk(out), JSON.stringify(out));
+    const input = String(calls[0].body.input);
+    ok(input.includes('<<<SCOPE_FACTS>>>'), 'facts block');
+    ok(input.includes('total_messages_in_scope=16'), 'total');
+    ok(input.includes('messages_sent_to_you=2'), 'sent forced to request size');
+    ok(input.includes('NOT including subfolders'), 'subfolders stated');
+    ok(String(calls[0].body.system_instruction).includes('SCOPE_FACTS'));
+  });
   await test('rejects more than 30 messages without fetching', async () => {
     const msgs = Array.from({ length: OFFLINE_SCOPED_MAX_MESSAGES + 1 }, (_, i) =>
       offlineRef(i + 1)

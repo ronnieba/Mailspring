@@ -678,6 +678,11 @@ export default class AppEnvConstructor {
   }
 
   restoreWindowDimensions() {
+    // The offline experiment restores its own window state in the main
+    // process (offline-window-state.ts), from the offline profile.
+    if (isOfflineArchiveMode()) {
+      return;
+    }
     const settings = this.getLoadSettings();
 
     let dimensions = this.savedState.windowDimensions;
@@ -693,10 +698,7 @@ export default class AppEnvConstructor {
       this.setWindowDimensions(dimensions);
     }
 
-    // The offline experiment shows four columns side by side; always start it
-    // maximized (the main process maximize can race with the restore above).
-    const maximize = dimensions.maximized || isOfflineArchiveMode();
-    if (maximize && !settings.initializeInBackground) {
+    if (dimensions.maximized && !settings.initializeInBackground) {
       this.maximize();
     }
     if (dimensions.fullScreen) {
@@ -845,19 +847,13 @@ export default class AppEnvConstructor {
   Section: Messaging the User
   */
 
-  private _offlineMaximizedOnce = false;
-
   displayWindow({ maximize }: { maximize?: boolean } = {}) {
     if (this.inSpecMode()) {
       return;
     }
     this.show();
     this.focus();
-    // Offline experiment: maximize once, after the first show. Maximizing the
-    // still-hidden window in restoreWindowDimensions is undone by show() on Windows.
-    const offlineFirstShow = isOfflineArchiveMode() && !this._offlineMaximizedOnce;
-    if (offlineFirstShow) this._offlineMaximizedOnce = true;
-    if (maximize || offlineFirstShow) this.maximize();
+    if (maximize) this.maximize();
   }
 
   /*

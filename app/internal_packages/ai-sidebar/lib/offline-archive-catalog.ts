@@ -17,6 +17,34 @@ import {
   selectScopedForGemini,
 } from './core/gemini-context';
 
+/**
+ * Stable, collision-free folder id for a folder path. Letters/digits/dot stay
+ * as they are; every other character (Hebrew, '/', '-', '_', spaces…) is
+ * encoded by its code point, so "Work/2024", "Work-2024" and two Hebrew
+ * folders of the same length never share an id.
+ */
+export function offlineFolderIdFor(p: string): string {
+  if (!p) {
+    return 'INBOX';
+  }
+  return Array.from(p)
+    .map((c) => (/[A-Za-z0-9.]/.test(c) ? c : `_${(c.codePointAt(0) || 0).toString(16)}_`))
+    .join('');
+}
+
+/**
+ * Folder scope is exactly one folder: messages whose folder path equals the
+ * selected path. Subfolders are NOT included.
+ */
+export const OFFLINE_FOLDER_SCOPE_INCLUDES_SUBFOLDERS = false;
+
+function inScopeFolder(m: OfflineArchiveMessage, folder: { id: string; name: string }): boolean {
+  if (m.folderPath) {
+    return m.folderPath === folder.name;
+  }
+  return m.folderId === folder.id;
+}
+
 let catalog: OfflineArchiveMessage[] = [];
 let selectedId: string | null = null;
 let manifest: OfflineArchiveManifest | null = null;
@@ -237,7 +265,7 @@ function browserScope(mode: ResolvedScope['mode']): ResolvedScope {
         : undefined,
       accountIds: [OFFLINE_ARCHIVE_ACCOUNT_ID],
       description: folder
-        ? `תיקייה: ${folder.name} (${count}) / Folder (${count})`
+        ? `תיקייה: ${folder.name} (${count}, בלי תת-תיקיות) / Folder (${count})`
         : 'לא נבחרה תיקייה / No folder selected',
       isEmpty: count === 0,
       messageCount: count,
@@ -311,7 +339,7 @@ export function searchOfflineArchive(
     const allowed = new Set(scope.messageIds || []);
     rows = browserDriven || allowed.size ? rows.filter((m) => allowed.has(m.id)) : rows;
   } else if (scope.mode === 'current-folder' && scope.folder) {
-    rows = rows.filter((m) => m.folderId === scope.folder.id || m.folderPath === scope.folder.name);
+    rows = rows.filter((m) => inScopeFolder(m, scope.folder));
   } else if (scope.mode === 'current-folder' && browserDriven) {
     rows = [];
   }
@@ -356,9 +384,7 @@ function rowsInScope(scope: ResolvedScope): OfflineArchiveMessage[] {
     if (!scope.folder) {
       return [];
     }
-    return catalog.filter(
-      (m) => m.folderId === scope.folder.id || m.folderPath === scope.folder.name
-    );
+    return catalog.filter((m) => inScopeFolder(m, scope.folder));
   }
   return catalog;
 }
@@ -370,6 +396,65 @@ export interface OfflineGeminiContext {
   matched: number;
   sent: number;
   totalChars: number;
+  facts: OfflineScopeFacts;
+}
+
+/** Exact, locally computed facts about the whole scope (not only what is sent). */
+export interface OfflineScopeFacts {
+  scopeKind: 'selected' | 'folder' | 'all';
+  includesSubfolders: boolean;
+  totalInScope: number;
+  sent: number;
+  oldest: string | null;
+  newest: string | null;
+  distinctSenders: number;
+}
+
+function senderKey(from: string): string {
+  const s = String(from || '').toLowerCase();
+  const m = s.match(/[^\s<>"']+@[^\s<>"']+/);
+  return (m ? m[0] : s).trim();
+}
+
+export function computeOfflineScopeFacts(
+  scope: ResolvedScope,
+  rows: OfflineArchiveMessage[],
+  sent: number
+): OfflineScopeFacts {
+  let oldest = Infinity;
+  let newest = -Infinity;
+  const senders = new Set<string>();
+  for (const m of rows) {
+    const t = dateMs(m);
+    if (t > 0) {
+      oldest = Math.min(oldest, t);
+      newest = Math.max(newest, t);
+    }
+    const k = senderKey(m.from);
+    if (k) {
+      senders.add(k);
+    }
+  }
+  return {
+    scopeKind:
+      scope.mode === 'selected-messages'
+        ? 'selected'
+        : scope.mode === 'current-folder'
+          ? 'folder'
+          : 'all',
+    includesSubfolders:
+      scope.mode === 'current-folder' ? OFFLINE_FOLDER_SCOPE_INCLUDES_SUBFOLDERS : true,
+    totalInScope: rows.length,
+    sent: Math.min(sent, rows.length),
+    oldest: Number.isFinite(oldest) ? new Date(oldest).toISOString() : null,
+    newest: Number.isFinite(newest) ? new Date(newest).toISOString() : null,
+    distinctSenders: senders.size,
+  };
+}
+
+/** Exact scope facts without reading any body (for local metadata answers). */
+export function getOfflineScopeFacts(scope: ResolvedScope): OfflineScopeFacts {
+  return computeOfflineScopeFacts(scope, rowsInScope(scope), 0);
 }
 
 /**
@@ -411,7 +496,9 @@ export async function buildOfflineGeminiContext(
   opts.onProgress?.(scanned.length, plan.toScan.length);
   // Selected scope: send the selected messages themselves (newest first).
   const selection = selectScopedForGemini(scanned, selectedScope ? [] : plan.terms);
-  const messages: MessageRef[] = selection.chosen.map((c) => ({
+  // Never more than exist in the scope.
+  const chosen = selection.chosen.slice(0, rows.length);
+  const messages: MessageRef[] = chosen.map((c) => ({
     id: c.m.id,
     threadId: c.m.threadId,
     accountId: c.m.accountId,
@@ -429,6 +516,7 @@ export async function buildOfflineGeminiContext(
     matched: selection.matched,
     sent: messages.length,
     totalChars: selection.totalChars,
+    facts: computeOfflineScopeFacts(scope, rows, messages.length),
   };
 }
 

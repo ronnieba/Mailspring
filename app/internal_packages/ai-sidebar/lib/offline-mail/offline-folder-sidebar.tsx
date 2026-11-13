@@ -22,26 +22,52 @@ export class OfflineFolderSidebar extends OfflineStoreComponent {
       >
         <div
           className={classNames('offline-folder-row', { active, empty: node.totalCount === 0 })}
-          style={{ paddingInlineStart: 8 + node.depth * 14 }}
+          style={{ paddingInlineStart: 4 + node.depth * 16 }}
           data-offline-folder-row="true"
           data-folder-count={node.count}
           onClick={() => s.setFolder(node.path)}
           title={node.displayPath}
         >
-          <span
-            className="offline-folder-toggle"
-            onClick={(e) => {
-              e.stopPropagation();
-              if (hasChildren) {
+          {hasChildren ? (
+            <button
+              type="button"
+              className={classNames('offline-folder-toggle', { open })}
+              aria-expanded={open}
+              aria-label="הרחב / כווץ תיקיות משנה"
+              title="הרחב / כווץ תיקיות משנה"
+              data-offline-folder-toggle="true"
+              onClick={(e) => {
+                e.stopPropagation();
                 s.toggleExpanded(node.path);
-              }
-            }}
-          >
-            {hasChildren ? (open ? '▾' : '▸') : ''}
-          </span>
+              }}
+              onDoubleClick={(e) => e.stopPropagation()}
+            >
+              <svg viewBox="0 0 16 16" width="14" height="14" aria-hidden="true">
+                <path
+                  d="M6 3.5 10.5 8 6 12.5"
+                  fill="none"
+                  stroke="currentColor"
+                  strokeWidth="2.2"
+                  strokeLinecap="round"
+                  strokeLinejoin="round"
+                />
+              </svg>
+            </button>
+          ) : (
+            <span className="offline-folder-toggle-spacer" aria-hidden="true" />
+          )}
           <span className="offline-folder-name" dir="auto">
             {node.name}
           </span>
+          {hasChildren && !open ? (
+            <span
+              className="offline-folder-subcount"
+              title={`${node.children.length} תיקיות משנה`}
+              data-offline-folder-subcount={node.children.length}
+            >
+              +{node.children.length}
+            </span>
+          ) : null}
           <span className="offline-folder-count">
             {hasChildren && !open ? node.totalCount : node.count}
           </span>

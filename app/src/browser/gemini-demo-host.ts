@@ -24,6 +24,7 @@ import {
   GeminiDemoStatus,
   GeminiHostFailure,
   GeminiHostResult,
+  GeminiScopeFacts,
   NON_SYNTHETIC_SOURCE_REASON,
   OFFLINE_ARCHIVE_SCOPE_REASON,
   OFFLINE_SCOPED_MAX_MESSAGES,
@@ -34,6 +35,7 @@ import {
   isAllowedGeminiEndpoint,
   isOfflineArchiveMailRef,
   isSyntheticDemoMailRef,
+  sanitizeGeminiScopeFacts,
   unconfiguredGeminiStatus,
 } from './gemini-demo-protocol';
 import { getCapturedGeminiDemoCredentials } from './gemini-demo-secret';
@@ -404,10 +406,27 @@ function readTokens(body: Record<string, unknown>): number {
   return input + output;
 }
 
+export function formatScopeFacts(f: GeminiScopeFacts): string {
+  const scope =
+    f.scopeKind === 'selected'
+      ? 'messages the user selected'
+      : f.scopeKind === 'folder'
+        ? `one folder the user selected (${f.includesSubfolders ? 'including' : 'NOT including'} subfolders)`
+        : 'the whole local mail copy';
+  return [
+    `scope=${scope}`,
+    `total_messages_in_scope=${f.totalInScope}`,
+    `messages_sent_to_you=${f.sent}`,
+    `oldest_message_date=${f.oldest || 'unknown'}`,
+    `newest_message_date=${f.newest || 'unknown'}`,
+    `distinct_senders=${f.distinctSenders}`,
+  ].join('\n');
+}
+
 export function buildUntrustedGeminiInput(
   query: string,
   messages: GeminiDemoMailRef[],
-  opts?: { includeBody?: boolean }
+  opts?: { includeBody?: boolean; scopeFacts?: GeminiScopeFacts }
 ): string {
   const includeBody = opts?.includeBody === true;
   const serialized = messages
@@ -425,7 +444,10 @@ export function buildUntrustedGeminiInput(
       return lines.join('\n');
     })
     .join('\n---\n');
-  return `<<<QUERY>>>\n${query}\n<<<END_QUERY>>>\n<<<MESSAGES>>>\n${serialized}\n<<<END_MESSAGES>>>`;
+  const facts = opts?.scopeFacts
+    ? `<<<SCOPE_FACTS>>>\n${formatScopeFacts(opts.scopeFacts)}\n<<<END_SCOPE_FACTS>>>\n`
+    : '';
+  return `${facts}<<<QUERY>>>\n${query}\n<<<END_QUERY>>>\n<<<MESSAGES>>>\n${serialized}\n<<<END_MESSAGES>>>`;
 }
 
 function admitOfflineArchiveQuery(req: GeminiDemoQueryInput): GeminiHostFailure | null {
@@ -597,6 +619,9 @@ export async function runGeminiDemoQuery(
             : GEMINI_SYSTEM_INSTRUCTION,
       input: buildUntrustedGeminiInput(req.query, req.messages, {
         includeBody: realSelectedSummary || offlineArchive,
+        scopeFacts: offlineScoped
+          ? sanitizeGeminiScopeFacts(req.scopeFacts, req.messages.length)
+          : undefined,
       }),
       response_format: GEMINI_RESPONSE_FORMAT,
     });

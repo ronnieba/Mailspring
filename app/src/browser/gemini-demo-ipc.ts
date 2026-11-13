@@ -8,6 +8,7 @@ import path from 'path';
 import { IpcMain } from 'electron';
 import { handleFromMailspringWindows } from './trusted-ipc';
 import {
+  sanitizeGeminiScopeFacts,
   GEMINI_IPC_CANCEL,
   GEMINI_IPC_QUERY,
   GEMINI_IPC_STATUS,
@@ -110,14 +111,19 @@ function parseQuery(raw: unknown): GeminiDemoQueryInput {
     typeof r.snapshotEpoch === 'number' && Number.isFinite(r.snapshotEpoch)
       ? r.snapshotEpoch
       : undefined;
+  const messages = asMessages(r.messages);
   return {
     generation,
     query,
-    messages: asMessages(r.messages),
+    messages,
     timeoutMs,
     mode,
     allowedMessageId,
     snapshotEpoch,
+    scopeFacts:
+      mode === 'offline-archive-scoped'
+        ? sanitizeGeminiScopeFacts(r.scopeFacts, messages.length)
+        : undefined,
   };
 }
 
