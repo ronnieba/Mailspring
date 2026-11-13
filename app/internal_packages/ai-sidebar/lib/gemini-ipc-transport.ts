@@ -61,6 +61,35 @@ export function proofreadDraftViaIpc(
   });
 }
 
+/** The only fields the open-draft assist ever sends (see buildDraftAssistRequest). */
+export interface DraftAssistIpcRequest {
+  request: string;
+  draftText: string;
+  draftSubject?: string;
+}
+
+/**
+ * Local drafts: ask Gemini about the open draft (explicit Send only).
+ * Sends the user's request + the draft's plain text (+ subject only when
+ * ticked). Never recipients, never mail. The main process records usage.
+ */
+export function draftAssistViaIpc(
+  generation: number,
+  req: DraftAssistIpcRequest
+): Promise<GeminiHostResult> {
+  const payload: Record<string, unknown> = {
+    generation,
+    query: req.request,
+    messages: [],
+    mode: 'offline-draft-assist',
+    draftText: req.draftText,
+  };
+  if (typeof req.draftSubject === 'string') {
+    payload.draftSubject = req.draftSubject;
+  }
+  return ipcRenderer.invoke(GEMINI_IPC_QUERY, payload);
+}
+
 /** Local usage ledger (main process). Counts and estimates only. */
 export const geminiUsageIpc = {
   get(): Promise<GeminiUsageSummary | null> {

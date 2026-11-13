@@ -555,6 +555,26 @@ export class OfflineDraftEditor extends DraftsComponent<Record<string, never>, E
             </button>
           </div>
         ) : null}
+        {s.aiNotice && s.aiNotice.draftId === d.id ? (
+          <div
+            className={`offline-proof offline-proof-notice offline-ai-notice${s.aiNotice.warn ? ' warn' : ''}`}
+            data-offline-ai-notice={s.aiNotice.warn ? 'warn' : 'ok'}
+          >
+            {s.aiNotice.text}
+            {s.canUndoAi ? (
+              <button
+                className="btn btn-small"
+                data-offline-ai-undo="true"
+                onClick={() => s.undoAi()}
+              >
+                {tr('↩️ בטל', '↩️ Undo')}
+              </button>
+            ) : null}
+            <button className="btn btn-small" onClick={() => s.dismissAiNotice()}>
+              {tr('סגור', 'Close')}
+            </button>
+          </div>
+        ) : null}
         <OfflineRichEditor
           draftId={d.id}
           rev={s.contentRev}

@@ -32,6 +32,7 @@ export const DEMO_EXHAUSTIVE_COUNTS: { [K in ResolvedScope['mode']]: number } = 
   'selected-messages': 2,
   'current-folder': 5,
   'all-mail': 6,
+  'open-draft': 0,
 };
 
 /**

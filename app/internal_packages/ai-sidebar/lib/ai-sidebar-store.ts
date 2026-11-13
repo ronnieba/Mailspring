@@ -31,7 +31,14 @@ import {
 } from './core/scope-answers';
 import { tr } from './core/offline-i18n';
 import { nextQueryGeneration, shouldAcceptAssistantResponse } from './core/query-generation';
-import { createGeminiIpcTransport, geminiUsageIpc } from './gemini-ipc-transport';
+import {
+  createGeminiIpcTransport,
+  draftAssistViaIpc,
+  DraftAssistIpcRequest,
+  geminiUsageIpc,
+} from './gemini-ipc-transport';
+import { offlineDraftsStore } from './offline-mail/offline-drafts-store';
+import { buildDraftAssistRequest, splitDraftForAssist } from './core/offline-draft-assist';
 import { mailspringAdapter } from './mailspring-adapter';
 import {
   areSyntheticDemoSources,
@@ -60,6 +67,8 @@ import {
   GeminiUsageSummary,
   GEMINI_DISPLAY_NAME,
   GeminiDemoStatus,
+  GeminiHostResult,
+  isGeminiHostFailure,
   OFFLINE_ARCHIVE_SCOPE_REASON,
   REAL_SELECTED_SCOPE_REASON,
   unconfiguredGeminiStatus,
@@ -77,6 +86,30 @@ const DEFAULT_BUDGET: ProcessingBudget = {
 
 const MAX_MESSAGES_PER_BATCH = 50;
 
+/** Open-draft scope: resolved locally from the drafts store (no catalog, no mail). */
+export function resolveOpenDraftScope(): ResolvedScope {
+  const d = offlineDraftsStore.open;
+  const own = d ? splitDraftForAssist(d.body).own : '';
+  const chars = own.trim() ? own.length : 0;
+  return {
+    mode: 'open-draft',
+    accountIds: [],
+    isEmpty: !d,
+    messageCount: 0,
+    description: !d
+      ? tr('אין טיוטה פתוחה', 'No draft is open')
+      : chars
+        ? tr(
+            `📝 הטיוטה הפתוחה · ${chars.toLocaleString()} תווים · בלחיצה על "שלח" נשלח רק טקסט הטיוטה (בלי נמענים ובלי ציטוט)`,
+            `📝 The open draft · ${chars.toLocaleString()} characters · "Send" sends only the draft text (no recipients, no quote)`
+          )
+        : tr(
+            '📝 הטיוטה הפתוחה ריקה - כתוב בה משהו ואז בקש עזרה',
+            '📝 The open draft is empty - write something, then ask for help'
+          ),
+  };
+}
+
 interface AISidebarState {
   scopeMode: ScopeMode;
   resolvedScope: ResolvedScope | null;
@@ -93,7 +126,15 @@ interface AISidebarState {
   progressPhase: 'local' | 'gemini' | null;
   /** Local usage ledger summary (offline experiment). Null when unavailable. */
   geminiUsage: GeminiUsageSummary | null;
+  /** Open-draft scope: also send the subject (off unless the user ticks it). */
+  draftIncludeSubject: boolean;
 }
+
+/** Sends one open-draft request; injectable so tests never touch IPC. */
+export type DraftAssistTransport = (
+  generation: number,
+  req: DraftAssistIpcRequest
+) => Promise<GeminiHostResult>;
 
 const OFFLINE_SEND_TIMEOUT_MS = 60000;
 
@@ -114,7 +155,11 @@ class AISidebarStore extends MailspringStore {
     geminiStatus: unconfiguredGeminiStatus(isDemoMode(), 'Gemini status not refreshed yet'),
     progressPhase: null,
     geminiUsage: null,
+    draftIncludeSubject: false,
   };
+  private _draftAssistTransport: DraftAssistTransport = draftAssistViaIpc;
+  /** Scope to go back to when the open draft closes (auto-selected scope). */
+  private _scopeBeforeDraft: ScopeMode | null = null;
   private _realSnapshotEpoch = 0;
   private _inFlightMessageId: string | null = null;
   private _inFlightSnapshotEpoch = 0;
@@ -161,6 +206,40 @@ class AISidebarStore extends MailspringStore {
     this._state.scopeMode = mode;
     await this._resolveScope();
     this.trigger();
+  }
+
+  /** Tests only: replace the IPC transport for the open-draft scope. */
+  setDraftAssistTransportForTests(t: DraftAssistTransport) {
+    this._draftAssistTransport = t;
+  }
+
+  setDraftIncludeSubject(on: boolean) {
+    this._state.draftIncludeSubject = !!on;
+    this.trigger();
+  }
+
+  /**
+   * Called when the open local draft changes: a newly opened draft selects
+   * the 'open-draft' scope; closing it restores the previous scope. Picking
+   * another scope by hand while a draft is open is respected.
+   */
+  async onOpenDraftChanged(openDraftId: string | null, previousOpenId: string | null) {
+    if (openDraftId && openDraftId !== previousOpenId) {
+      if (this._state.scopeMode !== 'open-draft') {
+        this._scopeBeforeDraft = this._state.scopeMode;
+        await this.setScopeMode('open-draft');
+        return;
+      }
+    } else if (!openDraftId && this._state.scopeMode === 'open-draft') {
+      const back = this._scopeBeforeDraft || 'selected-messages';
+      this._scopeBeforeDraft = null;
+      await this.setScopeMode(back);
+      return;
+    }
+    if (this._state.scopeMode === 'open-draft') {
+      await this._resolveScope();
+      this.trigger();
+    }
   }
 
   /**
@@ -229,6 +308,11 @@ class AISidebarStore extends MailspringStore {
   }
 
   private async _resolveScope() {
+    if (this._state.scopeMode === 'open-draft') {
+      this._state.resolvedScope = resolveOpenDraftScope();
+      this._state.error = null;
+      return;
+    }
     try {
       this._state.resolvedScope = await mailspringAdapter.resolveScope(this._state.scopeMode);
       this._state.error = null;
@@ -380,6 +464,10 @@ class AISidebarStore extends MailspringStore {
       });
 
     try {
+      if (scope.mode === 'open-draft') {
+        await this._runDraftAssist(query, startedGeneration, stillCurrent);
+        return;
+      }
       // Offline: pure metadata questions (how many messages, date range, how
       // many senders) are answered exactly from the local scope, for free.
       if (
@@ -617,6 +705,96 @@ class AISidebarStore extends MailspringStore {
       }
       void this.refreshGeminiUsage();
     }
+  }
+
+  /**
+   * Open-draft scope: ONE request with the user's request + the open draft's
+   * own plain text (subject only if ticked). No recipients, no quoted or
+   * forwarded mail, no archive messages, no citations needed.
+   */
+  private async _runDraftAssist(
+    query: string,
+    startedGeneration: number,
+    stillCurrent: () => boolean
+  ) {
+    const d = offlineDraftsStore.open;
+    const sys = (content: string) =>
+      this._state.conversation.push({
+        id: `system-${Date.now()}`,
+        role: 'system',
+        content,
+        timestamp: new Date(),
+      });
+    if (!d) {
+      sys(tr('אין טיוטה פתוחה. לא נשלח דבר.', 'No draft is open. Nothing was sent.'));
+      return;
+    }
+    const built = buildDraftAssistRequest(d, query, this._state.draftIncludeSubject);
+    if (built.ok === false) {
+      sys(
+        built.reason === 'empty-draft'
+          ? tr(
+              'הטיוטה ריקה (בלי הטקסט המצוטט). כתוב משהו קודם. לא נשלח דבר.',
+              'The draft is empty (quoted text not counted). Write something first. Nothing was sent.'
+            )
+          : built.reason === 'too-long'
+            ? tr(
+                'הטיוטה ארוכה מדי (עד 20,000 תווים). לא נשלח דבר.',
+                'The draft is too long (max 20,000 characters). Nothing was sent.'
+              )
+            : tr('הבקשה ריקה או ארוכה מדי.', 'The request is empty or too long.')
+      );
+      return;
+    }
+    await this.refreshGeminiStatus();
+    if (!this._state.geminiStatus.configured) {
+      sys(
+        tr(
+          'Gemini לא מחובר, ולכן אי אפשר לעזור בטיוטה. לא נשלח דבר.',
+          'Gemini is not connected, so draft help is unavailable. Nothing was sent.'
+        )
+      );
+      return;
+    }
+    this._state.progressPhase = 'gemini';
+    this.trigger();
+    const result = await this._draftAssistTransport(startedGeneration, built.req);
+    if (!stillCurrent()) {
+      return;
+    }
+    if (isGeminiHostFailure(result)) {
+      const failure = new Error(result.message) as Error & { geminiReason?: string };
+      failure.geminiReason = result.reason;
+      throw failure;
+    }
+    const payload = result.payload;
+    const kind = payload.draftKind === 'rewrite' ? 'rewrite' : 'answer';
+    const text = String(payload.response || '');
+    const sentChars = built.req.draftText.length;
+    const quoted = splitDraftForAssist(d.body).tail ? 1 : 0;
+    const tokens = payload.tokensUsed
+      ? tr(` · ${payload.tokensUsed} טוקנים`, ` · ${payload.tokensUsed} tokens`)
+      : '';
+    const note =
+      tr(
+        `📝 נשלח ל-Gemini רק טקסט הטיוטה (${sentChars.toLocaleString()} תווים)` +
+          (built.req.draftSubject ? ' והנושא' : '') +
+          (quoted ? ', בלי הציטוט' : '') +
+          ', בלי נמענים.',
+        `📝 Sent to Gemini: only the draft text (${sentChars.toLocaleString()} characters)` +
+          (built.req.draftSubject ? ' and the subject' : '') +
+          (quoted ? ', without the quote' : '') +
+          ', no recipients.'
+      ) + tokens;
+    this._state.conversation.push({
+      id: `assistant-${Date.now()}`,
+      role: 'assistant',
+      content: `${text}\n\n---\n${note}`,
+      citations: [],
+      timestamp: new Date(),
+      isMock: false,
+      draftAssist: { draftId: d.id, kind, text },
+    });
   }
 
   /**

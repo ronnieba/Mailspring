@@ -78,6 +78,27 @@ export function registerOfflineMailBrowser(archivePath: string, sidebar: any) {
       setTimeout(() => offlineAddressBook.rebuild(index), 50);
     }
   });
+  // AI panel: an open draft becomes the "📝 open draft" scope automatically;
+  // closing it goes back to the previous scope.
+  let openDraftId: string | null = null;
+  let draftScopeTimer: ReturnType<typeof setTimeout> | null = null;
+  offlineDraftsStore.listen(() => {
+    const cur =
+      offlineDraftsStore.showing && offlineDraftsStore.open ? offlineDraftsStore.open.id : null;
+    const prev = openDraftId;
+    openDraftId = cur;
+    if (cur !== prev) {
+      void AISidebarStore.onOpenDraftChanged(cur, prev);
+      return;
+    }
+    if (cur && !draftScopeTimer) {
+      // Typing: refresh the character count now and then, not per keystroke.
+      draftScopeTimer = setTimeout(() => {
+        draftScopeTimer = null;
+        void AISidebarStore.onOpenDraftChanged(openDraftId, openDraftId);
+      }, 400);
+    }
+  });
   window.addEventListener('beforeunload', () => offlineDraftsStore.flush());
   (window as any).__offlineMail = {
     summary: () => offlineMailStore.summary(),

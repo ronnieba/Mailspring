@@ -37,7 +37,8 @@ export interface FolderRef {
 }
 
 /** User's explicit scope choice */
-export type ScopeMode = 'selected-messages' | 'current-folder' | 'all-mail';
+/** 'open-draft' (offline experiment): the local draft that is open right now. */
+export type ScopeMode = 'selected-messages' | 'current-folder' | 'all-mail' | 'open-draft';
 
 /** Resolved scope with actual IDs */
 export interface ResolvedScope {
@@ -105,6 +106,8 @@ export interface ConversationMessage {
   isMock?: boolean;
   /** Gemini failure class (billing-exhausted, rate-limited, invalid-key...). */
   geminiErrorKind?: string;
+  /** Open-draft scope: the answer can be applied to this draft. */
+  draftAssist?: { draftId: string; kind: 'rewrite' | 'answer'; text: string };
 }
 
 /** Processing budget/limits */

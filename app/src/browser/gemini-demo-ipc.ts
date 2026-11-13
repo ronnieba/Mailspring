@@ -104,7 +104,8 @@ function parseQuery(raw: unknown): GeminiDemoQueryInput {
     r.mode === 'demo-synthetic' ||
     r.mode === 'offline-archive-selected' ||
     r.mode === 'offline-archive-scoped' ||
-    r.mode === 'offline-draft-proofread'
+    r.mode === 'offline-draft-proofread' ||
+    r.mode === 'offline-draft-assist'
       ? r.mode
       : undefined;
   const allowedMessageId = typeof r.allowedMessageId === 'string' ? r.allowedMessageId : undefined;
@@ -113,7 +114,10 @@ function parseQuery(raw: unknown): GeminiDemoQueryInput {
       ? r.snapshotEpoch
       : undefined;
   // Proofreading carries draft text only; any mail passed along is dropped.
-  const messages = mode === 'offline-draft-proofread' ? [] : asMessages(r.messages);
+  // Open-draft assist likewise: only the draft text (+ subject if ticked).
+  const draftAssist = mode === 'offline-draft-assist';
+  const messages =
+    mode === 'offline-draft-proofread' ? [] : draftAssist ? [] : asMessages(r.messages);
   return {
     generation,
     query,
@@ -126,6 +130,12 @@ function parseQuery(raw: unknown): GeminiDemoQueryInput {
       mode === 'offline-archive-scoped'
         ? sanitizeGeminiScopeFacts(r.scopeFacts, messages.length)
         : undefined,
+    ...(draftAssist
+      ? {
+          draftText: typeof r.draftText === 'string' ? r.draftText : '',
+          ...(typeof r.draftSubject === 'string' ? { draftSubject: r.draftSubject } : {}),
+        }
+      : {}),
   };
 }
 

@@ -214,6 +214,10 @@ export class MailspringAdapter implements MailAdapter {
   }
 
   async resolveScope(mode: ScopeMode): Promise<ResolvedScope> {
+    if (mode === 'open-draft') {
+      // Resolved by the AI store from the local drafts (never from mail).
+      return { mode, accountIds: [], description: '', isEmpty: true, messageCount: 0 };
+    }
     const s = this.stores();
     if (s.isDemoMode()) {
       return getDemoScope(mode);

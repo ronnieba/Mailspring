@@ -12,6 +12,7 @@ import {
   OFFLINE_PROOFREAD_MAX_CHARS,
   OfflineDraft,
   OfflineDraftSource,
+  draftHtml,
   makeForwardDraft,
   makeNewDraft,
   makeReplyDraft,
@@ -37,6 +38,7 @@ import {
 
 /** A file carried over from an archive message (forward). */
 export type DraftFileBytes = { filename: string; contentType: string; data: Buffer };
+import { appendDraftHtml, replaceDraftHtml } from '../core/offline-draft-assist';
 import {
   applyProofToHtml,
   htmlToPlain,
@@ -86,6 +88,9 @@ export class OfflineDraftsStore {
   contentRev = 0;
   /** Shown after applying proofreading when some changes could not be applied safely. */
   proofNotice: string | null = null;
+  /** After an AI rewrite was applied: what happened + undo available. */
+  aiNotice: { draftId: string; text: string; warn: boolean } | null = null;
+  private _aiUndo: { draftId: string; html: string } | null = null;
 
   private _dir: string | null = null;
   private _listeners = new Set<Listener>();
@@ -156,6 +161,9 @@ export class OfflineDraftsStore {
     this.showing = true;
     this.openId = id;
     this.proofNotice = null;
+    if (this.aiNotice && this.aiNotice.draftId !== id) {
+      this.aiNotice = null;
+    }
     if (this.proof.draftId !== id) {
       this.proof = IDLE_PROOF();
     }
@@ -473,6 +481,72 @@ export class OfflineDraftsStore {
     this.flush();
     this._emit();
     return true;
+  }
+
+  /**
+   * Put an AI answer into the draft: 'replace' the user's own text (quoted
+   * mail below it is kept) or 'append' after it. Keeps the formatting when
+   * the change maps onto the existing paragraphs, otherwise falls back to
+   * plain paragraphs and says so. One-step undo via undoAi().
+   */
+  applyAiText(id: string, text: string, how: 'replace' | 'append'): boolean {
+    const d = this.drafts.find((x) => x.id === id);
+    if (!d || !String(text || '').trim()) {
+      return false;
+    }
+    const before = draftHtml(d);
+    const res =
+      how === 'replace'
+        ? replaceDraftHtml(before, d.body, text)
+        : appendDraftHtml(before, d.body, text);
+    this._aiUndo = { draftId: id, html: before };
+    this.update(id, { html: res.html });
+    this.aiNotice = {
+      draftId: id,
+      warn: !res.formattingKept,
+      text: res.formattingKept
+        ? how === 'replace'
+          ? tr('✨ הטקסט מה-AI הוחל על הטיוטה.', '✨ The AI text replaced the draft.')
+          : tr('✨ הטקסט מה-AI נוסף בסוף הטיוטה.', '✨ The AI text was added at the end.')
+        : tr(
+            '⚠️ הטקסט מה-AI הוחל, אבל העיצוב (מודגש, צבעים וכו׳) לא נשמר - הטקסט הוכנס כפסקאות רגילות.',
+            '⚠️ The AI text was applied, but formatting (bold, colours, etc.) was not kept - it was inserted as plain paragraphs.'
+          ),
+    };
+    this.contentRev++;
+    this.flush();
+    this._emit();
+    return true;
+  }
+
+  get canUndoAi(): boolean {
+    return !!this._aiUndo && this.drafts.some((x) => x.id === this._aiUndo?.draftId);
+  }
+
+  undoAi(): boolean {
+    const u = this._aiUndo;
+    if (!u || !this.drafts.some((x) => x.id === u.draftId)) {
+      return false;
+    }
+    this._aiUndo = null;
+    this.update(u.draftId, { html: u.html });
+    this.aiNotice = {
+      draftId: u.draftId,
+      warn: false,
+      text: tr(
+        '↩️ השינוי בוטל - הטיוטה חזרה למה שהיה.',
+        '↩️ Undone - the draft is back to what it was.'
+      ),
+    };
+    this.contentRev++;
+    this.flush();
+    this._emit();
+    return true;
+  }
+
+  dismissAiNotice() {
+    this.aiNotice = null;
+    this._emit();
   }
 
   dismissProofNotice() {

@@ -8,7 +8,9 @@ import { FluxContainer, Spinner } from 'mailspring-component-kit';
 import AISidebarStore from './ai-sidebar-store';
 import { ScopeMode, RetrievalMode, ConversationMessage, Citation } from './core/types';
 import { DemoMessagePreview, isDemoMode } from './synthetic-demo';
-import { shell } from 'electron';
+import { clipboard, shell } from 'electron';
+import { offlineDraftsStore } from './offline-mail/offline-drafts-store';
+import { DRAFT_QUICK_ACTIONS } from './core/offline-draft-assist';
 import { tr, offlineDir, offlineDateLocale } from './core/offline-i18n';
 import {
   GEMINI_BILLING_URL,
@@ -102,6 +104,11 @@ interface AISidebarState {
   usageExpanded: boolean;
   usageResetArmed: boolean;
   budgetDraft: string;
+  draftIncludeSubject: boolean;
+  /** Bumped on local-drafts changes (apply/undo buttons). */
+  draftsRev: number;
+  /** Message id whose answer was just copied (brief "copied" label). */
+  copiedId: string | null;
 }
 
 /** Within this many px of the bottom counts as "following" the conversation. */
@@ -126,6 +133,7 @@ class AISidebarInner extends React.Component<Record<string, never>, AISidebarSta
   private _unsubscribe: (() => void) | null = null;
   private _unsubFocus: (() => void) | null = null;
   private _unsubMsg: (() => void) | null = null;
+  private _unsubDrafts: (() => void) | null = null;
 
   state: AISidebarState = {
     scopeMode: isDemoMode() ? 'all-mail' : 'selected-messages',
@@ -148,6 +156,9 @@ class AISidebarInner extends React.Component<Record<string, never>, AISidebarSta
     usageExpanded: false,
     usageResetArmed: false,
     budgetDraft: '',
+    draftIncludeSubject: false,
+    draftsRev: 0,
+    copiedId: null,
   };
 
   componentDidMount() {
@@ -169,6 +180,7 @@ class AISidebarInner extends React.Component<Record<string, never>, AISidebarSta
         geminiStatus: storeState.geminiStatus,
         progressPhase: storeState.progressPhase,
         geminiUsage: storeState.geminiUsage,
+        draftIncludeSubject: storeState.draftIncludeSubject,
       });
     });
 
@@ -202,6 +214,9 @@ class AISidebarInner extends React.Component<Record<string, never>, AISidebarSta
     }
     if (isOfflineArchiveMode()) {
       void AISidebarStore.refreshScope();
+      this._unsubDrafts = offlineDraftsStore.listen(() =>
+        this.setState((s) => ({ draftsRev: s.draftsRev + 1 }))
+      );
     }
 
     if (isDemoMode()) {
@@ -242,6 +257,9 @@ class AISidebarInner extends React.Component<Record<string, never>, AISidebarSta
   }
 
   componentWillUnmount() {
+    if (this._unsubDrafts) {
+      this._unsubDrafts();
+    }
     if (this._themeSub) {
       this._themeSub.dispose();
     }
@@ -555,6 +573,20 @@ class AISidebarInner extends React.Component<Record<string, never>, AISidebarSta
           >
             {tr('📬 הכל', '📬 All')}
           </button>
+          {isOfflineArchiveMode() && (
+            <button
+              className={classNames('scope-btn', { active: scopeMode === 'open-draft' })}
+              onClick={() => this._onScopeModeChange('open-draft')}
+              title={tr(
+                'הטיוטה הפתוחה - נשלח רק טקסט הטיוטה',
+                'The open draft - only the draft text is sent'
+              )}
+              aria-label={tr('טיוטה פתוחה', 'Open draft')}
+              data-scope-mode="open-draft"
+            >
+              {tr('📝 טיוטה פתוחה', '📝 Open draft')}
+            </button>
+          )}
         </div>
 
         {resolvedScope && (
@@ -569,44 +601,172 @@ class AISidebarInner extends React.Component<Record<string, never>, AISidebarSta
           >
             {resolvedScope.isEmpty ? (
               <span className="empty-scope">
-                {scopeMode === 'selected-messages'
-                  ? isOfflineArchiveMode()
-                    ? tr(
-                        'ℹ️ עוד לא סימנת הודעות. סמן הודעות ברשימה, או בחר "תיקייה" / "הכל".',
-                        'ℹ️ No messages marked yet. Mark messages in the list, or choose "Folder" / "All".'
-                      )
-                    : '❌ לא נבחרו הודעות - בחר הודעות מהרשימה'
-                  : tr('❌ אין הודעות בטווח', '❌ No messages in this range')}
+                {scopeMode === 'open-draft'
+                  ? tr(
+                      'ℹ️ אין טיוטה פתוחה. פתח טיוטה (כרטיסיית "טיוטות" > חדשה / השב / העבר), והטווח יעבור אליה לבד.',
+                      'ℹ️ No draft is open. Open a draft (Drafts tab > New / Reply / Forward) and the range switches to it.'
+                    )
+                  : scopeMode === 'selected-messages'
+                    ? isOfflineArchiveMode()
+                      ? tr(
+                          'ℹ️ עוד לא סימנת הודעות. סמן הודעות ברשימה, או בחר "תיקייה" / "הכל". כשטיוטה פתוחה אפשר לבחור "📝 טיוטה פתוחה".',
+                          'ℹ️ No messages marked yet. Mark messages in the list, or choose "Folder" / "All". With a draft open you can choose "📝 Open draft".'
+                        )
+                      : '❌ לא נבחרו הודעות - בחר הודעות מהרשימה'
+                    : tr('❌ אין הודעות בטווח', '❌ No messages in this range')}
               </span>
             ) : (
               <span className="scope-description">{resolvedScope.description}</span>
             )}
           </div>
         )}
-        {this._renderGeminiEstimate()}
+        {scopeMode === 'open-draft' ? (
+          this._renderDraftTools()
+        ) : (
+          <>
+            {this._renderGeminiEstimate()}
 
-        <div className="retrieval-mode" data-retrieval-mode={this.state.retrievalMode}>
-          <label>
-            <input
-              type="radio"
-              name="retrieval"
-              checked={this.state.retrievalMode === 'ranked'}
-              onChange={() => this._onRetrievalModeChange('ranked')}
-              aria-label={tr('דירוג (מהיר)', 'Ranked (fast)')}
-            />
-            <span>{tr('דירוג (מהיר)', 'Ranked (fast)')}</span>
-          </label>
-          <label>
-            <input
-              type="radio"
-              name="retrieval"
-              checked={this.state.retrievalMode === 'exhaustive'}
-              onChange={() => this._onRetrievalModeChange('exhaustive')}
-              aria-label={tr('סריקה מלאה', 'Full scan')}
-            />
-            <span>{tr('סריקה מלאה', 'Full scan')}</span>
-          </label>
+            <div className="retrieval-mode" data-retrieval-mode={this.state.retrievalMode}>
+              <label>
+                <input
+                  type="radio"
+                  name="retrieval"
+                  checked={this.state.retrievalMode === 'ranked'}
+                  onChange={() => this._onRetrievalModeChange('ranked')}
+                  aria-label={tr('דירוג (מהיר)', 'Ranked (fast)')}
+                />
+                <span>{tr('דירוג (מהיר)', 'Ranked (fast)')}</span>
+              </label>
+              <label>
+                <input
+                  type="radio"
+                  name="retrieval"
+                  checked={this.state.retrievalMode === 'exhaustive'}
+                  onChange={() => this._onRetrievalModeChange('exhaustive')}
+                  aria-label={tr('סריקה מלאה', 'Full scan')}
+                />
+                <span>{tr('סריקה מלאה', 'Full scan')}</span>
+              </label>
+            </div>
+          </>
+        )}
+      </div>
+    );
+  }
+
+  /** Open-draft scope: subject opt-in + quick action chips. */
+  _renderDraftTools() {
+    const { resolvedScope, isProcessing, draftIncludeSubject } = this.state;
+    const ready = !!resolvedScope && !resolvedScope.isEmpty && !isProcessing;
+    return (
+      <div className="ai-draft-tools" dir={offlineDir()} data-ai-draft-tools="true">
+        <div
+          className="ai-draft-chips"
+          role="group"
+          aria-label={tr('פעולות מהירות', 'Quick actions')}
+        >
+          {DRAFT_QUICK_ACTIONS.map((a) => (
+            <button
+              key={a.id}
+              type="button"
+              className="ai-draft-chip"
+              data-ai-draft-chip={a.id}
+              disabled={!ready}
+              onClick={() =>
+                void AISidebarStore.submitQuery(a.request, { displayLabel: `📝 ${tr(a.he, a.en)}` })
+              }
+            >
+              {tr(a.he, a.en)}
+            </button>
+          ))}
         </div>
+        <label className="ai-draft-subject">
+          <input
+            type="checkbox"
+            checked={draftIncludeSubject}
+            data-ai-draft-include-subject="true"
+            onChange={(e) => AISidebarStore.setDraftIncludeSubject(e.target.checked)}
+          />
+          <span>{tr('לשלוח גם את הנושא', 'Also send the subject')}</span>
+        </label>
+        <div className="gemini-estimate">
+          {tr(
+            '✨ נשלח רק בלחיצה: הבקשה וטקסט הטיוטה שלך. בלי נמענים, בלי הטקסט המצוטט/המועבר ובלי קבצים מצורפים.',
+            '✨ Sent only on click: the request and your draft text. No recipients, no quoted/forwarded text and no attachments.'
+          )}
+        </div>
+      </div>
+    );
+  }
+
+  _renderDraftAssistActions(msg: ConversationMessage) {
+    const da = msg.draftAssist;
+    if (!da) {
+      return null;
+    }
+    const draftOpen =
+      offlineDraftsStore.showing &&
+      !!offlineDraftsStore.open &&
+      offlineDraftsStore.open.id === da.draftId;
+    const exists = offlineDraftsStore.drafts.some((x) => x.id === da.draftId);
+    const copied = this.state.copiedId === msg.id;
+    return (
+      <div className="ai-draft-actions" data-ai-draft-actions={da.kind}>
+        {da.kind === 'rewrite' && (
+          <button
+            type="button"
+            className="btn btn-small ai-draft-apply"
+            data-ai-draft-apply="replace"
+            disabled={!exists || this.state.isProcessing}
+            title={tr(
+              'מחליף את הטקסט שלך בטיוטה (הציטוט נשמר). אפשר לבטל.',
+              'Replaces your text in the draft (the quote is kept). Can be undone.'
+            )}
+            onClick={() => offlineDraftsStore.applyAiText(da.draftId, da.text, 'replace')}
+          >
+            {tr('✅ החל על הטיוטה', '✅ Apply to draft')}
+          </button>
+        )}
+        {da.kind === 'rewrite' && (
+          <button
+            type="button"
+            className="btn btn-small"
+            data-ai-draft-apply="append"
+            disabled={!exists || this.state.isProcessing}
+            onClick={() => offlineDraftsStore.applyAiText(da.draftId, da.text, 'append')}
+          >
+            {tr('➕ הוסף בסוף', '➕ Add at the end')}
+          </button>
+        )}
+        <button
+          type="button"
+          className="btn btn-small"
+          data-ai-draft-copy="true"
+          onClick={() => {
+            clipboard.writeText(da.text);
+            this.setState({ copiedId: msg.id });
+            window.setTimeout(() => {
+              if (this.state.copiedId === msg.id) {
+                this.setState({ copiedId: null });
+              }
+            }, 1500);
+          }}
+        >
+          {copied ? tr('✔️ הועתק', '✔️ Copied') : tr('📋 העתק', '📋 Copy')}
+        </button>
+        {offlineDraftsStore.canUndoAi && draftOpen && (
+          <button
+            type="button"
+            className="btn btn-small"
+            data-ai-draft-undo="true"
+            onClick={() => offlineDraftsStore.undoAi()}
+          >
+            {tr('↩️ בטל שינוי', '↩️ Undo change')}
+          </button>
+        )}
+        {!exists && (
+          <span className="ai-draft-gone">{tr('הטיוטה נמחקה', 'The draft was deleted')}</span>
+        )}
       </div>
     );
   }
@@ -822,7 +982,12 @@ class AISidebarInner extends React.Component<Record<string, never>, AISidebarSta
             <b>{tr('תיקייה', 'Folder')}</b>
             {tr(' = התיקייה הפתוחה, ', ' = the open folder, ')}
             <b>{tr('הכל', 'All')}</b>
-            {tr(' = כל תיבת הדואר.', ' = the whole mailbox.')}
+            {tr(' = כל תיבת הדואר, ', ' = the whole mailbox, ')}
+            <b>{tr('📝 טיוטה פתוחה', '📝 Open draft')}</b>
+            {tr(
+              ' = הטיוטה שאתה כותב (נבחר לבד כשטיוטה פתוחה).',
+              ' = the draft you are writing (chosen automatically when a draft is open).'
+            )}
           </li>
           <li>
             {tr(
@@ -836,6 +1001,12 @@ class AISidebarInner extends React.Component<Record<string, never>, AISidebarSta
             {tr(
               '. לחיצה על מקור בתשובה פותחת את ההודעה.',
               '. Clicking a source in the answer opens the message.'
+            )}
+          </li>
+          <li>
+            {tr(
+              'בטיוטה: לחץ על פעולה מהירה (תקצר, רשמי יותר, תרגם…) או כתוב בקשה. כשמתקבל נוסח חדש: "החל על הטיוטה" (אפשר לבטל), "הוסף בסוף" או "העתק".',
+              'In a draft: click a quick action (Shorten, More formal, Translate…) or type a request. When a new version comes back: "Apply to draft" (can be undone), "Add at the end" or "Copy".'
             )}
           </li>
         </ol>
@@ -925,6 +1096,8 @@ class AISidebarInner extends React.Component<Record<string, never>, AISidebarSta
               : tr('💳 פתח יתרה וחיוב ב-Google', '💳 Open balance and billing at Google')}
           </button>
         )}
+
+        {this._renderDraftAssistActions(msg)}
 
         {msg.citations && msg.citations.length > 0 && (
           <div className="message-citations">
@@ -1085,12 +1258,17 @@ class AISidebarInner extends React.Component<Record<string, never>, AISidebarSta
           data-offline-archive-empty={offline ? 'true' : undefined}
         >
           <p>
-            {offline
+            {offline && this.state.scopeMode === 'open-draft'
               ? tr(
-                  'שאל שאלה ולחץ "שלח" (לפי הטווח שנבחר), או בחר הודעה אחת ולחץ "סכם". שום דבר לא נשלח בלי לחיצה.',
-                  'Ask a question and click "Send" (for the chosen range), or select one message and click "Summarize". Nothing is sent without a click.'
+                  'עזרה בטיוטה: לחץ על פעולה מהירה או כתוב בקשה ולחץ "שלח". נשלח רק טקסט הטיוטה שלך, ורק בלחיצה.',
+                  'Draft help: click a quick action or type a request and click "Send". Only your draft text is sent, and only on click.'
                 )
-              : 'בחר הודעה אחת בשרשור. סיכום נשלח רק אחרי לחיצה על Summarize.'}
+              : offline
+                ? tr(
+                    'שאל שאלה ולחץ "שלח" (לפי הטווח שנבחר), בחר הודעה אחת ולחץ "סכם", או פתח טיוטה כדי לקבל עזרה בכתיבה. שום דבר לא נשלח בלי לחיצה.',
+                    'Ask a question and click "Send" (for the chosen range), select one message and click "Summarize", or open a draft to get writing help. Nothing is sent without a click.'
+                  )
+                : 'בחר הודעה אחת בשרשור. סיכום נשלח רק אחרי לחיצה על Summarize.'}
           </p>
           <p>
             {offline
@@ -1263,11 +1441,21 @@ class AISidebarInner extends React.Component<Record<string, never>, AISidebarSta
           className={classNames('input-textarea', { 'has-text': hasText })}
           placeholder={
             resolvedScope?.isEmpty
-              ? tr('בחר הודעות או תיקייה תחילה…', 'Choose messages or a folder first…')
-              : tr(
-                  '✍️ כתוב כאן שאלה ל-AI… (Enter לשליחה)',
-                  '✍️ Type a question for the AI… (Enter to send)'
-                )
+              ? this.state.scopeMode === 'open-draft'
+                ? tr('פתח טיוטה קודם…', 'Open a draft first…')
+                : tr(
+                    'סמן הודעות, בחר תיקייה, או פתח טיוטה…',
+                    'Mark messages, choose a folder, or open a draft…'
+                  )
+              : this.state.scopeMode === 'open-draft'
+                ? tr(
+                    '📝 מה לעשות עם הטיוטה? למשל: "תקצר לשלוש שורות" (Enter לשליחה)',
+                    '📝 What should I do with the draft? e.g. "Shorten to three lines" (Enter to send)'
+                  )
+                : tr(
+                    '✍️ כתוב כאן שאלה ל-AI… (Enter לשליחה)',
+                    '✍️ Type a question for the AI… (Enter to send)'
+                  )
           }
           value={this.state.inputValue}
           onChange={this._onInputChange}
@@ -1291,7 +1479,7 @@ class AISidebarInner extends React.Component<Record<string, never>, AISidebarSta
           >
             {canSend ? tr('שלח ➤', 'Send ➤') : tr('שלח', 'Send')}
           </button>
-          {isOfflineArchiveMode() && (
+          {isOfflineArchiveMode() && this.state.scopeMode !== 'open-draft' && (
             <button
               className="clear-btn"
               onClick={this._onSummarizeSelected}

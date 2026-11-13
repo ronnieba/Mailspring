@@ -531,6 +531,15 @@ export class OfflineRibbon extends React.Component<Record<string, never>, State>
               scope('selected-messages', '☑️', 'נבחרות', 'Selected'),
               scope('current-folder', '📁', 'התיקייה', 'This folder'),
               scope('all-mail', '🗄️', 'כל העותק', 'Whole copy'),
+              {
+                ...scope('open-draft', '📝', 'טיוטה פתוחה', 'Open draft'),
+                title: draft
+                  ? tr(
+                      'לשאול את ה-AI על הטיוטה הפתוחה (נשלח רק טקסט הטיוטה)',
+                      'Ask the AI about the open draft (only the draft text is sent)'
+                    )
+                  : tr('פתח טיוטה קודם (כרטיסיית טיוטות)', 'Open a draft first (Drafts tab)'),
+              },
             ],
           },
           {

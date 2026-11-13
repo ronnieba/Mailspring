@@ -676,6 +676,11 @@ body[class*='less-is-more'] {
   .ai-sidebar h4 {
     color: var(--ofl-fg);
   }
+  .ai-sidebar .ai-draft-tools .ai-draft-chip {
+    background: var(--ofl-surface);
+    color: var(--ofl-fg);
+    border-color: var(--ofl-border);
+  }
   .ai-sidebar .ai-sidebar-scope .scope-btn,
   .ai-sidebar .scope-btn {
     background: var(--ofl-surface);
@@ -690,6 +695,7 @@ body[class*='less-is-more'] {
   }
   .ai-sidebar .gemini-usage button:not(.gemini-usage-line),
   .ai-sidebar .gemini-usage input,
+  .ai-sidebar .ai-draft-actions .btn,
   .ai-sidebar .gemini-billing-btn {
     background: var(--ofl-surface);
     color: var(--ofl-fg);
@@ -2328,4 +2334,9 @@ body[class*='less-is-more'] {
       outline-color: var(--ofl-accent);
     }
   }
+}
+
+// AI text applied to a local draft (undo bar). Warn = formatting not kept.
+.offline-ai-notice.warn {
+  border-color: #e0a100;
 }

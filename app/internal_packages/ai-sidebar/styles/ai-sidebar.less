@@ -1221,3 +1221,59 @@ body.ofl-lang-en .ai-sidebar {
   }
 }
 /*!rtl:end:ignore*/
+
+// Offline: 4th scope ("open draft") wraps on narrow panels.
+.ai-sidebar .ai-sidebar-scope .scope-buttons {
+  flex-wrap: wrap;
+  .scope-btn {
+    min-width: 72px;
+  }
+}
+.ai-sidebar .ai-draft-tools {
+  margin-top: 4px;
+  .ai-draft-chips {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 4px;
+    margin-bottom: 6px;
+  }
+  .ai-draft-chip {
+    padding: 3px 10px;
+    font-size: 12px;
+    border-radius: 12px;
+    border: 1px solid var(--border-color-divider);
+    background: var(--background-secondary);
+    color: var(--text-color);
+    cursor: pointer;
+    &:hover:not(:disabled) {
+      border-color: #34a853;
+    }
+    &:disabled {
+      opacity: 0.5;
+      cursor: default;
+    }
+  }
+  .ai-draft-subject {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    font-size: 11px;
+    color: var(--text-color-subtle);
+  }
+}
+.ai-sidebar .ai-draft-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+  margin-top: 6px;
+  .btn {
+    font-size: 12px;
+  }
+  .ai-draft-apply {
+    font-weight: 700;
+  }
+  .ai-draft-gone {
+    font-size: 11px;
+    opacity: 0.7;
+  }
+}
