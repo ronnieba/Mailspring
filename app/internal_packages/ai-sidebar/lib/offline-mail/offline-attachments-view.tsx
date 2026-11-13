@@ -1,7 +1,7 @@
 /**
  * Offline experiment: attachment list for the reader and for local drafts.
- * Open = copy into a temp folder inside the offline profile, then open with
- * the default app. Save as = a place the user picks (never the archive copy).
+ * View = built-in viewer (reader). Open in app = copy into a temp folder
+ * inside the offline profile, then open with the default app. Save as = a place the user picks (never the archive copy).
  * Files that can run programs need a second, explicit click.
  */
 import React from 'react';
@@ -15,6 +15,8 @@ import {
   isPreviewableImage,
 } from '../core/offline-attachments';
 import { tr } from '../core/offline-i18n';
+import { canViewInApp } from '../core/offline-viewer';
+import { OfflineAttachmentViewer } from './offline-attachment-viewer';
 
 export type AttachmentItem = { key: string; filename: string; contentType: string; size: number };
 
@@ -27,6 +29,8 @@ type Props = {
   onRemove?: (index: number) => void;
   /** Bytes for inline image previews (reader only). */
   loadImage?: (index: number) => Buffer | null;
+  /** Bytes for the built-in viewer (from the profile temp copy); enables "View". */
+  loadForView?: (index: number) => Promise<Buffer>;
   context: 'reader' | 'draft';
 };
 
@@ -35,11 +39,12 @@ type State = {
   status: { kind: 'ok' | 'error'; text: string } | null;
   previews: { [index: number]: string };
   enlarged: number | null;
+  viewing: number | null;
 };
 
 export class OfflineAttachmentList extends React.Component<Props, State> {
   static displayName = 'OfflineAttachmentList';
-  state: State = { confirm: null, status: null, previews: {}, enlarged: null };
+  state: State = { confirm: null, status: null, previews: {}, enlarged: null, viewing: null };
   private _previewKey = '';
   private _timer: ReturnType<typeof setTimeout> | null = null;
 
@@ -66,7 +71,7 @@ export class OfflineAttachmentList extends React.Component<Props, State> {
       this.state.status ||
       Object.keys(this.state.previews).length
     ) {
-      this.setState({ confirm: null, status: null, previews: {}, enlarged: null });
+      this.setState({ confirm: null, status: null, previews: {}, enlarged: null, viewing: null });
     }
     const wanted = this.props.items
       .map((it, i) => ({ it, i }))
@@ -143,7 +148,8 @@ export class OfflineAttachmentList extends React.Component<Props, State> {
     if (!items.length) {
       return null;
     }
-    const { confirm, status, previews, enlarged } = this.state;
+    const { confirm, status, previews, enlarged, viewing } = this.state;
+    const canView = !!this.props.loadForView;
     const total = items.reduce((n, it) => n + (it.size || 0), 0);
     return (
       <div
@@ -172,8 +178,12 @@ export class OfflineAttachmentList extends React.Component<Props, State> {
                   <button
                     type="button"
                     className="offline-attachment-preview"
-                    title={tr('הגדל', 'Enlarge')}
-                    onClick={() => this.setState({ enlarged: enlarged === i ? null : i })}
+                    title={canView ? tr('צפה', 'View') : tr('הגדל', 'Enlarge')}
+                    onClick={() =>
+                      canView
+                        ? this.setState({ viewing: i })
+                        : this.setState({ enlarged: enlarged === i ? null : i })
+                    }
                   >
                     <img src={previews[i]} alt={it.filename} data-offline-attachment-preview={i} />
                   </button>
@@ -190,6 +200,24 @@ export class OfflineAttachmentList extends React.Component<Props, State> {
                   </span>
                 </div>
                 <div className="offline-attachment-actions">
+                  {canView && !danger ? (
+                    <button
+                      type="button"
+                      className="btn btn-small btn-emphasis offline-attachment-view"
+                      data-offline-attachment-view={i}
+                      title={
+                        canViewInApp(it.filename, it.contentType)
+                          ? tr('הצג את הקובץ בתוך התוכנה', 'Show the file inside the app')
+                          : tr(
+                              'אין תצוגה מקדימה לסוג הזה; ייפתח חלון עם אפשרויות',
+                              'No preview for this type; shows the options'
+                            )
+                      }
+                      onClick={() => this.setState({ viewing: i, confirm: null, status: null })}
+                    >
+                      {tr('צפה', 'View')}
+                    </button>
+                  ) : null}
                   <button
                     type="button"
                     className="btn btn-small"
@@ -197,7 +225,7 @@ export class OfflineAttachmentList extends React.Component<Props, State> {
                     title={tr('פתח בתוכנה המתאימה במחשב', 'Open with the default app')}
                     onClick={() => void this._open(i)}
                   >
-                    {tr('פתח', 'Open')}
+                    {canView ? tr('פתח בתוכנה', 'Open in app') : tr('פתח', 'Open')}
                   </button>
                   {this.props.onSave ? (
                     <button
@@ -268,6 +296,20 @@ export class OfflineAttachmentList extends React.Component<Props, State> {
           >
             {status.text}
           </div>
+        ) : null}
+        {viewing !== null && this.props.loadForView && items[viewing] ? (
+          <OfflineAttachmentViewer
+            items={items}
+            index={viewing}
+            load={this.props.loadForView}
+            onIndex={(i) => this.setState({ viewing: i })}
+            onClose={() => this.setState({ viewing: null })}
+            onOpenInApp={(i) => {
+              this.setState({ viewing: null });
+              void this._open(i);
+            }}
+            onSave={this.props.onSave ? (i) => void this._save(i) : undefined}
+          />
         ) : null}
         {enlarged !== null && previews[enlarged] ? (
           <div

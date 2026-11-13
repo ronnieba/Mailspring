@@ -18,6 +18,7 @@ import {
   extractAttachmentToProfile,
 } from '../core/offline-attachments';
 import { openWithDefaultApp, saveBytesAs } from './offline-file-actions';
+import fs from 'fs';
 
 type State = { showText: boolean; textIds: string[] };
 
@@ -55,6 +56,16 @@ export function renderMessageAttachments(id: string, list: OfflineMailAttachment
         size: a.size,
       }))}
       loadImage={(i) => dataAt(i).data || null}
+      loadForView={async (i) => {
+        // The viewer reads the copy in the offline profile's temp folder only.
+        const dir = offlineMailStore.configDir;
+        if (!dir) {
+          throw new Error(tr('אין תיקיית פרופיל', 'No profile folder'));
+        }
+        const a = dataAt(i);
+        const file = extractAttachmentToProfile(dir, id, i, a.filename, a.data as Buffer);
+        return fs.promises.readFile(file);
+      }}
       onOpen={async (i) => {
         const dir = offlineMailStore.configDir;
         if (!dir) {
