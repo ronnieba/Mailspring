@@ -44,3 +44,49 @@ export function offlineArchivePathFromEnv(): string | null {
   const p = process.env.MAILSPRING_OFFLINE_ARCHIVE_PATH;
   return typeof p === 'string' && p.length > 0 ? p : null;
 }
+
+/**
+ * Packages that are not activated in the offline experiment. They depend on a
+ * real account, the mail database, mailsync, sending, or outside services.
+ * The offline browser in ai-sidebar replaces the folder/thread/message views.
+ */
+export const OFFLINE_ARCHIVE_DISABLED_PACKAGES: ReadonlyArray<string> = [
+  'account-sidebar',
+  'activity',
+  'category-picker',
+  'composer',
+  'composer-grammar-check',
+  'composer-signature',
+  'composer-templates',
+  'contacts',
+  'draft-list',
+  'events',
+  'github-contact-card',
+  'link-tracking',
+  'list-unsubscribe',
+  'unsubscribe',
+  'main-calendar',
+  'mcp-server',
+  'message-list',
+  'message-view-on-github',
+  'notifications',
+  'open-tracking',
+  'participant-profile',
+  'personal-level-indicators',
+  'phishing-detection',
+  'send-and-archive',
+  'send-later',
+  'send-reminders',
+  'system-tray',
+  'thread-list',
+  'thread-search',
+  'thread-sharing',
+  'thread-snooze',
+  'translation',
+  'undo-redo',
+  'unread-notifications',
+];
+
+export function isPackageDisabledInOfflineArchive(name: string): boolean {
+  return OFFLINE_ARCHIVE_DISABLED_PACKAGES.includes(name);
+}

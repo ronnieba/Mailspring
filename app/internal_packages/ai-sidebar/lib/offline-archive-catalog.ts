@@ -3,6 +3,7 @@
  * this index is a disposable working view. Tests inject fixtures.
  */
 import { MessageRef, ResolvedScope, RetrievalMode, SearchResult } from './core/types';
+import { messageMatchesQuery } from './core/query-filter';
 import {
   isForbiddenArchiveRoot,
   OFFLINE_ARCHIVE_ACCOUNT_ID,
@@ -15,18 +16,115 @@ let catalog: OfflineArchiveMessage[] = [];
 let selectedId: string | null = null;
 let manifest: OfflineArchiveManifest | null = null;
 
+/**
+ * Browser-driven mode (Windows/macOS offline experiment): the folder tree and
+ * message list in the main window own selection and the current folder.
+ * Bodies are loaded lazily, read-only, one message at a time.
+ */
+let browserDriven = false;
+let browserSelectedIds: string[] = [];
+let browserFolder: { path: string; name: string } | null = null;
+let bodyLoader: ((m: OfflineArchiveMessage) => string) | null = null;
+const byId = new Map<string, OfflineArchiveMessage>();
+const lazyBodies = new Map<string, string>();
+const LAZY_BODY_CACHE = 200;
+
+function rebuildById() {
+  byId.clear();
+  for (const m of catalog) {
+    byId.set(m.id, m);
+  }
+}
+
+export function setOfflineArchiveBrowserCatalog(
+  messages: OfflineArchiveMessage[],
+  nextManifest: OfflineArchiveManifest | null,
+  loader: (m: OfflineArchiveMessage) => string
+): void {
+  browserDriven = true;
+  bodyLoader = loader;
+  lazyBodies.clear();
+  catalog = messages.slice();
+  manifest = nextManifest;
+  rebuildById();
+  browserSelectedIds = browserSelectedIds.filter((id) => byId.has(id));
+}
+
+let offlineNavigator: ((id: string) => boolean) | null = null;
+
+/** The offline browser registers how a citation opens a message in the main window. */
+export function setOfflineArchiveNavigator(fn: ((id: string) => boolean) | null): void {
+  offlineNavigator = fn;
+}
+
+export function navigateOfflineArchive(id: string): boolean {
+  return !!offlineNavigator && byId.has(id) && offlineNavigator(id);
+}
+
+export function isOfflineArchiveBrowserDriven(): boolean {
+  return browserDriven;
+}
+
+export function setOfflineArchiveSelection(ids: string[]): void {
+  browserSelectedIds = (ids || []).filter((id) => byId.has(id));
+  selectedId = browserSelectedIds[0] || null;
+}
+
+export function setOfflineArchiveCurrentFolder(
+  folder: { path: string; name: string } | null
+): void {
+  browserFolder = folder;
+}
+
+function bodyOf(m: OfflineArchiveMessage): string {
+  if (m.bodyText || !browserDriven || !bodyLoader) {
+    return m.bodyText;
+  }
+  const hit = lazyBodies.get(m.id);
+  if (hit !== undefined) {
+    return hit;
+  }
+  let text = '';
+  try {
+    text = bodyLoader(m) || '';
+  } catch {
+    text = '';
+  }
+  if (lazyBodies.size >= LAZY_BODY_CACHE) {
+    const oldest = lazyBodies.keys().next().value;
+    if (oldest !== undefined) {
+      lazyBodies.delete(oldest);
+    }
+  }
+  lazyBodies.set(m.id, text);
+  return text;
+}
+
 export function setOfflineArchiveCatalog(
   messages: OfflineArchiveMessage[],
   nextManifest?: OfflineArchiveManifest | null
 ): void {
+  browserDriven = false;
+  bodyLoader = null;
+  lazyBodies.clear();
+  browserSelectedIds = [];
+  browserFolder = null;
   catalog = Array.isArray(messages) ? messages.slice() : [];
   manifest = nextManifest || null;
+  rebuildById();
   if (!selectedId || !catalog.some((m) => m.id === selectedId)) {
     selectedId = catalog[0] ? catalog[0].id : null;
   }
 }
 
 export function setOfflineArchiveSelected(id: string | null): boolean {
+  if (browserDriven) {
+    if (!id || !byId.has(id)) {
+      return false;
+    }
+    setOfflineArchiveSelection([id]);
+    return true;
+  }
   if (!id) {
     selectedId = catalog[0] ? catalog[0].id : null;
     return !!selectedId;
@@ -74,7 +172,21 @@ export function getOfflineArchiveCatalog(): OfflineArchiveMessage[] {
   return catalog.slice();
 }
 
-export function offlineMessageToRef(m: OfflineArchiveMessage): MessageRef {
+export function offlineMessageToRef(m: OfflineArchiveMessage, withBody = true): MessageRef {
+  if (browserDriven) {
+    const body = withBody ? bodyOf(m) : '';
+    return {
+      id: m.id,
+      threadId: m.threadId,
+      accountId: m.accountId,
+      subject: m.subject,
+      from: m.from,
+      date: m.date ? new Date(m.date) : new Date(0),
+      snippet: m.snippet || body.replace(/\s+/g, ' ').trim().slice(0, 160),
+      folderId: m.folderId,
+      bodyText: body,
+    };
+  }
   return {
     id: m.id,
     threadId: m.threadId,
@@ -88,7 +200,54 @@ export function offlineMessageToRef(m: OfflineArchiveMessage): MessageRef {
   };
 }
 
+function browserScope(mode: ResolvedScope['mode']): ResolvedScope {
+  if (mode === 'selected-messages') {
+    const selected = browserSelectedIds
+      .map((id) => byId.get(id))
+      .filter(Boolean) as OfflineArchiveMessage[];
+    return {
+      mode,
+      threadIds: selected.map((m) => m.threadId),
+      messageIds: selected.map((m) => m.id),
+      accountIds: [OFFLINE_ARCHIVE_ACCOUNT_ID],
+      description: selected.length
+        ? `${selected.length} הודעות נבחרות מהעותק המקומי / ${selected.length} selected local message(s)`
+        : 'לא נבחרה הודעה — בחר הודעה ברשימה / No message selected',
+      isEmpty: selected.length === 0,
+    };
+  }
+  if (mode === 'current-folder') {
+    const folder = browserFolder;
+    const count = folder ? catalog.filter((m) => m.folderPath === folder.path).length : 0;
+    return {
+      mode,
+      folder: folder
+        ? {
+            id: catalog.find((m) => m.folderPath === folder.path)?.folderId || folder.path,
+            accountId: OFFLINE_ARCHIVE_ACCOUNT_ID,
+            name: folder.path,
+            role: null,
+          }
+        : undefined,
+      accountIds: [OFFLINE_ARCHIVE_ACCOUNT_ID],
+      description: folder
+        ? `תיקייה: ${folder.name} (${count}) / Folder (${count})`
+        : 'לא נבחרה תיקייה / No folder selected',
+      isEmpty: count === 0,
+    };
+  }
+  return {
+    mode,
+    accountIds: [OFFLINE_ARCHIVE_ACCOUNT_ID],
+    description: `כל העותק המקומי (${catalog.length} הודעות) / Whole offline copy (${catalog.length})`,
+    isEmpty: catalog.length === 0,
+  };
+}
+
 export function getOfflineArchiveScope(mode: ResolvedScope['mode']): ResolvedScope {
+  if (browserDriven) {
+    return browserScope(mode);
+  }
   const messages = catalog;
   if (mode === 'selected-messages') {
     const selected = messages.find((m) => m.id === selectedId) || messages[0];
@@ -127,31 +286,53 @@ export function getOfflineArchiveScope(mode: ResolvedScope['mode']): ResolvedSco
   };
 }
 
+function dateMs(m: OfflineArchiveMessage): number {
+  const t = m.date ? Date.parse(m.date) : NaN;
+  return Number.isFinite(t) ? t : 0;
+}
+
 export function searchOfflineArchive(
   scope: ResolvedScope,
-  _query: string,
+  query: string,
   retrieval: RetrievalMode,
   limit: number,
   offset: number
 ): SearchResult {
   let rows = catalog;
-  if (scope.mode === 'selected-messages' && scope.messageIds?.length) {
-    const allowed = new Set(scope.messageIds);
-    rows = rows.filter((m) => allowed.has(m.id));
+  if (scope.mode === 'selected-messages') {
+    const allowed = new Set(scope.messageIds || []);
+    rows = browserDriven || allowed.size ? rows.filter((m) => allowed.has(m.id)) : rows;
   } else if (scope.mode === 'current-folder' && scope.folder) {
     rows = rows.filter((m) => m.folderId === scope.folder.id || m.folderPath === scope.folder.name);
+  } else if (scope.mode === 'current-folder' && browserDriven) {
+    rows = [];
   }
-  const refs = rows.map(offlineMessageToRef);
-  const page = refs.slice(offset, offset + limit);
+  if (browserDriven) {
+    // Header-level ranking (no body reads): query matches first, newest first.
+    const q = (query || '').trim();
+    const ranked = rows
+      .map((m) => ({
+        m,
+        hit:
+          q && retrieval === 'ranked'
+            ? messageMatchesQuery(offlineMessageToRef(m, false), q)
+            : false,
+        t: dateMs(m),
+      }))
+      .sort((a, b) => (a.hit === b.hit ? b.t - a.t : a.hit ? -1 : 1));
+    rows = ranked.map((r) => r.m);
+  }
+  const pageRows = rows.slice(offset, offset + limit);
+  const page = pageRows.map((m) => offlineMessageToRef(m, true));
   return {
     messages: page,
     progress: {
-      totalEligible: refs.length,
+      totalEligible: rows.length,
       processed: page.length,
-      withBodies: page.length,
-      missingBodies: 0,
+      withBodies: browserDriven ? page.filter((m) => !!m.bodyText).length : page.length,
+      missingBodies: browserDriven ? page.filter((m) => !m.bodyText).length : 0,
       syncCoverage: 100,
-      isComplete: true,
+      isComplete: browserDriven ? offset + page.length >= rows.length : true,
       isCancelled: false,
     },
     retrievalMode: retrieval,
@@ -159,11 +340,11 @@ export function searchOfflineArchive(
 }
 
 export function getOfflineArchiveBody(messageId: string): string | null {
-  const found = catalog.find((m) => m.id === messageId);
-  return found ? found.bodyText : null;
+  const found = byId.get(messageId) || catalog.find((m) => m.id === messageId);
+  return found ? bodyOf(found) : null;
 }
 
 export function getOfflineArchiveAttachmentCount(messageId: string): number {
-  const found = catalog.find((m) => m.id === messageId);
+  const found = byId.get(messageId) || catalog.find((m) => m.id === messageId);
   return found ? found.attachmentCount : 0;
 }

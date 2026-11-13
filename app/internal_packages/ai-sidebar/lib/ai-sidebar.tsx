@@ -12,7 +12,11 @@ import { GEMINI_DISPLAY_NAME, GeminiDemoStatus } from '../../../src/browser/gemi
 import { isRealSelectedSummaryMode } from '../../../src/real-selected-summary';
 import { isOfflineArchiveMode } from '../../../src/offline-archive';
 import { RealSelectedPreview } from './core/real-selected-mail';
-import { getOfflineArchiveCatalog, getOfflineArchiveManifest } from './offline-archive-catalog';
+import {
+  getOfflineArchiveCatalog,
+  getOfflineArchiveManifest,
+  isOfflineArchiveBrowserDriven,
+} from './offline-archive-catalog';
 import DemoComposer from './demo-composer';
 import classNames from 'classnames';
 
@@ -157,7 +161,8 @@ class AISidebarInner extends React.Component<Record<string, never>, AISidebarSta
   };
 
   _onSubmit = () => {
-    if (isSelectedSummarySurface()) {
+    // Offline experiment allows free-form questions (local mock provider only).
+    if (isSelectedSummarySurface() && !isOfflineArchiveMode()) {
       return;
     }
     const query = this.state.inputValue.trim();
@@ -220,11 +225,11 @@ class AISidebarInner extends React.Component<Record<string, never>, AISidebarSta
             </>
           ) : offlineArchive ? (
             <>
-              ארכיון מקומי מנותק — מפתח Gemini לא מוכן
+              מצב ניסוי לא מקוון — Mock AI (ללא חיבור חיצוני)
               <br />
               <small>
-                Pick one local message, then Summarize. Yahoo is not contacted. Nothing is sent on
-                load.
+                Local read-only copy · no Yahoo · no sync · answers come from the local mock
+                provider. Gemini is not configured and is used only via explicit Summarize.
               </small>
             </>
           ) : realSelected && geminiConfigured ? (
@@ -255,7 +260,7 @@ class AISidebarInner extends React.Component<Record<string, never>, AISidebarSta
   }
 
   _renderScopeSelector() {
-    if (isOfflineArchiveMode()) {
+    if (isOfflineArchiveMode() && !isOfflineArchiveBrowserDriven()) {
       return (
         <div className="ai-sidebar-scope" data-offline-archive-scope="true">
           <span className="scope-label">טווח: הודעה אחת מהארכיון המקומי (מנותק)</span>
@@ -466,6 +471,8 @@ class AISidebarInner extends React.Component<Record<string, never>, AISidebarSta
 
   _renderOfflineArchivePicker() {
     if (!isOfflineArchiveMode()) return null;
+    // The main window's folder tree and message list replace this picker.
+    if (isOfflineArchiveBrowserDriven()) return null;
     const catalog = getOfflineArchiveCatalog();
     const manifest = getOfflineArchiveManifest();
     const selected = this.state.realPreview?.messageId;
@@ -515,6 +522,11 @@ class AISidebarInner extends React.Component<Record<string, never>, AISidebarSta
     const preview = this.state.realPreview;
     if (!isSelectedSummarySurface()) return null;
     const offline = isOfflineArchiveMode();
+    // Offline browser: the reader shows the message. The pre-send disclosure
+    // only matters when Gemini is configured for an explicit Summarize.
+    if (offline && isOfflineArchiveBrowserDriven() && !this.state.geminiStatus?.configured) {
+      return null;
+    }
     if (!preview) {
       return (
         <div
@@ -612,7 +624,10 @@ class AISidebarInner extends React.Component<Record<string, never>, AISidebarSta
   }
 
   _renderInput() {
-    if (isSelectedSummarySurface()) {
+    if (
+      isSelectedSummarySurface() &&
+      !(isOfflineArchiveMode() && isOfflineArchiveBrowserDriven())
+    ) {
       const { isProcessing, realPreview, geminiStatus } = this.state;
       const ready = !!realPreview && !!geminiStatus?.configured;
       const offline = isOfflineArchiveMode();
@@ -666,6 +681,22 @@ class AISidebarInner extends React.Component<Record<string, never>, AISidebarSta
           >
             שלח
           </button>
+          {isOfflineArchiveMode() && (
+            <button
+              className="clear-btn"
+              onClick={this._onSummarizeSelected}
+              disabled={isProcessing || !this.state.geminiStatus?.configured}
+              aria-label="Summarize selected message with Gemini"
+              title={
+                this.state.geminiStatus?.configured
+                  ? 'Sends exactly one selected local message to Gemini'
+                  : 'Gemini is not configured on this computer (mock only)'
+              }
+              data-offline-archive-summarize="true"
+            >
+              Summarize (Gemini)
+            </button>
+          )}
           {this.state.conversation.length > 0 && (
             <button className="clear-btn" onClick={this._onClear} aria-label="נקה">
               נקה

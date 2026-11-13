@@ -1,6 +1,7 @@
 /* eslint global-require: "off" */
 
 import '../safe-shell';
+import { installOfflineNetworkGuard } from './offline-network-guard';
 import {
   BrowserWindow,
   ClipboardItem,
@@ -165,6 +166,7 @@ export default class Application extends EventEmitter {
           );
         }
       } else if (this.offlineArchive) {
+        installOfflineNetworkGuard();
         console.log(
           '[Offline archive] Skipping mailsync — disconnected experiment. Official /Applications/Mailspring.app is unused. Yahoo IMAP is not opened. Gemini is not bulk-upload; only explicit Summarize of one selected local message.'
         );

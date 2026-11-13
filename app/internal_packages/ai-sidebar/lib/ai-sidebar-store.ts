@@ -38,7 +38,11 @@ import {
   REAL_SELECTED_QUERY,
   RealSelectedPreview,
 } from './core/real-selected-mail';
-import { setOfflineArchiveSelected } from './offline-archive-catalog';
+import {
+  isOfflineArchiveBrowserDriven,
+  navigateOfflineArchive,
+  setOfflineArchiveSelected,
+} from './offline-archive-catalog';
 import { isRealSelectedSummaryMode } from '../../../src/real-selected-summary';
 import { isOfflineArchiveMode } from '../../../src/offline-archive';
 import {
@@ -125,7 +129,9 @@ class AISidebarStore extends MailspringStore {
    * Set scope mode and resolve it.
    */
   async setScopeMode(mode: ScopeMode) {
-    if (isExplicitSelectedSurface() && mode !== 'selected-messages') {
+    // Offline experiment: all three scopes run locally against the mock
+    // provider. Live real-selected-summary stays one-selected-message only.
+    if (isRealSelectedSummaryMode() && !isOfflineArchiveMode() && mode !== 'selected-messages') {
       this._state.error = 'Folder and all-mail are disabled for one-selected-message summary';
       this._state.scopeMode = 'selected-messages';
       await this._resolveScope();
@@ -237,7 +243,7 @@ class AISidebarStore extends MailspringStore {
       sentSnapshot?: { messageId: string; snapshotEpoch: number };
     }
   ) {
-    if (isExplicitSelectedSurface() && !opts?.allowRealSelected) {
+    if (isExplicitSelectedSurface() && !isOfflineArchiveMode() && !opts?.allowRealSelected) {
       this._state.error =
         'Use Summarize for the one selected message. Free-form mailbox search is disabled.';
       this.trigger();
@@ -369,7 +375,12 @@ class AISidebarStore extends MailspringStore {
 
       const sourcesAreSynthetic = areSyntheticDemoSources(searchResult.messages);
       const useGeminiDemo = isDemoMode() && this._state.geminiStatus.configured;
-      const useGeminiReal = isExplicitSelectedSurface() && this._state.geminiStatus.configured;
+      // Gemini is reached only through the explicit Summarize action. Free-form
+      // offline questions always use the local mock provider (no network).
+      const useGeminiReal =
+        isExplicitSelectedSurface() &&
+        this._state.geminiStatus.configured &&
+        !!opts?.allowRealSelected;
       const useGemini = useGeminiDemo || useGeminiReal;
       const selectedScopeReason = isOfflineArchiveMode()
         ? OFFLINE_ARCHIVE_SCOPE_REASON
@@ -513,6 +524,10 @@ class AISidebarStore extends MailspringStore {
     if (this._state.isProcessing) {
       return;
     }
+    if (isOfflineArchiveMode() && this._state.scopeMode !== 'selected-messages') {
+      // Summarize is always exactly one selected local message.
+      this._state.scopeMode = 'selected-messages';
+    }
     await this.refreshScope();
     const preview = this._state.realPreview;
     if (!preview) {
@@ -598,6 +613,15 @@ class AISidebarStore extends MailspringStore {
         return true;
       }
       return false;
+    }
+    if (isOfflineArchiveMode() && isOfflineArchiveBrowserDriven()) {
+      // Offline browser: open the cited local message in the main window (read-only).
+      const opened = navigateOfflineArchive(messageId);
+      if (!opened) {
+        this._state.error = OFFLINE_ARCHIVE_SCOPE_REASON;
+        this.trigger();
+      }
+      return opened;
     }
     if (isRealSelectedSummaryMode() || isOfflineArchiveMode()) {
       const allowed =
