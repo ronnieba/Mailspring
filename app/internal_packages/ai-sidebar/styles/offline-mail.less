@@ -3020,18 +3020,31 @@ body[class*='less-is-more'] {
     unicode-bidi: plaintext;
     text-align: start;
   }
+  // Which folder the result is in: accent-tinted pill at the start of the row.
   .offline-search-folder {
-    flex-shrink: 1;
-    max-width: 40%;
+    flex-shrink: 0;
+    max-width: 45%;
+    display: inline-flex;
+    align-items: center;
+    gap: 4px;
+    overflow: hidden;
+    white-space: nowrap;
+    font-weight: 600;
+    font-size: 12px;
+    line-height: 18px;
+    padding: 0 8px;
+    border-radius: 10px;
+    border: 1px solid color-mix(in srgb, @component-active-color 55%, transparent);
+    background: color-mix(in srgb, @component-active-color 14%, transparent);
+    color: color-mix(in srgb, @component-active-color 55%, @text-color);
+  }
+  .offline-search-folder-name {
     overflow: hidden;
     text-overflow: ellipsis;
-    white-space: nowrap;
-    font-weight: normal;
-    font-size: 11px;
-    padding: 0 6px;
-    border-radius: 8px;
-    background: fade(@text-color, 8%);
-    color: @text-color-subtle;
+    unicode-bidi: isolate;
+  }
+  &.selected .offline-search-folder {
+    background: color-mix(in srgb, @component-active-color 24%, transparent);
   }
   .offline-search-date {
     flex-shrink: 0;
@@ -3109,8 +3122,10 @@ body[class*='less-is-more'] {
       box-shadow: inset -3px 0 0 var(--ofl-accent);
     }
     .offline-search-folder {
-      background: color-mix(in srgb, var(--ofl-fg) 10%, transparent);
-      color: var(--ofl-fg);
+      border-color: color-mix(in srgb, var(--ofl-accent) 60%, transparent);
+      background: color-mix(in srgb, var(--ofl-accent) 18%, var(--ofl-list-bg));
+      // Readable on light and dark palettes: text mixed toward the foreground.
+      color: color-mix(in srgb, var(--ofl-accent) 45%, var(--ofl-fg));
     }
     .offline-search-subject {
       color: color-mix(in srgb, var(--ofl-fg) 80%, var(--ofl-list-bg));
@@ -3120,4 +3135,11 @@ body[class*='less-is-more'] {
       color: var(--ofl-subtle);
     }
   }
+}
+
+// Dark theme: the folder pill keeps contrast (light text on a tinted pill).
+body.theme-ui-dark .offline-search-row-item .offline-search-folder {
+  color: color-mix(in srgb, @component-active-color 55%, #ffffff);
+  background: color-mix(in srgb, @component-active-color 22%, transparent);
+  border-color: color-mix(in srgb, @component-active-color 70%, transparent);
 }

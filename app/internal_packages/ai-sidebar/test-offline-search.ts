@@ -21,6 +21,7 @@ import {
   hebrewPrefixVariants,
   highlightParts,
   normalizeSearchText,
+  truncateMiddlePath,
   parseSearchDate,
   parseSearchQuery,
 } from './lib/core/offline-search';
@@ -382,6 +383,44 @@ async function main() {
     assert(ids('מלפפון') === '6', 'new');
     assert(ids('annual') === '2' && ids('quarterly') === '', 'changed');
     assert(ids('prize') === '', 'deleted');
+  });
+
+  await test('folder pill: first in the row, accent pill, full path in tooltip, middle-shortened', () => {
+    assert(truncateMiddlePath('Inbox') === 'Inbox', 'short kept');
+    const t = truncateMiddlePath('Archive/Projects/2024/Clients/Family photos', 30);
+    assert(
+      t === 'Archive/Projects/…/Family photos' ||
+        (t.startsWith('Archive/') && t.endsWith('/Family photos') && t.includes('…')),
+      t
+    );
+    assert(t.length <= 32, t);
+    assert(truncateMiddlePath('x'.repeat(80), 20).length === 20, 'one long name');
+    const src = fs.readFileSync(
+      path.join(__dirname, 'lib/offline-mail/offline-search-view.tsx'),
+      'utf8'
+    );
+    const line1 = src.indexOf('className="offline-search-line1"');
+    assert(
+      line1 > 0 &&
+        src.indexOf('offline-search-folder"', line1) < src.indexOf('offline-search-from"', line1),
+      'pill first'
+    );
+    assert(
+      /title=\{tr\(`תיקייה: \$\{folderName\}`/.test(src) &&
+        src.includes('truncateMiddlePath(folderName)'),
+      'tooltip + short'
+    );
+    const less = fs.readFileSync(path.join(__dirname, 'styles/offline-mail.less'), 'utf8');
+    assert(
+      less.includes('background: color-mix(in srgb, @component-active-color 14%, transparent);') &&
+        /\.offline-search-folder \{[^}]*font-weight: 600/.test(less),
+      'accent pill'
+    );
+    assert(less.includes('color-mix(in srgb, var(--ofl-accent) 18%'), 'palette themes');
+    assert(
+      less.includes('body.theme-ui-dark .offline-search-row-item .offline-search-folder'),
+      'dark theme'
+    );
   });
 
   await test('no network code in the search modules', () => {

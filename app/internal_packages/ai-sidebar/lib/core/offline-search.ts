@@ -427,6 +427,38 @@ export function buildSnippet(body: string, words: string[], width = 200): Snippe
   return parts;
 }
 
+// ---------------------------------------------------------------- folders
+
+/**
+ * Folder path shortened in the middle, keeping the first and last parts:
+ * "Inbox/Projects/2024/Family" -> "Inbox/…/Family". The full path goes in a tooltip.
+ */
+export function truncateMiddlePath(p: string, max = 40): string {
+  const s = String(p || '');
+  if (s.length <= max) {
+    return s;
+  }
+  const parts = s.split('/');
+  const last = parts[parts.length - 1];
+  if (parts.length > 1 && parts[0].length + last.length + 3 <= max) {
+    let head = parts[0];
+    for (let i = 1; i < parts.length - 1; i++) {
+      const next = `${head}/${parts[i]}`;
+      if (next.length + last.length + 3 > max) {
+        break;
+      }
+      head = next;
+    }
+    return `${head}/…/${last}`;
+  }
+  if (parts.length > 1 && last.length + 2 <= max) {
+    return `…/${last}`;
+  }
+  const keep = max - 1;
+  const a = Math.ceil(keep / 2);
+  return `${s.slice(0, a)}…${s.slice(s.length - (keep - a))}`;
+}
+
 // ---------------------------------------------------------------- database
 
 export type SearchDoc = {

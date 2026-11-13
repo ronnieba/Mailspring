@@ -1,7 +1,7 @@
 import React from 'react';
 import classNames from 'classnames';
 import { tr, offlineDir, offlineDateLocale } from '../core/offline-i18n';
-import { highlightParts, SnippetPart } from '../core/offline-search';
+import { highlightParts, SnippetPart, truncateMiddlePath } from '../core/offline-search';
 import { offlineMailStore } from './offline-mail-store';
 import { offlineSearchStore, OfflineSearchScope, OfflineSearchSort } from './offline-search-store';
 import { OfflineStoreComponent } from './use-offline-store';
@@ -282,16 +282,18 @@ export class OfflineSearchResults extends OfflineStoreComponent<Record<string, n
           }}
         >
           <div className="offline-search-line1">
-            <span className="offline-search-from" dir="auto">
-              {renderParts(highlightParts(shortFrom(e.from), words))}
-            </span>
             <span
               className="offline-search-folder"
-              dir="auto"
-              data-offline-search-folder="true"
-              title={tr(`בתיקייה: ${folderName}`, `In folder: ${folderName}`)}
+              data-offline-search-folder={r.folder}
+              title={tr(`תיקייה: ${folderName}`, `Folder: ${folderName}`)}
             >
-              📁 {folderName}
+              <span className="offline-search-folder-icon" aria-hidden="true">
+                📁
+              </span>
+              <bdi className="offline-search-folder-name">{truncateMiddlePath(folderName)}</bdi>
+            </span>
+            <span className="offline-search-from" dir="auto">
+              {renderParts(highlightParts(shortFrom(e.from), words))}
             </span>
             {e.hasAttachments ? (
               <span className="offline-row-attach" title={tr('קבצים מצורפים', 'Attachments')}>
