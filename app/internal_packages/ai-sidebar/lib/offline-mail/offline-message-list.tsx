@@ -1,11 +1,10 @@
 import React from 'react';
 import classNames from 'classnames';
 import { tr, offlineDir, offlineDateLocale } from '../core/offline-i18n';
-import { offlineMailStore } from './offline-mail-store';
+import { offlineMailStore, OfflineListRow } from './offline-mail-store';
 import { offlineDraftsStore } from './offline-drafts-store';
 import { OfflineDraftsList } from './offline-drafts-view';
 import { OfflineStoreComponent } from './use-offline-store';
-import { OfflineIndexEntry } from '../core/offline-mail-index';
 
 const ROW_HEIGHT = 54;
 const OVERSCAN = 8;
@@ -67,8 +66,8 @@ export class OfflineMessageList extends OfflineStoreComponent<Record<string, nev
         this._scrollRef.current.scrollTop = 0;
       }
     }
-    const ids = offlineMailStore.selectedIds;
-    const last = ids.length ? ids[ids.length - 1] : null;
+    const keys = offlineMailStore.selectedKeys;
+    const last = keys.length ? keys[keys.length - 1] : null;
     if (last !== this._lastSelected) {
       this._lastSelected = last;
       this._ensureVisible();
@@ -89,11 +88,11 @@ export class OfflineMessageList extends OfflineStoreComponent<Record<string, nev
 
   _ensureVisible() {
     const el = this._scrollRef.current;
-    const ids = offlineMailStore.selectedIds;
-    if (!el || !ids.length) {
+    const keys = offlineMailStore.selectedKeys;
+    if (!el || !keys.length) {
       return;
     }
-    const idx = offlineMailStore.visibleMessages().findIndex((r) => r.id === ids[ids.length - 1]);
+    const idx = offlineMailStore.visibleRows().findIndex((r) => r.key === keys[keys.length - 1]);
     if (idx === -1) {
       return;
     }
@@ -105,19 +104,45 @@ export class OfflineMessageList extends OfflineStoreComponent<Record<string, nev
     }
   }
 
-  _renderRow(e: OfflineIndexEntry, i: number) {
-    const selected = offlineMailStore.selectedIds.includes(e.id);
+  _people(row: OfflineListRow): string {
+    // Conversation line: who wrote in it (newest last), short names only.
+    const names: string[] = [];
+    for (const id of row.ids) {
+      const ent = offlineMailStore.getEntry(id);
+      const n = ent ? shortFrom(ent.from) : '';
+      if (n && !names.includes(n)) {
+        names.push(n);
+      }
+    }
+    if (names.length <= 3) {
+      return names.join(', ');
+    }
+    return `${names[0]} … ${names.slice(-2).join(', ')}`;
+  }
+
+  _renderRow(row: OfflineListRow, i: number) {
+    const e = row.entry;
+    const selected = offlineMailStore.selectedKeys.includes(row.key);
+    const isThread = row.ids.length > 1;
+    const hasAttachments =
+      e.hasAttachments ||
+      (isThread && row.ids.some((id) => offlineMailStore.getEntry(id)?.hasAttachments));
     return (
       <div
-        key={e.id}
-        className={classNames('offline-message-row', { selected })}
+        key={row.key}
+        className={classNames('offline-message-row', { selected, 'is-thread': isThread })}
         style={{ top: i * ROW_HEIGHT, height: ROW_HEIGHT }}
         data-offline-message-id={e.id}
+        data-offline-row-key={row.key}
+        data-offline-thread-count={isThread ? row.ids.length : undefined}
         data-hebrew={e.hebrew ? 'true' : undefined}
         role="option"
         aria-selected={selected}
         onClick={(ev) =>
-          offlineMailStore.select(e.id, { additive: ev.ctrlKey || ev.metaKey, range: ev.shiftKey })
+          offlineMailStore.select(row.key, {
+            additive: ev.ctrlKey || ev.metaKey,
+            range: ev.shiftKey,
+          })
         }
       >
         <span
@@ -134,9 +159,9 @@ export class OfflineMessageList extends OfflineStoreComponent<Record<string, nev
           onClick={(ev) => {
             ev.stopPropagation();
             if (ev.shiftKey) {
-              offlineMailStore.select(e.id, { range: true });
+              offlineMailStore.select(row.key, { range: true });
             } else {
-              offlineMailStore.toggleChecked(e.id);
+              offlineMailStore.toggleChecked(row.key);
             }
           }}
         >
@@ -145,9 +170,21 @@ export class OfflineMessageList extends OfflineStoreComponent<Record<string, nev
         <div className="offline-row-main">
           <div className="offline-row-line1">
             <span className="offline-row-from" dir="auto">
-              {shortFrom(e.from)}
+              {isThread ? this._people(row) : shortFrom(e.from)}
             </span>
-            {e.hasAttachments ? (
+            {isThread ? (
+              <span
+                className="offline-row-thread-count"
+                data-offline-thread-badge="true"
+                title={tr(
+                  `${row.ids.length} הודעות בשיחה (${row.inFolder} בתיקייה הזו)`,
+                  `${row.ids.length} messages in this conversation (${row.inFolder} in this folder)`
+                )}
+              >
+                {row.ids.length}
+              </span>
+            ) : null}
+            {hasAttachments ? (
               <span className="offline-row-attach" title={tr('קבצים מצורפים', 'Attachments')}>
                 📎
               </span>
@@ -167,11 +204,12 @@ export class OfflineMessageList extends OfflineStoreComponent<Record<string, nev
       return <OfflineDraftsList />;
     }
     const s = offlineMailStore;
-    const rows = s.visibleMessages();
+    const rows = s.visibleRows();
+    const messageCount = s.visibleMessages().length;
     const folder = s.findFolder(s.currentFolder);
     const { scrollTop, height } = this.state;
-    const selectedSet = new Set(s.selectedIds);
-    const checkedInView = rows.reduce((n, r) => n + (selectedSet.has(r.id) ? 1 : 0), 0);
+    const selectedSet = new Set(s.selectedKeys);
+    const checkedInView = rows.reduce((n, r) => n + (selectedSet.has(r.key) ? 1 : 0), 0);
     const allChecked = rows.length > 0 && checkedInView === rows.length;
     const someChecked = checkedInView > 0;
     const start = Math.max(0, Math.floor(scrollTop / ROW_HEIGHT) - OVERSCAN);
@@ -193,7 +231,34 @@ export class OfflineMessageList extends OfflineStoreComponent<Record<string, nev
               : s.status === 'ready'
                 ? tr('בחר תיקייה', 'Choose a folder')
                 : ''}
-            <span className="offline-list-count">{rows.length.toLocaleString()}</span>
+            <span
+              className="offline-list-count"
+              title={
+                s.threaded
+                  ? tr(
+                      `${rows.length.toLocaleString()} שיחות, ${messageCount.toLocaleString()} הודעות`,
+                      `${rows.length.toLocaleString()} conversations, ${messageCount.toLocaleString()} messages`
+                    )
+                  : undefined
+              }
+            >
+              {rows.length.toLocaleString()}
+            </span>
+            <label
+              className="offline-list-threaded"
+              data-offline-threaded-toggle="true"
+              title={tr(
+                'הצג הודעות מקובצות לשיחות (ההגדרה נשמרת)',
+                'Group messages into conversations (remembered)'
+              )}
+            >
+              <input
+                type="checkbox"
+                checked={s.threaded}
+                onChange={(e) => s.setThreaded(e.target.checked)}
+              />
+              {tr('שיחות', 'Conversations')}
+            </label>
           </div>
           <input
             className="offline-list-filter"
@@ -221,10 +286,20 @@ export class OfflineMessageList extends OfflineStoreComponent<Record<string, nev
             </label>
             {s.selectedIds.length > 0 ? (
               <span className="offline-list-selection">
-                {tr(
-                  `${s.selectedIds.length.toLocaleString()} נבחרו`,
-                  `${s.selectedIds.length.toLocaleString()} selected`
-                )}
+                {s.selectedKeys.length === 1 && s.selectedIds.length > 1
+                  ? tr(
+                      `שיחה אחת (${s.selectedIds.length.toLocaleString()} הודעות) נבחרה`,
+                      `1 conversation (${s.selectedIds.length.toLocaleString()} messages) selected`
+                    )
+                  : s.selectedKeys.length < s.selectedIds.length
+                    ? tr(
+                        `${s.selectedKeys.length.toLocaleString()} שיחות (${s.selectedIds.length.toLocaleString()} הודעות) נבחרו`,
+                        `${s.selectedKeys.length.toLocaleString()} conversation(s) (${s.selectedIds.length.toLocaleString()} messages) selected`
+                      )
+                    : tr(
+                        `${s.selectedIds.length.toLocaleString()} נבחרו`,
+                        `${s.selectedIds.length.toLocaleString()} selected`
+                      )}
                 <button className="offline-list-clear" onClick={() => s.clearSelection()}>
                   {tr('נקה', 'Clear')}
                 </button>

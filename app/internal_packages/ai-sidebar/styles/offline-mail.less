@@ -1862,3 +1862,170 @@ body.ai-dark-surface {
     border-color: #ff8a80;
   }
 }
+
+// ---- Conversations: list badge, view toggle, stacked reader (t197) ----
+.offline-list-threaded {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  margin-inline-start: auto;
+  font-size: 12px;
+  font-weight: normal;
+  color: @text-color-subtle;
+  white-space: nowrap;
+  cursor: pointer;
+  input {
+    margin: 0;
+  }
+}
+.offline-row-line1 .offline-row-thread-count {
+  flex-shrink: 0;
+  min-width: 18px;
+  padding: 0 6px;
+  border-radius: 9px;
+  font-size: 11px;
+  font-weight: 600;
+  line-height: 18px;
+  text-align: center;
+  background: fade(@text-color, 10%);
+  color: @text-color-subtle;
+}
+.offline-thread-meta {
+  margin: -4px 0 8px;
+  font-size: 12px;
+  color: @text-color-very-subtle;
+}
+.offline-thread-loading {
+  font-size: 12px;
+  color: @text-color-very-subtle;
+}
+.offline-thread-list {
+  flex: 1;
+  overflow-y: auto;
+  padding-bottom: 12px;
+}
+.offline-thread-msg {
+  border: 1px solid @border-color-primary;
+  border-radius: 6px;
+  margin-bottom: 6px;
+  background: @background-primary;
+  &.expanded {
+    box-shadow: 0 1px 3px fade(#000, 10%);
+  }
+}
+.offline-thread-msg-head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 6px;
+  padding: 6px 10px;
+  cursor: pointer;
+  font-size: 13px;
+  outline: none;
+  &:hover,
+  &:focus-visible {
+    background: fade(@text-color, 4%);
+  }
+  .offline-thread-caret {
+    flex-shrink: 0;
+    width: 12px;
+    color: @text-color-very-subtle;
+  }
+  .offline-thread-from {
+    flex: 1;
+    min-width: 0;
+    font-weight: 600;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    unicode-bidi: plaintext;
+    text-align: start;
+  }
+  .offline-thread-folder {
+    flex-shrink: 0;
+    font-size: 11px;
+    padding: 0 6px;
+    border-radius: 8px;
+    background: fade(@text-color, 8%);
+    color: @text-color-subtle;
+  }
+  .offline-thread-date {
+    flex-shrink: 0;
+    font-size: 12px;
+    color: @text-color-very-subtle;
+  }
+  .offline-thread-snippet {
+    flex-basis: 100%;
+    padding-inline-start: 18px;
+    font-size: 12px;
+    color: @text-color-subtle;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    unicode-bidi: plaintext;
+    text-align: start;
+  }
+}
+.offline-thread-msg-body {
+  padding: 4px 12px 10px;
+  border-top: 1px solid fade(@text-color, 7%);
+  .offline-thread-msg-actions {
+    margin: 6px 0;
+  }
+  .offline-reader-text {
+    flex: none;
+    overflow: visible;
+  }
+  .offline-thread-html {
+    flex: none;
+    height: 55vh;
+  }
+}
+
+body[class*='theme-ui-darkside'],
+body[class*='theme-ui-taiga'],
+body[class*='theme-ui-ubuntu'],
+body[class*='less-is-more'] {
+  .offline-list-threaded {
+    color: var(--ofl-subtle);
+  }
+  .offline-row-line1 .offline-row-thread-count {
+    background: color-mix(in srgb, var(--ofl-accent) 22%, transparent);
+    color: var(--ofl-fg);
+  }
+  .offline-thread-meta,
+  .offline-thread-loading,
+  .offline-thread-msg-head .offline-thread-caret,
+  .offline-thread-msg-head .offline-thread-date {
+    color: var(--ofl-subtle);
+  }
+  .offline-thread-msg {
+    background: var(--ofl-reader-bg);
+    border-color: var(--ofl-border);
+  }
+  .offline-thread-msg.newest {
+    border-color: color-mix(in srgb, var(--ofl-accent) 55%, var(--ofl-border));
+  }
+  .offline-thread-msg-head {
+    color: var(--ofl-fg);
+    &:hover,
+    &:focus-visible {
+      background: color-mix(in srgb, var(--ofl-fg) 6%, transparent);
+    }
+    .offline-thread-snippet {
+      color: var(--ofl-subtle);
+    }
+    .offline-thread-folder {
+      background: var(--ofl-surface);
+      color: var(--ofl-subtle);
+    }
+  }
+  .offline-thread-msg-body {
+    border-top-color: var(--ofl-border);
+  }
+  .offline-reader .offline-thread-msg-actions .btn {
+    background: var(--ofl-surface);
+    color: var(--ofl-fg);
+    border-color: var(--ofl-border);
+  }
+}

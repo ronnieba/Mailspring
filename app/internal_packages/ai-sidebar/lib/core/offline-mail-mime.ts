@@ -500,6 +500,9 @@ export function parseOfflineMailHeaders(headChunk: Buffer | string): {
   to: string;
   cc: string;
   replyTo: string;
+  msgId: string;
+  inReplyTo: string;
+  refs: string;
 } {
   const rawLatin1 = typeof headChunk === 'string' ? headChunk : headChunk.toString('latin1');
   const { headerText } = splitHeadersAndBody(rawLatin1);
@@ -515,6 +518,10 @@ export function parseOfflineMailHeaders(headChunk: Buffer | string): {
     to: decodeHeaderValue(first(h, 'to')).slice(0, 4000),
     cc: decodeHeaderValue(first(h, 'cc')).slice(0, 4000),
     replyTo: decodeHeaderValue(first(h, 'reply-to')).slice(0, 1000),
+    // Conversation threading (kept local): Message-ID / In-Reply-To / References.
+    msgId: (first(h, 'message-id').match(/<[^<>\s]+>/) || [''])[0].slice(0, 500),
+    inReplyTo: (first(h, 'in-reply-to').match(/<[^<>\s]+>/) || [''])[0].slice(0, 500),
+    refs: ((h.references || []).join(' ').match(/<[^<>\s]+>/g) || []).slice(-20).join(' '),
   };
 }
 

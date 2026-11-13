@@ -40,6 +40,10 @@ export type OfflineIndexEntry = {
   to?: string;
   cc?: string;
   replyTo?: string;
+  /** Message-ID, In-Reply-To and References (for conversations). Missing in older caches. */
+  msgId?: string;
+  inReplyTo?: string;
+  refs?: string;
 };
 
 export type OfflineMailIndex = {
@@ -326,12 +330,21 @@ export async function buildOfflineMailIndex(
           to: h.to,
           cc: h.cc,
           replyTo: h.replyTo,
+          msgId: h.msgId,
+          inReplyTo: h.inReplyTo,
+          refs: h.refs,
         };
       });
     }
     const old = prior.get(rel);
-    // Entries cached before recipients were indexed are read once more.
-    if (old && old.size === fst.size && old.mtimeMs === fst.mtimeMs && old.to !== undefined) {
+    // Entries cached before recipients / thread headers were indexed are read once more.
+    if (
+      old &&
+      old.size === fst.size &&
+      old.mtimeMs === fst.mtimeMs &&
+      old.to !== undefined &&
+      old.msgId !== undefined
+    ) {
       reused++;
       return [old];
     }
@@ -354,6 +367,9 @@ export async function buildOfflineMailIndex(
         to: h.to,
         cc: h.cc,
         replyTo: h.replyTo,
+        msgId: h.msgId,
+        inReplyTo: h.inReplyTo,
+        refs: h.refs,
       },
     ];
   };

@@ -239,15 +239,21 @@ function browserScope(mode: ResolvedScope['mode']): ResolvedScope {
     const selected = browserSelectedIds
       .map((id) => byId.get(id))
       .filter(Boolean) as OfflineArchiveMessage[];
+    const threadIds = Array.from(new Set(selected.map((m) => m.threadId)));
+    // A selected conversation counts as all of its messages.
+    const conv =
+      threadIds.length < selected.length
+        ? tr(` (${threadIds.length} שיחות)`, ` (${threadIds.length} conversation(s))`)
+        : '';
     return {
       mode,
-      threadIds: selected.map((m) => m.threadId),
+      threadIds,
       messageIds: selected.map((m) => m.id),
       accountIds: [OFFLINE_ARCHIVE_ACCOUNT_ID],
       description: selected.length
         ? tr(
-            `${selected.length} הודעות נבחרות מהעותק המקומי / ${selected.length} selected local message(s)`,
-            `${selected.length} selected local message(s)`
+            `${selected.length} הודעות נבחרות מהעותק המקומי${conv} / ${selected.length} selected local message(s)`,
+            `${selected.length} selected local message(s)${conv}`
           )
         : tr('לא נבחרה הודעה — בחר הודעה ברשימה / No message selected', 'No message selected'),
       isEmpty: selected.length === 0,

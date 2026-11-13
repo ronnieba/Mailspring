@@ -21,6 +21,13 @@ import {
   ParsedOfflineMail,
 } from '../core/offline-mail-mime';
 import { cleanAttachmentTemp } from '../core/offline-attachments';
+import {
+  buildThreads,
+  dedupeCopies,
+  OfflineThread,
+  readThreadedPref,
+  writeThreadedPref,
+} from '../core/offline-threads';
 import { OFFLINE_ARCHIVE_ACCOUNT_ID, OfflineArchiveMessage } from '../core/offline-archive-format';
 import {
   offlineFolderIdFor,
@@ -38,6 +45,31 @@ export type OpenMessageState = {
   parsed: ParsedOfflineMail | null;
   error: string | null;
 };
+
+/** One line in the message list: a single message or a whole conversation. */
+export type OfflineListRow = {
+  /** Message id (flat view) or conversation key (threaded view). */
+  key: string;
+  /** Newest message of the row in the current folder (what the line shows). */
+  entry: OfflineIndexEntry;
+  /** Every message of the row, oldest first (all folders, for conversations). */
+  ids: string[];
+  /** How many of those are in the current folder. */
+  inFolder: number;
+};
+
+export type OpenThreadState = {
+  key: string;
+  /** Messages oldest first. */
+  ids: string[];
+  parsed: { [id: string]: ParsedOfflineMail };
+  errors: { [id: string]: string };
+  expanded: Set<string>;
+  loading: boolean;
+};
+
+/** Longest conversation the reader loads at once (newest messages kept). */
+export const OFFLINE_THREAD_READER_MAX = 100;
 
 type Listener = () => void;
 
@@ -84,10 +116,16 @@ class OfflineMailStore {
   index: OfflineMailIndex | null = null;
   folders: OfflineFolderNode[] = [];
   currentFolder: string | null = null;
+  /** Message ids behind the selected rows (what the AI "selected" scope uses). */
   selectedIds: string[] = [];
+  /** Selected list rows (message ids or conversation keys). */
+  selectedKeys: string[] = [];
   anchorId: string | null = null;
   filter = '';
   openMessage: OpenMessageState | null = null;
+  openThread: OpenThreadState | null = null;
+  /** Conversations view (remembered in the offline profile). */
+  threaded = true;
   expanded = new Set<string>();
   /** Offline profile folder (opened attachment copies live under it). */
   configDir: string | null = null;
@@ -96,6 +134,13 @@ class OfflineMailStore {
   private _byId = new Map<string, OfflineIndexEntry>();
   private _byFolder = new Map<string, OfflineIndexEntry[]>();
   private _visibleCache: { key: string; rows: OfflineIndexEntry[] } | null = null;
+  private _rowsCache: {
+    key: string;
+    rows: OfflineListRow[];
+    byKey: Map<string, OfflineListRow>;
+  } | null = null;
+  private _threads = new Map<string, OfflineThread>();
+  private _threadOf = new Map<string, string>();
   private _parsedCache = new Map<string, ParsedOfflineMail>();
   private _openSeq = 0;
   private _expandedFile: string | null = null;
@@ -124,6 +169,7 @@ class OfflineMailStore {
     if (this.configDir) {
       cleanAttachmentTemp(this.configDir);
     }
+    this.threaded = readThreadedPref(this.configDir);
     this._expandedFile = cachePath
       ? path.join(path.dirname(cachePath), OFFLINE_FOLDER_EXPANDED_FILE)
       : null;
@@ -184,11 +230,15 @@ class OfflineMailStore {
     for (const list of this._byFolder.values()) {
       list.sort((a, b) => b.ts - a.ts);
     }
+    const grouped = buildThreads(index.entries);
+    this._threads = grouped.threads;
+    this._threadOf = grouped.threadOf;
+    this._rowsCache = null;
     this.folders = buildFolderTree(index);
     const root = this.root as string;
     const messages: OfflineArchiveMessage[] = index.entries.map((e) => ({
       id: e.id,
-      threadId: `offline-thread-${e.id.slice(8, 20)}`,
+      threadId: this._threadOf.get(e.id) || `thread-${e.id}`,
       accountId: OFFLINE_ARCHIVE_ACCOUNT_ID,
       folderId: folderIdFor(e.folder),
       folderPath: e.folder,
@@ -264,9 +314,12 @@ class OfflineMailStore {
   setFolder(p: string, emit = true) {
     this.currentFolder = p;
     this.selectedIds = [];
+    this.selectedKeys = [];
     this.anchorId = null;
     this.openMessage = null;
+    this.openThread = null;
     this._visibleCache = null;
+    this._rowsCache = null;
     // Expand ancestors so the selection is visible.
     const parts = p.split('/');
     for (let i = 1; i < parts.length; i++) {
@@ -299,6 +352,7 @@ class OfflineMailStore {
   setFilter(filter: string) {
     this.filter = filter;
     this._visibleCache = null;
+    this._rowsCache = null;
     this._emit();
   }
 
@@ -318,63 +372,173 @@ class OfflineMailStore {
     return this._byId.get(id);
   }
 
-  select(id: string, opts: { additive?: boolean; range?: boolean } = {}) {
-    if (!this._byId.has(id)) {
+  /** Conversation key of a message (its own id in the flat view). */
+  rowKeyFor(id: string): string {
+    return this.threaded ? this._threadOf.get(id) || id : id;
+  }
+
+  /** All messages of the conversation a message belongs to, oldest first. */
+  threadIdsFor(id: string): string[] {
+    const key = this._threadOf.get(id);
+    const t = key ? this._threads.get(key) : null;
+    return t ? this._unique(t.ids, this._byId.get(id)?.folder || null) : [id];
+  }
+
+  /** Thread messages with duplicate copies (same Message-ID) shown once. */
+  private _unique(list: string[], preferFolder: string | null): string[] {
+    return dedupeCopies(list, (x) => this._byId.get(x), preferFolder);
+  }
+
+  /** Lines of the message list: conversations (threaded) or single messages. */
+  visibleRows(): OfflineListRow[] {
+    return this._rows().rows;
+  }
+
+  getRow(key: string): OfflineListRow | undefined {
+    return this._rows().byKey.get(key);
+  }
+
+  private _rows() {
+    const key = `${this.currentFolder}\u0000${this.filter}\u0000${this.threaded ? 1 : 0}`;
+    if (this._rowsCache && this._rowsCache.key === key) {
+      return this._rowsCache;
+    }
+    const messages = this.visibleMessages();
+    const rows: OfflineListRow[] = [];
+    const byKey = new Map<string, OfflineListRow>();
+    for (const e of messages) {
+      const k = this.rowKeyFor(e.id);
+      if (byKey.has(k)) {
+        continue;
+      }
+      const t = this.threaded ? this._threads.get(k) : null;
+      const rowIds = t ? this._unique(t.ids, this.currentFolder) : [e.id];
+      const inFolder = rowIds.filter(
+        (x) => this._byId.get(x)?.folder === this.currentFolder
+      ).length;
+      const row: OfflineListRow = { key: k, entry: e, ids: rowIds, inFolder };
+      byKey.set(k, row);
+      rows.push(row);
+    }
+    this._rowsCache = { key, rows, byKey };
+    return this._rowsCache;
+  }
+
+  /** Switch between conversations and single messages; remembered. */
+  setThreaded(threaded: boolean) {
+    if (this.threaded === threaded) {
       return;
     }
-    if (opts.range && this.anchorId) {
-      const rows = this.visibleMessages();
-      const a = rows.findIndex((r) => r.id === this.anchorId);
-      const b = rows.findIndex((r) => r.id === id);
-      if (a !== -1 && b !== -1) {
-        const [lo, hi] = a < b ? [a, b] : [b, a];
-        this.selectedIds = rows.slice(lo, hi + 1).map((r) => r.id);
-      } else {
-        this.selectedIds = [id];
-      }
-    } else if (opts.additive) {
-      this.selectedIds = this.selectedIds.includes(id)
-        ? this.selectedIds.filter((x) => x !== id)
-        : [...this.selectedIds, id];
-      this.anchorId = id;
-    } else {
-      this.selectedIds = [id];
-      this.anchorId = id;
-    }
-    setOfflineArchiveSelection(this.selectedIds);
-    if (this.selectedIds.length === 1) {
-      void this._open(this.selectedIds[0]);
-    } else {
-      this.openMessage = null;
+    const keepId =
+      this.openMessage?.id || this.openThread?.ids[this.openThread.ids.length - 1] || null;
+    this.threaded = threaded;
+    this._rowsCache = null;
+    writeThreadedPref(this.configDir, threaded);
+    this.selectedKeys = [];
+    this.selectedIds = [];
+    this.anchorId = null;
+    this.openMessage = null;
+    this.openThread = null;
+    setOfflineArchiveSelection([]);
+    const keepEntry = keepId ? this._byId.get(keepId) : undefined;
+    if (keepEntry && keepEntry.folder === this.currentFolder) {
+      this.select(this.rowKeyFor(keepId as string));
+      return;
     }
     this._emit();
   }
 
-  /** Row checkbox: add/remove one message without dropping the others. */
-  toggleChecked(id: string) {
-    this.select(id, { additive: true });
+  /** Select a row by its key (a message id is accepted too). */
+  select(keyOrId: string, opts: { additive?: boolean; range?: boolean } = {}) {
+    let key = keyOrId;
+    if (!this.getRow(key)) {
+      if (!this._byId.has(keyOrId)) {
+        return;
+      }
+      key = this.rowKeyFor(keyOrId);
+    }
+    if (opts.range && this.anchorId) {
+      const rows = this.visibleRows();
+      const a = rows.findIndex((r) => r.key === this.anchorId);
+      const b = rows.findIndex((r) => r.key === key);
+      if (a !== -1 && b !== -1) {
+        const [lo, hi] = a < b ? [a, b] : [b, a];
+        this.selectedKeys = rows.slice(lo, hi + 1).map((r) => r.key);
+      } else {
+        this.selectedKeys = [key];
+      }
+    } else if (opts.additive) {
+      this.selectedKeys = this.selectedKeys.includes(key)
+        ? this.selectedKeys.filter((x) => x !== key)
+        : [...this.selectedKeys, key];
+      this.anchorId = key;
+    } else {
+      this.selectedKeys = [key];
+      this.anchorId = key;
+    }
+    this._applySelection(keyOrId !== key ? keyOrId : null);
   }
 
-  /** Select every message in the current (filtered) folder view. */
+  private _idsForKey(key: string): string[] {
+    const row = this.getRow(key);
+    if (row) {
+      return row.ids;
+    }
+    const t = this._threads.get(key);
+    if (t) {
+      return this._unique(t.ids, this.currentFolder);
+    }
+    return this._byId.has(key) ? [key] : [];
+  }
+
+  private _applySelection(focusId: string | null = null) {
+    const ids: string[] = [];
+    const seen = new Set<string>();
+    for (const k of this.selectedKeys) {
+      for (const id of this._idsForKey(k)) {
+        if (!seen.has(id)) {
+          seen.add(id);
+          ids.push(id);
+        }
+      }
+    }
+    this.selectedIds = ids;
+    // AI "selected" scope: a selected conversation means all of its messages.
+    setOfflineArchiveSelection(this.selectedIds);
+    if (this.selectedKeys.length === 1 && ids.length === 1) {
+      this.openThread = null;
+      void this._open(ids[0]);
+    } else if (this.selectedKeys.length === 1 && ids.length > 1) {
+      this.openMessage = null;
+      void this._openThread(this.selectedKeys[0], ids, focusId);
+    } else {
+      this.openMessage = null;
+      this.openThread = null;
+    }
+    this._emit();
+  }
+
+  /** Row checkbox: add/remove one row without dropping the others. */
+  toggleChecked(key: string) {
+    this.select(key, { additive: true });
+  }
+
+  /** Select every row in the current (filtered) folder view. */
   selectAllVisible() {
-    const rows = this.visibleMessages();
+    const rows = this.visibleRows();
     if (!rows.length) {
       return;
     }
-    this.selectedIds = rows.map((r) => r.id);
-    this.anchorId = rows[0].id;
-    setOfflineArchiveSelection(this.selectedIds);
-    if (this.selectedIds.length === 1) {
-      void this._open(this.selectedIds[0]);
-    } else {
-      this.openMessage = null;
-    }
-    this._emit();
+    this.selectedKeys = rows.map((r) => r.key);
+    this.anchorId = rows[0].key;
+    this._applySelection();
   }
 
   clearSelection() {
+    this.selectedKeys = [];
     this.selectedIds = [];
     this.openMessage = null;
+    this.openThread = null;
     setOfflineArchiveSelection([]);
     this._emit();
   }
@@ -394,15 +558,111 @@ class OfflineMailStore {
   }
 
   moveSelection(delta: number) {
-    const rows = this.visibleMessages();
+    const rows = this.visibleRows();
     if (!rows.length) {
       return;
     }
-    const cur = this.selectedIds.length
-      ? rows.findIndex((r) => r.id === this.selectedIds[this.selectedIds.length - 1])
+    const cur = this.selectedKeys.length
+      ? rows.findIndex((r) => r.key === this.selectedKeys[this.selectedKeys.length - 1])
       : -1;
     const next = Math.max(0, Math.min(rows.length - 1, cur + delta));
-    this.select(rows[next].id);
+    this.select(rows[next].key);
+  }
+
+  /** Expand/collapse one message inside the open conversation. */
+  toggleThreadMessage(id: string) {
+    const t = this.openThread;
+    if (!t) {
+      return;
+    }
+    const expanded = new Set(t.expanded);
+    if (expanded.has(id)) {
+      expanded.delete(id);
+    } else {
+      expanded.add(id);
+    }
+    this.openThread = { ...t, expanded };
+    this._emit();
+  }
+
+  setThreadExpandedAll(expandAll: boolean) {
+    const t = this.openThread;
+    if (!t) {
+      return;
+    }
+    const expanded = expandAll ? new Set(t.ids) : new Set([t.ids[t.ids.length - 1]]);
+    this.openThread = { ...t, expanded };
+    this._emit();
+  }
+
+  private async _openThread(key: string, allIds: string[], focusId: string | null) {
+    if (!this.root) {
+      return;
+    }
+    const seq = ++this._openSeq;
+    const ids = allIds
+      .filter((id) => this._byId.has(id))
+      .sort((a, b) => (this._byId.get(a)?.ts || 0) - (this._byId.get(b)?.ts || 0))
+      .slice(-OFFLINE_THREAD_READER_MAX);
+    const newest = ids[ids.length - 1];
+    const expanded = new Set<string>([newest]);
+    if (focusId && ids.includes(focusId)) {
+      expanded.add(focusId);
+    }
+    const parsed: { [id: string]: ParsedOfflineMail } = {};
+    const missing: string[] = [];
+    for (const id of ids) {
+      const c = this._parsedCache.get(id);
+      if (c) {
+        parsed[id] = c;
+      } else {
+        missing.push(id);
+      }
+    }
+    this.openThread = { key, ids, parsed, errors: {}, expanded, loading: missing.length > 0 };
+    if (!missing.length) {
+      return;
+    }
+    this._emit();
+    // Newest first so the expanded message appears quickly.
+    for (const id of missing.reverse()) {
+      const entry = this._byId.get(id);
+      if (!entry) {
+        continue;
+      }
+      let error: string | null = null;
+      let p: ParsedOfflineMail | null = null;
+      try {
+        p = await loadOfflineMessage(this.root, entry.rel);
+        this._remember(id, p);
+      } catch (err) {
+        error = (err as Error).message || 'error';
+      }
+      if (seq !== this._openSeq || !this.openThread || this.openThread.key !== key) {
+        return;
+      }
+      const cur: OpenThreadState = this.openThread;
+      this.openThread = {
+        ...cur,
+        parsed: p ? { ...cur.parsed, [id]: p } : cur.parsed,
+        errors: error ? { ...cur.errors, [id]: error } : cur.errors,
+      };
+      this._emit();
+    }
+    if (seq === this._openSeq && this.openThread && this.openThread.key === key) {
+      this.openThread = { ...this.openThread, loading: false };
+      this._emit();
+    }
+  }
+
+  private _remember(id: string, parsed: ParsedOfflineMail) {
+    if (this._parsedCache.size > 30 + OFFLINE_THREAD_READER_MAX) {
+      const oldest = this._parsedCache.keys().next().value;
+      if (oldest !== undefined) {
+        this._parsedCache.delete(oldest);
+      }
+    }
+    this._parsedCache.set(id, parsed);
   }
 
   private async _open(id: string) {
@@ -420,13 +680,7 @@ class OfflineMailStore {
     this._emit();
     try {
       const parsed = await loadOfflineMessage(this.root, entry.rel);
-      if (this._parsedCache.size > 30) {
-        const oldest = this._parsedCache.keys().next().value;
-        if (oldest !== undefined) {
-          this._parsedCache.delete(oldest);
-        }
-      }
-      this._parsedCache.set(id, parsed);
+      this._remember(id, parsed);
       if (seq === this._openSeq) {
         this.openMessage = { id, loading: false, parsed, error: null };
       }
