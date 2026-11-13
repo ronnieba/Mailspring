@@ -1078,6 +1078,48 @@ async function run() {
     }
   });
 
+  await test('server RFC822.SIZE mismatch blocks complete unless explicitly accepted', async () => {
+    for (const accept of [false, true]) {
+      const fake = await startFakeImapServer({ user: USER, password: PASS });
+      const dest = tmpDir('snap-size-');
+      const work = tmpDir('snap-size-work-');
+      fs.rmSync(work, { recursive: true, force: true });
+      try {
+        fake.sizeSkew.set(2, -7);
+        const out = await runReadOnlySnapshot({
+          target: TARGET(fake.port),
+          username: USER,
+          password: PASS,
+          dest,
+          workCopy: work,
+          execute: true,
+          freeBytes: AMPLE_DISK,
+          retry: fastRetry(),
+          acceptSizeMismatch: accept,
+        });
+        assertTrue(out.manifest!.sizeMismatches.length >= 1);
+        assertEqual(out.ok, accept, out.reason);
+        assertEqual(out.manifest!.complete, accept);
+        assertEqual(out.manifest!.sizeMismatchAccepted, accept);
+        assertEqual(fs.existsSync(work), accept);
+        if (accept) {
+          assertContains(out.reason, 'accepted');
+          const v = verifySnapshotArchive(dest, work);
+          assertTrue(v.ok, v.reason);
+        } else {
+          assertContains(out.reason, 'RFC822.SIZE mismatch');
+        }
+        const saved = fs.readFileSync(path.join(dest, 'INBOX', '2.eml'));
+        assertTrue(Buffer.compare(saved, fake.messagesOf('INBOX').find((m) => m.uid === 2)!.raw) === 0);
+        assertEqual(fake.storeCommands.length, 0);
+      } finally {
+        fs.rmSync(dest, { recursive: true, force: true });
+        fs.rmSync(work, { recursive: true, force: true });
+        await fake.close();
+      }
+    }
+  });
+
   await test('keep-awake start/release is safe', () => {
     const handle = startKeepAwake();
     handle.release();

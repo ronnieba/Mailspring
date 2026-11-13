@@ -220,6 +220,8 @@ export type FakeImapServer = {
   refuseBodyPeekUids: Set<number>;
   /** UIDs whose BODY.PEEK[HEADER]/[TEXT] are refused as well. */
   refuseSectionUids: Set<number>;
+  /** UID -> delta added to the advertised RFC822.SIZE (Yahoo-style approximate sizes). */
+  sizeSkew: Map<number, number>;
   inject(folderRaw: string, message: FakeMessage): void;
   messagesOf(folderRaw: string): FakeMessage[];
   setUidvalidity(folderRaw: string, uidvalidity: number): void;
@@ -245,6 +247,7 @@ export function startFakeImapServer(opts?: {
     onBodyPeekDestroy: null as (() => void) | null,
     refuseBodyPeekUids: new Set<number>(),
     refuseSectionUids: new Set<number>(),
+    sizeSkew: new Map<number, number>(),
   };
 
   return new Promise((resolve, reject) => {
@@ -358,6 +361,7 @@ export function startFakeImapServer(opts?: {
         storeCommands,
         refuseBodyPeekUids: ctrl.refuseBodyPeekUids,
         refuseSectionUids: ctrl.refuseSectionUids,
+        sizeSkew: ctrl.sizeSkew,
         get successfulBodyPeeks() {
           return ctrl.successfulBodyPeeks;
         },
@@ -444,6 +448,7 @@ function handleUidFetch(
     onBodyPeekDestroy: (() => void) | null;
     refuseBodyPeekUids: Set<number>;
     refuseSectionUids: Set<number>;
+    sizeSkew: Map<number, number>;
   }
 ) {
   const writeLine = (s: string) => sock.write(Buffer.from(s + CRLF));
@@ -514,7 +519,7 @@ function handleUidFetch(
         parts.push(`FLAGS (${msg.flags.join(' ')})`);
       }
       if (wantSize) {
-        parts.push(`RFC822.SIZE ${msg.raw.length}`);
+        parts.push(`RFC822.SIZE ${msg.raw.length + (ctrl.sizeSkew.get(uid) || 0)}`);
       }
       writeLine(`* ${seq} FETCH (${parts.join(' ')})`);
     }

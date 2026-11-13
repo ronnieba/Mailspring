@@ -82,6 +82,8 @@ export type SnapshotManifest = {
    * folderIndex is the LIST position (see folders[]); no subjects/addresses.
    */
   incompleteMessages: SnapshotIncompleteMessage[];
+  /** true when --accept-server-size-mismatch let complete ignore sizeMismatches. */
+  sizeMismatchAccepted: boolean;
   /** Previously skipped UIDs recovered by the end-of-run retry. */
   recoveredMessages: Array<{ folderIndex: number; uid: number; method: 'body-peek' | 'header+text' }>;
   folderPathMapping: FolderPathMapping[];
@@ -245,6 +247,12 @@ export async function runReadOnlySnapshot(opts: {
   peekTimeoutMs?: (rfc822Size: number | null | undefined) => number;
   /** Attempts per refused UID before it is skipped (default 3). */
   messageAttempts?: number;
+  /**
+   * Opt-in: the server's RFC822.SIZE is advisory (Yahoo reports approximate
+   * sizes). Mismatches stay listed in the manifest but do not block complete.
+   * Each .eml is still exactly the BODY[] literal the server sent ({N} bytes).
+   */
+  acceptSizeMismatch?: boolean;
 }): Promise<{
   ok: boolean;
   reason: string;
@@ -422,6 +430,7 @@ export async function runReadOnlySnapshot(opts: {
       files: [],
       sizeMismatches: [],
       incompleteMessages: [],
+      sizeMismatchAccepted: false,
       recoveredMessages: [],
       folderPathMapping: mappingsForFolderPaths(folderRows.map((f) => f.path)),
       disk: {
@@ -749,11 +758,21 @@ export async function runReadOnlySnapshot(opts: {
     const mismatches = sizeMismatchesAgainstRfc822(hashed.files, rfc822ByRel);
     const examineFailed = folderRows.filter((f) => f.status === 'examine-failed');
     const countsMatch = stateFileCount(state) === hashed.files.length;
-    const complete = examineFailed.length === 0 && mismatches.length === 0 && countsMatch;
+    const sizeOk = mismatches.length === 0 || !!opts.acceptSizeMismatch;
+    const complete = examineFailed.length === 0 && sizeOk && countsMatch;
     const manifest = manifestBase(complete, hashed.sha256All);
     manifest.files = hashed.files;
     manifest.sizeMismatches = mismatches;
     manifest.incompleteMessages = incompleteMessages;
+    manifest.sizeMismatchAccepted = mismatches.length > 0 && !!opts.acceptSizeMismatch;
+    if (mismatches.length > 0) {
+      log(
+        countLog('size-mismatch', {
+          files: mismatches.length,
+          accepted: opts.acceptSizeMismatch ? 1 : 0,
+        })
+      );
+    }
     manifest.recoveredMessages = recovered;
     manifest.messageCount = hashed.files.length;
     manifest.folderCounts = Object.fromEntries(folderRows.map((f) => [f.path, f.fetched]));
@@ -837,9 +856,14 @@ export async function runReadOnlySnapshot(opts: {
       closeQuiet();
     }
     const reason = complete
-      ? incompleteMessages.length
-        ? `incomplete messages: ${incompleteMessages.length}`
-        : ''
+      ? [
+          incompleteMessages.length ? `incomplete messages: ${incompleteMessages.length}` : '',
+          manifest.sizeMismatchAccepted
+            ? `server RFC822.SIZE differs (accepted) files=${mismatches.length}`
+            : '',
+        ]
+          .filter(Boolean)
+          .join('; ')
       : mismatches.length
         ? `RFC822.SIZE mismatch files=${mismatches.length}`
         : examineFailed[0]

@@ -38,6 +38,7 @@ export type SnapshotCliArgs = {
   maxRetries: number | null;
   passwordFromKeychain: boolean;
   keychainService: string | null;
+  acceptServerSizeMismatch: boolean;
   help: boolean;
 };
 
@@ -57,6 +58,7 @@ export function parseSnapshotArgv(argv: string[]): SnapshotCliArgs {
     maxRetries: null,
     passwordFromKeychain: false,
     keychainService: null,
+    acceptServerSizeMismatch: false,
     help: false,
   };
   for (let i = 0; i < argv.length; i++) {
@@ -70,6 +72,7 @@ export function parseSnapshotArgv(argv: string[]): SnapshotCliArgs {
     else if (a === '--allow-unknown-sizes') out.allowUnknownSizes = true;
     else if (a === '--verify') out.verify = true;
     else if (a === '--password-from-keychain') out.passwordFromKeychain = true;
+    else if (a === '--accept-server-size-mismatch') out.acceptServerSizeMismatch = true;
     else if (a === '--keychain-service') out.keychainService = next() || null;
     else if (a.startsWith('--keychain-service=')) {
       out.keychainService = a.slice('--keychain-service='.length) || null;
@@ -102,6 +105,7 @@ export function usage(): string {
     '  --execute --dest /abs/archive --username EMAIL [--work-copy /abs/work]',
     '  --password-from-keychain [--keychain-service NAME]',
     '    Mac: login Keychain. Windows: Credential Manager (see scripts/store-yahoo-imap-password.ps1).',
+    '  --accept-server-size-mismatch  treat server RFC822.SIZE as advisory (Yahoo); mismatches stay listed',
     '  --verify --dest /abs/archive [--work-copy /abs/work]  (offline, no password)',
     '  dest/work-copy must be an absolute path (POSIX or Windows).',
     '  Fake tests: --insecure-test-server --host 127.0.0.1 --port N --secret-from-stdin',
@@ -268,6 +272,7 @@ export async function runSnapshotCli(
     preflightOnly: args.preflightOnly && !args.execute,
     execute: args.execute,
     allowUnknownSizes: args.allowUnknownSizes,
+    acceptSizeMismatch: args.acceptServerSizeMismatch,
     retry: {
       maxConsecutive: args.maxRetries == null ? DEFAULT_MAX_CONSECUTIVE_RETRIES : args.maxRetries,
     },
@@ -300,6 +305,8 @@ export async function runSnapshotCli(
           examineFailed: result.manifest.examineFailed,
           incompleteMessages: result.manifest.incompleteMessages.length,
           recoveredMessages: result.manifest.recoveredMessages.length,
+          sizeMismatches: result.manifest.sizeMismatches.length,
+          sizeMismatchAccepted: result.manifest.sizeMismatchAccepted,
           disk: result.manifest.disk,
         },
         null,
