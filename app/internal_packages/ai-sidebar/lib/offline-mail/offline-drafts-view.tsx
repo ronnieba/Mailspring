@@ -21,7 +21,7 @@ import {
 } from './offline-recipients';
 import { OfflineRichEditor } from './offline-rich-editor';
 import { OfflineAttachmentList } from './offline-attachments-view';
-import { chooseFilesToAttach, openWithDefaultApp } from './offline-file-actions';
+import { chooseFilesToAttach, droppedFilePaths, openWithDefaultApp } from './offline-file-actions';
 import { draftAttachmentPath } from '../core/offline-attachments';
 import { ProofSegment } from '../core/text-diff';
 import { offlineDateLocale, offlineDir, tr } from '../core/offline-i18n';
@@ -230,14 +230,52 @@ export class OfflineDraftEditor extends DraftsComponent<Record<string, never>, E
     e.preventDefault();
     e.stopPropagation();
     this.setState({ dragging: false });
-    this._addFiles(d, files.map((f) => (f as any).path as string).filter(Boolean));
+    const paths = droppedFilePaths(files);
+    if (!paths.length) {
+      this.setState({
+        attachNote: tr(
+          'לא הצלחתי לקרוא את הקבצים שנגררו. נסה את הכפתור "📎 צרף קבצים".',
+          'Could not read the dropped files. Try the "📎 Attach files" button.'
+        ),
+      });
+      return;
+    }
+    this._addFiles(d, paths);
   };
+
+  _pickFiles(d: OfflineDraft) {
+    void chooseFilesToAttach().then((paths) => this._addFiles(d, paths));
+  }
 
   _renderAttachments(d: OfflineDraft) {
     const list = d.attachments || [];
     const dir = offlineDraftsStore.configDir;
     return (
       <>
+        <div
+          className={classNames('offline-draft-attachbar', { empty: !list.length })}
+          data-offline-draft-attachbar={list.length}
+        >
+          <button
+            className="btn offline-draft-attach-main"
+            data-offline-draft-attach-main="true"
+            onClick={() => this._pickFiles(d)}
+          >
+            📎{' '}
+            {list.length ? tr('הוסף עוד קבצים', 'Add more files') : tr('צרף קבצים', 'Attach files')}
+          </button>
+          <span className="offline-draft-attachbar-hint">
+            {list.length
+              ? tr(
+                  `${list.length} קבצים מצורפים לטיוטה`,
+                  `${list.length} file(s) attached to this draft`
+                )
+              : tr(
+                  'אין קבצים מצורפים. אפשר גם לגרור קבצים לחלון הטיוטה.',
+                  'No files attached. You can also drag files onto the draft.'
+                )}
+          </span>
+        </div>
         <OfflineAttachmentList
           context="draft"
           items={list.map((a) => ({
@@ -431,7 +469,7 @@ export class OfflineDraftEditor extends DraftsComponent<Record<string, never>, E
               'הוסף קבצים לטיוטה (עותק נשמר רק בפרופיל הניסוי). אפשר גם לגרור קבצים לכאן.',
               'Add files to the draft (a copy is kept only in the experiment profile). You can also drag files here.'
             )}
-            onClick={() => void chooseFilesToAttach().then((paths) => this._addFiles(d, paths))}
+            onClick={() => this._pickFiles(d)}
           >
             📎 {tr('צרף קבצים', 'Attach files')}
           </button>

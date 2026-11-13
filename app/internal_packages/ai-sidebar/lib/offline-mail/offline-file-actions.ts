@@ -64,3 +64,28 @@ export async function saveBytesAs(
 export function chooseFilesToAttach(): Promise<string[]> {
   return openChooser();
 }
+
+/**
+ * Paths of files dropped from Explorer/Finder. Newer Electron versions no
+ * longer put a .path on dropped File objects; webUtils gives it instead.
+ */
+export function droppedFilePaths(files: File[]): string[] {
+  let getPath: ((f: File) => string) | null = null;
+  try {
+    const webUtils = require('electron').webUtils;
+    if (webUtils && typeof webUtils.getPathForFile === 'function') {
+      getPath = (f) => webUtils.getPathForFile(f);
+    }
+  } catch (err) {
+    getPath = null;
+  }
+  return files
+    .map((f) => {
+      try {
+        return (getPath ? getPath(f) : '') || (f as any).path || '';
+      } catch (err) {
+        return (f as any).path || '';
+      }
+    })
+    .filter(Boolean);
+}

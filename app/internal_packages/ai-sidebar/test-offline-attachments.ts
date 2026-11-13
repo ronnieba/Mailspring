@@ -26,6 +26,7 @@ import { parseOfflineMail } from './lib/core/offline-mail-mime';
 import { readDrafts } from './lib/core/offline-drafts';
 import { OfflineDraftsStore } from './lib/offline-mail/offline-drafts-store';
 import {
+  droppedFilePaths,
   saveBytesAs,
   setOfflineFileActions,
   openWithDefaultApp,
@@ -340,6 +341,22 @@ const EML = [
     ok(v.includes('isDangerousAttachment(') && v.includes("tr('פתח בכל זאת', 'Open anyway')"));
     const d = read('internal_packages/ai-sidebar/lib/offline-mail/offline-drafts-view.tsx');
     ok(d.includes('chooseFilesToAttach()') && d.includes('onDropCapture'));
+  });
+
+  await test('attach is always visible in the draft and drops use real file paths', () => {
+    const d = read('internal_packages/ai-sidebar/lib/offline-mail/offline-drafts-view.tsx');
+    // Bar with the button renders for every draft (new / reply / forward), not only when files exist.
+    ok(
+      d.includes('data-offline-draft-attach-main') && d.includes('data-offline-draft-attach="true"')
+    );
+    ok(!/list\.length\s*\?\s*\(\s*<div className=\{classNames\('offline-draft-attachbar'/.test(d));
+    ok(d.includes('droppedFilePaths(files)') && !d.includes('(f as any).path'));
+    const fa = read('internal_packages/ai-sidebar/lib/offline-mail/offline-file-actions.ts');
+    ok(fa.includes('webUtils.getPathForFile'));
+    ok(
+      droppedFilePaths([{ path: 'C:\\tmp\\a.txt' } as any, {} as any]).join('|') ===
+        'C:\\tmp\\a.txt'
+    );
   });
 
   for (const d of tmpDirs) {
