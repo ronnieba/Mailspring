@@ -5,6 +5,8 @@ import { offlineMailStore, OfflineListRow } from './offline-mail-store';
 import { offlineDraftsStore } from './offline-drafts-store';
 import { OfflineDraftsList } from './offline-drafts-view';
 import { OfflineStoreComponent } from './use-offline-store';
+import { offlineSearchStore } from './offline-search-store';
+import { OfflineSearchBar, OfflineSearchResults } from './offline-search-view';
 import {
   OFFLINE_SORT_KEYS,
   OfflineSortKey,
@@ -350,6 +352,19 @@ export class OfflineMessageList extends OfflineStoreComponent<Record<string, nev
     if (offlineDraftsStore.showing) {
       return <OfflineDraftsList />;
     }
+    if (offlineSearchStore.active) {
+      return (
+        <div className="offline-message-list searching" data-offline-message-list="true">
+          <div className="offline-list-header">
+            <div className="offline-list-title" dir="auto">
+              {tr('תוצאות חיפוש', 'Search results')}
+            </div>
+            <OfflineSearchBar />
+          </div>
+          <OfflineSearchResults />
+        </div>
+      );
+    }
     const s = offlineMailStore;
     const rows = s.visibleRows();
     const messageCount = s.visibleMessages().length;
@@ -420,17 +435,7 @@ export class OfflineMessageList extends OfflineStoreComponent<Record<string, nev
               {tr('שיחות', 'Conversations')}
             </label>
           </div>
-          <input
-            className="offline-list-filter"
-            type="search"
-            dir="auto"
-            placeholder={tr(
-              'סינון לפי נושא/שולח (מקומי בלבד)',
-              'Filter by subject/sender (local only)'
-            )}
-            value={s.filter}
-            onChange={(e) => s.setFilter(e.target.value)}
-          />
+          <OfflineSearchBar />
           {this._renderTools()}
           <div className="offline-list-selectbar" dir={offlineDir()}>
             <label className="offline-list-selectall" data-offline-select-all="true">

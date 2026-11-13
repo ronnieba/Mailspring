@@ -34,6 +34,15 @@ powershell -NoProfile -ExecutionPolicy Bypass -File scripts\start-offline-archiv
   provider (no network). Citations open the message in the main window.
   Gemini is used only via the explicit "Summarize (Gemini)" button for exactly
   one selected message.
+- Local full-text search (search box above the list, Ctrl+F, ribbon "Search
+  mail"): subject, sender, recipients, body text (HTML without tags) and
+  attachment file names; current folder, folder + subfolders, or all folders;
+  Hebrew-aware (niqqud, final letters, ו/ה/ב/ל/מ/ש prefixes) and case-insensitive;
+  `from:` `to:` `subject:` `file:` `has:attachment` `after:` `before:` `date:`
+  `folder:` (Hebrew aliases too), "phrases", `OR`, `-word`. The SQLite FTS5
+  index lives only in the offline profile (`offline-search.sqlite`); it is
+  built once in the background (progress shown) and afterwards only new,
+  changed or removed mail is read. No network.
 
 ## Gemini on Windows
 

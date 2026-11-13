@@ -165,6 +165,8 @@ class OfflineMailStore {
   } | null = null;
   private _threads = new Map<string, OfflineThread>();
   private _threadOf = new Map<string, string>();
+  /** Message ids shown in folder lists (one per duplicate copy in a folder). */
+  private _listed = new Set<string>();
   private _parsedCache = new Map<string, ParsedOfflineMail>();
   private _openSeq = 0;
   private _expandedFile: string | null = null;
@@ -276,6 +278,7 @@ class OfflineMailStore {
         listed.add(e.id);
       }
     }
+    this._listed = listed;
     const grouped = buildThreads(index.entries);
     this._threads = grouped.threads;
     this._threadOf = grouped.threadOf;
@@ -336,6 +339,42 @@ class OfflineMailStore {
     };
     rec(this.folders);
     return out;
+  }
+
+  /** Every folder node (tree order). */
+  allFolderNodes(): OfflineFolderNode[] {
+    const out: OfflineFolderNode[] = [];
+    const rec = (list: OfflineFolderNode[]) => {
+      for (const n of list) {
+        out.push(n);
+        rec(n.children);
+      }
+    };
+    rec(this.folders);
+    return out;
+  }
+
+  /** Listed in its folder (false for the second copy of a duplicate). */
+  isListed(id: string): boolean {
+    return this._listed.has(id);
+  }
+
+  /**
+   * Select messages by id outside the folder list (search results): opens one
+   * in the reader, several become the AI "selected" scope. The folder stays.
+   */
+  selectIds(ids: string[], opts: { additive?: boolean } = {}) {
+    const known = ids.filter((x) => this._byId.has(x));
+    if (opts.additive && known.length === 1) {
+      const id = known[0];
+      this.selectedKeys = this.selectedKeys.includes(id)
+        ? this.selectedKeys.filter((x) => x !== id)
+        : [...this.selectedKeys, id];
+    } else {
+      this.selectedKeys = known;
+    }
+    this.anchorId = this.selectedKeys[0] || null;
+    this._applySelection();
   }
 
   folderCount(): number {

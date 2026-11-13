@@ -2853,3 +2853,271 @@ body[class*='less-is-more'] {
     border-bottom-color: var(--ofl-border);
   }
 }
+
+// ---------------------------------------------------------------------------
+// Local full-text search (box above the list, results with folder + snippet)
+// ---------------------------------------------------------------------------
+.offline-search-bar {
+  margin-top: 4px;
+  .offline-search-row {
+    display: flex;
+    align-items: center;
+    gap: 4px;
+    border: 1px solid fade(@text-color, 25%);
+    border-radius: 4px;
+    padding: 0 6px;
+    background: @background-primary;
+    &:focus-within {
+      border-color: @component-active-color;
+    }
+  }
+  .offline-search-icon {
+    font-size: 12px;
+    opacity: 0.7;
+  }
+  .offline-search-input {
+    flex: 1;
+    min-width: 0;
+    border: none;
+    outline: none;
+    background: transparent;
+    color: inherit;
+    padding: 4px 2px;
+    font-size: 13px;
+    box-shadow: none;
+  }
+  .offline-search-clear {
+    border: none;
+    background: transparent;
+    color: inherit;
+    cursor: pointer;
+    opacity: 0.7;
+    padding: 0 4px;
+    &:hover {
+      opacity: 1;
+    }
+  }
+  .offline-search-options {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 6px;
+    margin-top: 4px;
+    font-size: 12px;
+    select {
+      font-size: 12px;
+      padding: 1px 4px;
+    }
+  }
+  .offline-search-progress {
+    display: inline-flex;
+    align-items: center;
+    gap: 5px;
+    color: @text-color-very-subtle;
+    &.error {
+      color: #d64541;
+    }
+  }
+  .offline-search-progress-bar {
+    display: inline-block;
+    width: 70px;
+    height: 6px;
+    border-radius: 3px;
+    background: fade(@text-color, 15%);
+    overflow: hidden;
+    > span {
+      display: block;
+      height: 100%;
+      background: @component-active-color;
+    }
+  }
+}
+
+.offline-message-list.searching {
+  display: flex;
+  flex-direction: column;
+}
+
+.offline-search-results {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+}
+
+.offline-search-summary {
+  .offline-list-tool-btn {
+    font-size: 12px;
+    padding: 1px 8px;
+    border: 1px solid fade(@text-color, 25%);
+    border-radius: 4px;
+    background: transparent;
+    color: inherit;
+    cursor: pointer;
+  }
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 8px;
+  padding: 4px 10px;
+  font-size: 12px;
+  border-bottom: 1px solid fade(@text-color, 10%);
+  .offline-search-hint {
+    color: @text-color-very-subtle;
+    margin-inline-start: auto;
+  }
+  .offline-search-error {
+    color: #d64541;
+  }
+}
+
+.offline-search-scroll {
+  flex: 1;
+  overflow-y: auto;
+  outline: none;
+  &::-webkit-scrollbar {
+    width: 10px;
+  }
+  &::-webkit-scrollbar-thumb {
+    background: fade(@text-color, 25%);
+    border-radius: 5px;
+  }
+}
+
+.offline-search-empty {
+  padding: 20px;
+  text-align: center;
+  color: @text-color-very-subtle;
+}
+
+.offline-search-row-item {
+  position: absolute;
+  inset-inline: 0;
+  box-sizing: border-box;
+  padding: 6px 10px;
+  border-bottom: 1px solid fade(@text-color, 7%);
+  cursor: default;
+  overflow: hidden;
+  &:hover {
+    background: fade(@text-color, 4%);
+  }
+  &.selected {
+    background: @list-selected-bg;
+  }
+  .offline-search-line1 {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    font-size: 13px;
+    font-weight: 600;
+  }
+  .offline-search-from {
+    flex: 1;
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    unicode-bidi: plaintext;
+    text-align: start;
+  }
+  .offline-search-folder {
+    flex-shrink: 1;
+    max-width: 40%;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    font-weight: normal;
+    font-size: 11px;
+    padding: 0 6px;
+    border-radius: 8px;
+    background: fade(@text-color, 8%);
+    color: @text-color-subtle;
+  }
+  .offline-search-date {
+    flex-shrink: 0;
+    font-weight: normal;
+    font-size: 12px;
+    color: @text-color-very-subtle;
+  }
+  .offline-search-subject,
+  .offline-search-snippet {
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    unicode-bidi: plaintext;
+    text-align: start;
+  }
+  .offline-search-subject {
+    font-size: 13px;
+    color: @text-color-subtle;
+  }
+  .offline-search-snippet {
+    font-size: 12px;
+    color: @text-color-very-subtle;
+  }
+  mark.offline-search-hit {
+    background: #ffe066;
+    color: #222;
+    border-radius: 2px;
+    padding: 0 1px;
+  }
+}
+
+body[class*='theme-ui-darkside'],
+body[class*='theme-ui-taiga'],
+body[class*='theme-ui-ubuntu'],
+body[class*='less-is-more'] {
+  .offline-search-bar {
+    .offline-search-row {
+      background: var(--ofl-surface);
+      border-color: var(--ofl-border);
+      color: var(--ofl-fg);
+    }
+    .offline-search-input::placeholder {
+      color: var(--ofl-subtle);
+    }
+    .offline-search-options select {
+      background: var(--ofl-surface);
+      color: var(--ofl-fg);
+      border: 1px solid var(--ofl-border);
+    }
+    .offline-search-progress {
+      color: var(--ofl-subtle);
+    }
+    .offline-search-progress-bar > span {
+      background: var(--ofl-accent);
+    }
+  }
+  .offline-search-summary {
+    border-bottom-color: var(--ofl-border);
+    .offline-list-tool-btn {
+      border-color: var(--ofl-border);
+      background: var(--ofl-surface);
+      color: var(--ofl-fg);
+    }
+    .offline-search-hint {
+      color: var(--ofl-subtle);
+    }
+  }
+  .offline-search-row-item {
+    border-bottom-color: var(--ofl-border);
+    &:hover {
+      background: color-mix(in srgb, var(--ofl-fg) 7%, transparent);
+    }
+    &.selected {
+      background: var(--ofl-selected);
+      box-shadow: inset -3px 0 0 var(--ofl-accent);
+    }
+    .offline-search-folder {
+      background: color-mix(in srgb, var(--ofl-fg) 10%, transparent);
+      color: var(--ofl-fg);
+    }
+    .offline-search-subject {
+      color: color-mix(in srgb, var(--ofl-fg) 80%, var(--ofl-list-bg));
+    }
+    .offline-search-snippet,
+    .offline-search-date {
+      color: var(--ofl-subtle);
+    }
+  }
+}

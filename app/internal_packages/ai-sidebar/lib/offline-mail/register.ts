@@ -13,6 +13,7 @@ import { OfflineRibbon } from './offline-ribbon';
 import { offlineMailStore } from './offline-mail-store';
 import { offlineDraftsStore } from './offline-drafts-store';
 import { offlineAddressBook } from './offline-address-book-store';
+import { offlineSearchStore } from './offline-search-store';
 import { proofreadDraftViaIpc } from '../gemini-ipc-transport';
 import AISidebarStore from '../ai-sidebar-store';
 import { offlineLang, offlineLangBodyClass, offlineDir } from '../core/offline-i18n';
@@ -71,12 +72,27 @@ export function registerOfflineMailBrowser(archivePath: string, sidebar: any) {
   } catch (err) {
     console.error('[Offline address book] not available:', (err as Error).message);
   }
+  let searchIndexFor: unknown = null;
   offlineMailStore.listen(() => {
     if (offlineMailStore.status === 'ready' && offlineMailStore.index) {
       // Let the folder tree paint first.
       const index = offlineMailStore.index;
       setTimeout(() => offlineAddressBook.rebuild(index), 50);
+      // Local full-text search index (offline profile); only new/changed mail is read.
+      if (searchIndexFor !== index) {
+        searchIndexFor = index;
+        setTimeout(() => {
+          try {
+            if (offlineMailStore.root) {
+              offlineSearchStore.attach(AppEnv.getConfigDirPath(), offlineMailStore.root);
+            }
+          } catch (err) {
+            console.error('[Offline search] not available:', (err as Error).message);
+          }
+        }, 1500);
+      }
     }
+    offlineSearchStore.onFolderChanged();
   });
   // AI panel: an open draft becomes the "📝 open draft" scope automatically;
   // closing it goes back to the previous scope.
@@ -100,11 +116,32 @@ export function registerOfflineMailBrowser(archivePath: string, sidebar: any) {
     }
   });
   window.addEventListener('beforeunload', () => offlineDraftsStore.flush());
+  window.addEventListener('beforeunload', () => offlineSearchStore.close());
+  // Ctrl+F: local mail search (any keyboard layout).
+  window.addEventListener(
+    'keydown',
+    (e: KeyboardEvent) => {
+      if ((e.ctrlKey || e.metaKey) && !e.altKey && !e.shiftKey && e.code === 'KeyF') {
+        e.preventDefault();
+        e.stopPropagation();
+        offlineDraftsStore.hide();
+        window.setTimeout(() => {
+          const input = document.querySelector('.offline-search-input') as HTMLInputElement | null;
+          if (input) {
+            input.focus();
+            input.select();
+          }
+        }, 30);
+      }
+    },
+    true
+  );
   (window as any).__offlineMail = {
     summary: () => offlineMailStore.summary(),
     store: offlineMailStore,
     drafts: offlineDraftsStore,
     addressBook: offlineAddressBook,
+    search: offlineSearchStore,
   };
   void offlineMailStore.start(archivePath, cachePath);
   // Window size/position/maximized state is restored by the main process

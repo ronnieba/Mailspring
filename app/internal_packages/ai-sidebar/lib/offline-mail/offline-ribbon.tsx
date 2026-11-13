@@ -322,14 +322,18 @@ export class OfflineRibbon extends React.Component<Record<string, never>, State>
             label: tr('חיפוש', 'Find'),
             buttons: [
               {
-                id: 'filter',
+                id: 'search',
                 icon: '🔎',
-                label: tr('סינון הודעות', 'Filter messages'),
+                label: tr('חיפוש בדואר', 'Search mail'),
+                title: tr(
+                  'חיפוש מקומי בכל התיקיות: נושא, שולח, נמענים, תוכן ושמות קבצים (Ctrl+F)',
+                  'Local search in all folders: subject, sender, recipients, text and file names (Ctrl+F)'
+                ),
                 onClick: () => {
                   d.hide();
                   window.setTimeout(() => {
                     const input = document.querySelector(
-                      '.offline-list-filter'
+                      '.offline-search-input'
                     ) as HTMLInputElement;
                     if (input) {
                       input.focus();

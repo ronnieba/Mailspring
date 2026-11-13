@@ -23,7 +23,7 @@ import {
 export const OFFLINE_INDEX_VERSION = 3;
 const HEAD_BYTES = 64 * 1024;
 /** Bump to re-check attachments of every cached entry once (structure, not headers). */
-export const ATTACH_SCAN_VERSION = 1;
+export const ATTACH_SCAN_VERSION = 2;
 /** Messages larger than this are not read whole; they are counted as having attachments. */
 const FULL_SCAN_MAX_BYTES = 80 * 1024 * 1024;
 /** Large files are read one at a time (memory). */
@@ -45,14 +45,14 @@ export async function scanAttachmentsOfFile(
   abs: string,
   size: number,
   head: Buffer
-): Promise<{ count: number; bytes: number }> {
+): Promise<{ count: number; bytes: number; names: string[] }> {
   const top = topContentType(head);
   if (!needsFullAttachmentScan(top, size)) {
     const s = scanOfflineMailAttachments(head);
-    return { count: s.count, bytes: s.bytes };
+    return { count: s.count, bytes: s.bytes, names: attachNamesForIndex(s.names) };
   }
   if (size > FULL_SCAN_MAX_BYTES) {
-    return { count: 1, bytes: size };
+    return { count: 1, bytes: size, names: [] };
   }
   const read = () => fs.promises.readFile(abs, { flag: 'r' });
   let buf: Buffer;
@@ -64,7 +64,15 @@ export async function scanAttachmentsOfFile(
     buf = await read();
   }
   const s = scanOfflineMailAttachments(buf);
-  return { count: s.count, bytes: s.bytes };
+  return { count: s.count, bytes: s.bytes, names: attachNamesForIndex(s.names) };
+}
+
+/** Attachment file names kept in the index (local search); bounded. */
+export function attachNamesForIndex(names: string[]): string[] {
+  return names
+    .filter((n) => n && !/^\(unnamed /.test(n))
+    .slice(0, 20)
+    .map((n) => n.slice(0, 160));
 }
 
 export type OfflineIndexEntry = {
@@ -94,6 +102,8 @@ export type OfflineIndexEntry = {
   /** Real attachments (MIME structure; inline cid images, signatures, body parts excluded). */
   attachCount?: number;
   attachBytes?: number;
+  /** Real attachment file names (for local search); only when there are some. */
+  attachNames?: string[];
   /** ATTACH_SCAN_VERSION the attachment fields were computed with. */
   attachScan?: number;
 };
@@ -389,6 +399,7 @@ export async function buildOfflineMailIndex(
           refs: h.refs,
           attachCount: att.count,
           attachBytes: att.bytes,
+          ...(att.count ? { attachNames: attachNamesForIndex(att.names) } : {}),
           attachScan: ATTACH_SCAN_VERSION,
         };
       });
@@ -409,12 +420,14 @@ export async function buildOfflineMailIndex(
       // Older entry: headers are fine, only the attachment flag is re-checked (once).
       const att = await scanAttachmentsOfFile(abs, fst.size, await readHead(abs, HEAD_BYTES));
       rescanned++;
+      const { attachNames: _oldNames, ...rest } = old;
       return [
         {
-          ...old,
+          ...rest,
           hasAttachments: att.count > 0,
           attachCount: att.count,
           attachBytes: att.bytes,
+          ...(att.count && att.names.length ? { attachNames: att.names } : {}),
           attachScan: ATTACH_SCAN_VERSION,
         },
       ];
@@ -444,6 +457,7 @@ export async function buildOfflineMailIndex(
         refs: h.refs,
         attachCount: att.count,
         attachBytes: att.bytes,
+        ...(att.count && att.names.length ? { attachNames: att.names } : {}),
         attachScan: ATTACH_SCAN_VERSION,
       },
     ];
@@ -507,6 +521,23 @@ export async function readOfflineMessageRaw(root: string, rel: string): Promise<
     return Buffer.from(part, 'latin1');
   }
   return fs.promises.readFile(absPath(root, rel), { flag: 'r' });
+}
+
+/**
+ * The first `bytes` of one message (read-only), for the local search index.
+ * Bodies come before attachments, so this holds the text of almost every mail.
+ */
+export async function readOfflineMessageHead(
+  root: string,
+  rel: string,
+  bytes: number
+): Promise<Buffer> {
+  assertBrowsableRoot(root);
+  if (/\.(mbox|mbx)#\d+$/i.test(rel)) {
+    const all = await readOfflineMessageRaw(root, rel);
+    return all.subarray(0, bytes);
+  }
+  return readHead(absPath(root, rel), bytes);
 }
 
 export function readOfflineMessageRawSync(root: string, rel: string): Buffer {

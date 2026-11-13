@@ -393,6 +393,7 @@ function walkEntity(rawLatin1: string, walk: Walk, depth: number, parentType: st
         inlineImages: {},
         notes: walk.notes,
         withBytes: walk.withBytes,
+        scanOnly: walk.scanOnly,
       };
       for (const p of parts) {
         walkEntity(p, sub, depth + 1, ct);
@@ -505,6 +506,31 @@ export function scanOfflineMailAttachments(raw: Buffer | string): OfflineAttachm
     bytes: list.reduce((n, a) => n + (a.size || 0), 0),
     names: list.map((a) => a.filename).slice(0, 50),
   };
+}
+
+/**
+ * Body text of a message for the local search index (plain text, or the HTML
+ * without tags). Attachments are not decoded. Works on a truncated message.
+ */
+export function extractOfflineSearchText(raw: Buffer | string): string {
+  const rawLatin1 = typeof raw === 'string' ? raw : raw.toString('latin1');
+  const walk: Walk = {
+    text: [],
+    html: [],
+    attachments: [],
+    inlineImages: {},
+    notes: new Set(),
+    scanOnly: true,
+  };
+  try {
+    walkEntity(rawLatin1, walk, 0, '');
+  } catch (err) {
+    // partial text is fine for search
+  }
+  if (walk.text.length) {
+    return walk.text.join('\n\n');
+  }
+  return walk.html.length ? htmlToText(walk.html.join('\n')) : '';
 }
 
 const ENTITY_MAP: { [k: string]: string } = {
