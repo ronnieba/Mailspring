@@ -1,17 +1,25 @@
 import React from 'react';
 import classNames from 'classnames';
 import { Actions, WorkspaceStore } from 'mailspring-exports';
+import {
+  OfflineLang,
+  OFFLINE_LANG_CONFIG_KEY,
+  OFFLINE_LANG_LOCALES,
+  offlineDir,
+  offlineLang,
+  tr,
+} from '../core/offline-i18n';
 
-/** Hebrew names for Mailspring's bundled themes (others keep their displayName). */
-const THEME_LABELS: { [name: string]: string } = {
-  'ui-automatic': 'אוטומטי (לפי Windows)',
-  'ui-light': 'בהיר',
-  'ui-dark': 'כהה',
-  'ui-darkside': 'Darkside (כהה כחלחל)',
-  'ui-taiga': 'Taiga (צבעוני)',
-  'ui-ubuntu': 'Ubuntu (צבעוני)',
-  'less-is-more': 'Less Is More (מינימלי)',
-  'ui-less-is-more': 'Less Is More (מינימלי)',
+/** Names for Mailspring's bundled themes (others keep their displayName). */
+const THEME_LABELS: { [name: string]: [string, string] } = {
+  'ui-automatic': ['אוטומטי (לפי Windows)', 'Automatic (follows Windows)'],
+  'ui-light': ['בהיר', 'Light'],
+  'ui-dark': ['כהה', 'Dark'],
+  'ui-darkside': ['Darkside (כהה כחלחל)', 'Darkside (bluish dark)'],
+  'ui-taiga': ['Taiga (צבעוני)', 'Taiga (colorful)'],
+  'ui-ubuntu': ['Ubuntu (צבעוני)', 'Ubuntu (colorful)'],
+  'less-is-more': ['Less Is More (מינימלי)', 'Less Is More (minimal)'],
+  'ui-less-is-more': ['Less Is More (מינימלי)', 'Less Is More (minimal)'],
 };
 const THEME_ORDER = [
   'ui-automatic',
@@ -34,7 +42,8 @@ export function offlineThemeChoices(): { name: string; label: string }[] {
   });
   return names.map((name) => {
     const pkg = themes.find((t) => t.name === name);
-    return { name, label: THEME_LABELS[name] || pkg?.displayName || name };
+    const l = THEME_LABELS[name];
+    return { name, label: (l && tr(l[0], l[1])) || pkg?.displayName || name };
   });
 }
 
@@ -57,10 +66,52 @@ function showThemeMenu(anchor: HTMLElement) {
   menu.popup({ x: Math.round(rect.left), y: Math.round(rect.bottom) });
 }
 
-const PANES: { id: string; label: string; icon: string }[] = [
-  { id: 'RootSidebar', label: 'תיקיות', icon: '📁' },
-  { id: 'MessageList', label: 'קורא', icon: '📄' },
-  { id: 'MessageListSidebar', label: 'עוזר AI', icon: '🤖' },
+export const OFFLINE_LANGUAGE_CHOICES: { lang: OfflineLang; label: string }[] = [
+  { lang: 'he', label: 'עברית' },
+  { lang: 'en', label: 'English' },
+];
+
+/**
+ * Save the UI language in the offline profile (core.intl.language) and
+ * relaunch, like Mailspring's own language preference: the string table and
+ * the right-to-left / left-to-right layout are chosen at startup.
+ */
+export function switchOfflineLanguage(lang: OfflineLang): boolean {
+  if (lang === offlineLang()) {
+    return false;
+  }
+  AppEnv.config.set(OFFLINE_LANG_CONFIG_KEY, OFFLINE_LANG_LOCALES[lang]);
+  // Give the config a moment to reach config.json before restarting.
+  window.setTimeout(() => {
+    const { app } = require('@electron/remote');
+    app.relaunch();
+    app.quit();
+  }, 700);
+  return true;
+}
+
+function showLanguageMenu(anchor: HTMLElement) {
+  const { Menu, MenuItem } = require('@electron/remote');
+  const current = offlineLang();
+  const menu = new Menu();
+  for (const c of OFFLINE_LANGUAGE_CHOICES) {
+    menu.append(
+      new MenuItem({
+        label: c.label,
+        type: 'radio',
+        checked: c.lang === current,
+        click: () => switchOfflineLanguage(c.lang),
+      })
+    );
+  }
+  const rect = anchor.getBoundingClientRect();
+  menu.popup({ x: Math.round(rect.left), y: Math.round(rect.bottom) });
+}
+
+const PANES: { id: string; label: [string, string]; icon: string }[] = [
+  { id: 'RootSidebar', label: ['תיקיות', 'Folders'], icon: '📁' },
+  { id: 'MessageList', label: ['קורא', 'Reader'], icon: '📄' },
+  { id: 'MessageListSidebar', label: ['עוזר AI', 'AI assistant'], icon: '🤖' },
 ];
 
 /**
@@ -93,41 +144,61 @@ export class OfflinePaneToggles extends React.Component {
     return (
       <div
         className="offline-pane-toggles"
-        dir="rtl"
+        dir={offlineDir()}
         role="toolbar"
-        aria-label="הצג או הסתר אזורים"
+        aria-label={tr('הצג או הסתר אזורים', 'Show or hide areas')}
         data-offline-pane-toggles="true"
       >
-        <span className="offline-pane-toggles-label">הצג:</span>
+        <span className="offline-pane-toggles-label">{tr('הצג:', 'Show:')}</span>
         {PANES.map((p) => {
           const loc = WorkspaceStore.Location[p.id];
           if (!loc) {
             return null;
           }
           const hidden = WorkspaceStore.isLocationHidden(loc);
+          const label = tr(p.label[0], p.label[1]);
           return (
             <button
               key={p.id}
               className={classNames('offline-pane-toggle', { off: hidden })}
               data-pane={p.id}
               aria-pressed={!hidden}
-              title={hidden ? `הצג ${p.label}` : `הסתר ${p.label}`}
+              title={
+                hidden ? tr(`הצג ${label}`, `Show ${label}`) : tr(`הסתר ${label}`, `Hide ${label}`)
+              }
               onClick={() => Actions.toggleWorkspaceLocationHidden(loc)}
             >
               <span className="offline-pane-toggle-icon">{p.icon}</span>
-              {p.label}
+              {label}
             </button>
           );
         })}
         <button
           className="offline-pane-toggle offline-theme-btn"
           data-offline-theme-picker="true"
-          title="בחר ערכת צבעים (בהיר / כהה / צבעוני)"
+          title={tr(
+            'בחר ערכת צבעים (בהיר / כהה / צבעוני)',
+            'Choose a color theme (light / dark / colorful)'
+          )}
           aria-haspopup="menu"
           onClick={(e) => showThemeMenu(e.currentTarget)}
         >
           <span className="offline-pane-toggle-icon">🎨</span>
-          ערכה
+          {tr('ערכה', 'Theme')}
+        </button>
+        <button
+          className="offline-pane-toggle offline-lang-btn"
+          data-offline-language-picker="true"
+          data-offline-lang={offlineLang()}
+          title={tr(
+            'שפת הממשק (עברית / English) — האפליקציה תיפתח מחדש',
+            'Interface language (עברית / English) — the app restarts'
+          )}
+          aria-haspopup="menu"
+          onClick={(e) => showLanguageMenu(e.currentTarget)}
+        >
+          <span className="offline-pane-toggle-icon">🌐</span>
+          {tr('שפה', 'Language')}
         </button>
       </div>
     );

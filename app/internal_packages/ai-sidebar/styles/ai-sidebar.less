@@ -1176,4 +1176,48 @@
   }
 }
 
+
+// English UI (offline experiment language switch): the panel follows the
+// language. body.ofl-lang-en is set by the offline browser; Hebrew keeps the
+// right-to-left rules above unchanged.
+body.ofl-lang-en .ai-sidebar {
+  direction: ltr;
+  text-align: left;
+
+  .ai-sidebar-empty .empty-examples {
+    text-align: left;
+    ul {
+      padding-right: 0;
+      padding-left: 16px;
+    }
+  }
+  .message.message-user {
+    margin-left: 0;
+    margin-right: 24px;
+  }
+  .message.message-assistant {
+    margin-right: 0;
+    margin-left: 24px;
+  }
+  .message-citations .citation-btn {
+    text-align: left;
+    .citation-index {
+      margin-left: 0;
+      margin-right: 4px;
+    }
+  }
+  .ai-sidebar-guide,
+  .preview-toggle,
+  .gemini-usage-line,
+  .gemini-usage-more,
+  .gemini-usage-details th,
+  .gemini-usage-details td {
+    text-align: left;
+    direction: ltr;
+  }
+  .ai-sidebar-guide ol {
+    padding-right: 0;
+    padding-left: 20px;
+  }
+}
 /*!rtl:end:ignore*/

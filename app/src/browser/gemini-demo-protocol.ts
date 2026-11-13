@@ -176,6 +176,39 @@ export const GEMINI_OFFLINE_SCOPED_SYSTEM_INSTRUCTION = [
   'Return JSON only, matching the given schema.',
 ].join(' ');
 
+/** Offline experiment UI language (core.intl.language of the offline profile). */
+export type GeminiUiLang = 'he' | 'en';
+
+/** Hebrew unless the active locale is set to something else. */
+export function geminiUiLangFromLocale(locale: unknown): GeminiUiLang {
+  const s = typeof locale === 'string' ? locale.trim().toLowerCase() : '';
+  if (!s || s === 'he' || s.startsWith('he-') || s === 'iw') {
+    return 'he';
+  }
+  return 'en';
+}
+
+const HEBREW_SUMMARY_RULE =
+  'Write the summary in Hebrew unless the question explicitly asks for another language.';
+const HEBREW_FALLBACK_RULE =
+  'Write the response in the same language as the question; if unclear, write in Hebrew.';
+
+/** Offline instructions answer in the UI language (Hebrew default). */
+export function localizeOfflineInstruction(instruction: string, lang: GeminiUiLang): string {
+  if (lang !== 'en') {
+    return instruction;
+  }
+  return instruction
+    .replace(
+      HEBREW_SUMMARY_RULE,
+      'Write the summary in English unless the question explicitly asks for another language.'
+    )
+    .replace(
+      HEBREW_FALLBACK_RULE,
+      'Write the response in the same language as the question; if unclear, write in English.'
+    );
+}
+
 export const GEMINI_RESPONSE_FORMAT = {
   type: 'text' as const,
   mime_type: 'application/json' as const,

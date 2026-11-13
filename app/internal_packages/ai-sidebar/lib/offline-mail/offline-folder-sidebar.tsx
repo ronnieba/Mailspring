@@ -1,5 +1,6 @@
 import React from 'react';
 import classNames from 'classnames';
+import { tr } from '../core/offline-i18n';
 import { offlineMailStore } from './offline-mail-store';
 import { OfflineStoreComponent } from './use-offline-store';
 import { OfflineFolderNode } from '../core/offline-mail-index';
@@ -33,8 +34,8 @@ export class OfflineFolderSidebar extends OfflineStoreComponent {
               type="button"
               className={classNames('offline-folder-toggle', { open })}
               aria-expanded={open}
-              aria-label="הרחב / כווץ תיקיות משנה"
-              title="הרחב / כווץ תיקיות משנה"
+              aria-label={tr('הרחב / כווץ תיקיות משנה', 'Expand / collapse subfolders')}
+              title={tr('הרחב / כווץ תיקיות משנה', 'Expand / collapse subfolders')}
               data-offline-folder-toggle="true"
               onClick={(e) => {
                 e.stopPropagation();
@@ -62,7 +63,10 @@ export class OfflineFolderSidebar extends OfflineStoreComponent {
           {hasChildren && !open ? (
             <span
               className="offline-folder-subcount"
-              title={`${node.children.length} תיקיות משנה`}
+              title={tr(
+                `${node.children.length} תיקיות משנה`,
+                `${node.children.length} subfolders`
+              )}
               data-offline-folder-subcount={node.children.length}
             >
               +{node.children.length}
@@ -83,16 +87,25 @@ export class OfflineFolderSidebar extends OfflineStoreComponent {
     return (
       <div className="offline-folder-sidebar" data-offline-folder-sidebar="true">
         <div className="offline-banner" data-offline-banner="true" role="note">
-          <strong>מצב ניסוי לא מקוון</strong>
-          <span>Offline experiment — local read-only copy. No Yahoo, no sync, no sending.</span>
+          <strong>{tr('מצב ניסוי לא מקוון', 'Offline experiment')}</strong>
+          <span>
+            {tr(
+              'עותק מקומי לקריאה בלבד. בלי Yahoo, בלי סנכרון, בלי שליחה.',
+              'Local read-only copy. No Yahoo, no sync, no sending.'
+            )}
+          </span>
         </div>
         {s.status === 'indexing' ? (
           <div className="offline-status">
-            Indexing local copy… {s.progress ? `${s.progress.done}/${s.progress.total}` : ''}
+            {tr('מאנדקס את העותק המקומי… ', 'Indexing local copy… ')}
+            {s.progress ? `${s.progress.done}/${s.progress.total}` : ''}
           </div>
         ) : null}
         {s.status === 'error' ? (
-          <div className="offline-status error">Could not open the local copy: {s.error}</div>
+          <div className="offline-status error">
+            {tr('לא ניתן לפתוח את העותק המקומי: ', 'Could not open the local copy: ')}
+            {s.error}
+          </div>
         ) : null}
         {summary ? (
           <div
@@ -100,10 +113,13 @@ export class OfflineFolderSidebar extends OfflineStoreComponent {
             data-offline-total={summary.messages}
             data-offline-folders={summary.foldersTotal}
           >
-            {summary.messages.toLocaleString()} messages · {summary.foldersTotal} folders
+            {tr(
+              `${summary.messages.toLocaleString()} הודעות · ${summary.foldersTotal} תיקיות`,
+              `${summary.messages.toLocaleString()} messages · ${summary.foldersTotal} folders`
+            )}
           </div>
         ) : null}
-        <div className="offline-folder-tree" role="tree" aria-label="Offline folders">
+        <div className="offline-folder-tree" role="tree" aria-label={tr('תיקיות', 'Folders')}>
           {s.folders.map((n) => this._renderNode(n))}
         </div>
       </div>

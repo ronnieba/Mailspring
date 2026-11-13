@@ -1,5 +1,6 @@
 import React from 'react';
 import classNames from 'classnames';
+import { tr, offlineDir, offlineDateLocale } from '../core/offline-i18n';
 import { offlineMailStore } from './offline-mail-store';
 import { OfflineStoreComponent } from './use-offline-store';
 import { OfflineIndexEntry } from '../core/offline-mail-index';
@@ -14,9 +15,13 @@ function formatDate(ts: number): string {
   const d = new Date(ts);
   const now = new Date();
   if (d.toDateString() === now.toDateString()) {
-    return d.toLocaleTimeString(undefined, { hour: '2-digit', minute: '2-digit' });
+    return d.toLocaleTimeString(offlineDateLocale(), { hour: '2-digit', minute: '2-digit' });
   }
-  return d.toLocaleDateString(undefined, { year: 'numeric', month: 'short', day: 'numeric' });
+  return d.toLocaleDateString(offlineDateLocale(), {
+    year: 'numeric',
+    month: 'short',
+    day: 'numeric',
+  });
 }
 
 function shortFrom(from: string): string {
@@ -117,8 +122,12 @@ export class OfflineMessageList extends OfflineStoreComponent<Record<string, nev
           className={classNames('offline-row-check', { checked: selected })}
           role="checkbox"
           aria-checked={selected}
-          aria-label={selected ? 'בטל בחירה' : 'בחר הודעה'}
-          title={selected ? 'בטל בחירה' : 'בחר הודעה (אפשר לבחור כמה)'}
+          aria-label={selected ? tr('בטל בחירה', 'Unselect') : tr('בחר הודעה', 'Select message')}
+          title={
+            selected
+              ? tr('בטל בחירה', 'Unselect')
+              : tr('בחר הודעה (אפשר לבחור כמה)', 'Select message (you can select several)')
+          }
           data-offline-row-check="true"
           onClick={(ev) => {
             ev.stopPropagation();
@@ -137,7 +146,7 @@ export class OfflineMessageList extends OfflineStoreComponent<Record<string, nev
               {shortFrom(e.from)}
             </span>
             {e.hasAttachments ? (
-              <span className="offline-row-attach" title="Attachments">
+              <span className="offline-row-attach" title={tr('קבצים מצורפים', 'Attachments')}>
                 📎
               </span>
             ) : null}
@@ -174,18 +183,25 @@ export class OfflineMessageList extends OfflineStoreComponent<Record<string, nev
       >
         <div className="offline-list-header">
           <div className="offline-list-title" dir="auto">
-            {folder ? folder.displayPath : s.status === 'ready' ? 'Choose a folder' : ''}
+            {folder
+              ? folder.displayPath
+              : s.status === 'ready'
+                ? tr('בחר תיקייה', 'Choose a folder')
+                : ''}
             <span className="offline-list-count">{rows.length.toLocaleString()}</span>
           </div>
           <input
             className="offline-list-filter"
             type="search"
             dir="auto"
-            placeholder="סינון לפי נושא/שולח — Filter (local only)"
+            placeholder={tr(
+              'סינון לפי נושא/שולח (מקומי בלבד)',
+              'Filter by subject/sender (local only)'
+            )}
             value={s.filter}
             onChange={(e) => s.setFilter(e.target.value)}
           />
-          <div className="offline-list-selectbar" dir="rtl">
+          <div className="offline-list-selectbar" dir={offlineDir()}>
             <label className="offline-list-selectall" data-offline-select-all="true">
               <input
                 type="checkbox"
@@ -196,17 +212,25 @@ export class OfflineMessageList extends OfflineStoreComponent<Record<string, nev
                 disabled={!rows.length}
                 onChange={() => (allChecked ? s.clearSelection() : s.selectAllVisible())}
               />
-              בחר הכל
+              {tr('בחר הכל', 'Select all')}
             </label>
             {s.selectedIds.length > 0 ? (
               <span className="offline-list-selection">
-                {s.selectedIds.length.toLocaleString()} נבחרו
+                {tr(
+                  `${s.selectedIds.length.toLocaleString()} נבחרו`,
+                  `${s.selectedIds.length.toLocaleString()} selected`
+                )}
                 <button className="offline-list-clear" onClick={() => s.clearSelection()}>
-                  נקה
+                  {tr('נקה', 'Clear')}
                 </button>
               </span>
             ) : (
-              <span className="offline-list-selection-hint">סמן עיגול ליד הודעה כדי לבחור כמה</span>
+              <span className="offline-list-selection-hint">
+                {tr(
+                  'סמן עיגול ליד הודעה כדי לבחור כמה',
+                  'Tick the circle next to a message to select several'
+                )}
+              </span>
             )}
           </div>
         </div>

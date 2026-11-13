@@ -134,7 +134,11 @@ export default class Application extends EventEmitter {
       demoCapturePath,
     } = options;
 
-    initializeLocalization({ configDirPath });
+    // Offline experiment: Hebrew unless its own profile chose another language.
+    initializeLocalization({
+      configDirPath,
+      defaultLocale: offlineArchive && !demoMode ? 'he' : undefined,
+    });
 
     // Normalize to make sure drive letter case is consistent on Windows
     this.resourcePath = resourcePath;
@@ -472,6 +476,18 @@ export default class Application extends EventEmitter {
       // from the offline profile; only the first launch opens maximized.
       const offlineWin = this.windowManager.get(WindowManager.MAIN_WINDOW);
       if (offlineWin) {
+        // Automated checks only (--dev plus MAILSPRING_OFFLINE_TEST_INVISIBLE=1):
+        // keep the test window transparent, out of the taskbar and unfocusable
+        // so it never appears on the user's screen.
+        if (
+          this.devMode &&
+          process.env.MAILSPRING_OFFLINE_TEST_INVISIBLE === '1' &&
+          offlineWin.browserWindow
+        ) {
+          offlineWin.browserWindow.setOpacity(0);
+          offlineWin.browserWindow.setSkipTaskbar(true);
+          offlineWin.browserWindow.setFocusable(false);
+        }
         offlineWin.waitForLoad(() => {
           const bw = offlineWin.browserWindow;
           if (bw && !bw.isDestroyed()) {

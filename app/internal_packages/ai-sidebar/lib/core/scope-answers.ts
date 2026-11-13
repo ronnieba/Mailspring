@@ -6,10 +6,21 @@
  *   senders) locally and exactly, without sending anything to Gemini.
  */
 import { Citation, MessageRef } from './types';
+import { tr } from './offline-i18n';
 import type { GeminiScopeFacts } from '../../../../src/browser/gemini-demo-protocol';
 
 export const OFFLINE_SUMMARY_LABEL = '✨ סיכום הודעה נבחרת';
 export const OFFLINE_SUMMARY_LANGUAGE_HINT = ' Write the summary in Hebrew.';
+export const OFFLINE_SUMMARY_LABEL_EN = '✨ Summary of the selected message';
+export const OFFLINE_SUMMARY_LANGUAGE_HINT_EN = ' Write the summary in English.';
+
+/** Summarize label / language hint for the current offline UI language. */
+export function offlineSummaryLabel(): string {
+  return tr(OFFLINE_SUMMARY_LABEL, OFFLINE_SUMMARY_LABEL_EN);
+}
+export function offlineSummaryLanguageHint(): string {
+  return tr(OFFLINE_SUMMARY_LANGUAGE_HINT, OFFLINE_SUMMARY_LANGUAGE_HINT_EN);
+}
 
 /**
  * Keep only citations whose id is one of the sent messages, fill every field
@@ -221,11 +232,11 @@ export function classifyScopeMetadataQuestion(query: string): ScopeMetadataKind 
 
 function fmtDate(iso: string | null): string {
   if (!iso) {
-    return 'לא ידוע';
+    return tr('לא ידוע', 'unknown');
   }
   const d = new Date(iso);
   if (Number.isNaN(d.getTime())) {
-    return 'לא ידוע';
+    return tr('לא ידוע', 'unknown');
   }
   const p = (n: number) => String(n).padStart(2, '0');
   return `${p(d.getDate())}.${p(d.getMonth() + 1)}.${d.getFullYear()}`;
@@ -233,14 +244,19 @@ function fmtDate(iso: string | null): string {
 
 export function scopePhrase(f: GeminiScopeFacts): string {
   return f.scopeKind === 'selected'
-    ? 'בהודעות שנבחרו'
+    ? tr('בהודעות שנבחרו', 'In the selected messages')
     : f.scopeKind === 'folder'
-      ? `בתיקייה הזו${f.includesSubfolders ? ' (כולל תת-תיקיות)' : ' (בלי תת-תיקיות)'}`
-      : 'בכל העותק המקומי';
+      ? tr(
+          `בתיקייה הזו${f.includesSubfolders ? ' (כולל תת-תיקיות)' : ' (בלי תת-תיקיות)'}`,
+          `In this folder${f.includesSubfolders ? ' (including subfolders)' : ' (without subfolders)'}`
+        )
+      : tr('בכל העותק המקומי', 'In the whole local copy');
 }
 
 export const LOCAL_ANSWER_FOOTER =
   '📊 נענה מקומית מנתוני הטווח, בלי Gemini - לא נשלח דבר ולא עלה כסף.';
+export const LOCAL_ANSWER_FOOTER_EN =
+  '📊 Answered locally from the range data, without Gemini - nothing was sent and it cost nothing.';
 
 /** Exact local answer for a pure metadata question, or null. */
 export function answerScopeMetadataLocally(query: string, f: GeminiScopeFacts): string | null {
@@ -250,29 +266,48 @@ export function answerScopeMetadataLocally(query: string, f: GeminiScopeFacts): 
   }
   const where = scopePhrase(f);
   const range =
-    f.totalInScope > 0 ? `טווח תאריכים: ${fmtDate(f.oldest)} – ${fmtDate(f.newest)}.` : '';
+    f.totalInScope > 0
+      ? tr(
+          `טווח תאריכים: ${fmtDate(f.oldest)} – ${fmtDate(f.newest)}.`,
+          `Date range: ${fmtDate(f.oldest)} – ${fmtDate(f.newest)}.`
+        )
+      : '';
+  const total = f.totalInScope.toLocaleString();
+  const none = tr(`${where} אין הודעות.`, `${where} there are no messages.`);
   let text: string;
   switch (kind) {
     case 'count':
-      text = `${where} יש ${f.totalInScope.toLocaleString()} הודעות. ${range}`;
+      text = tr(
+        `${where} יש ${total} הודעות. ${range}`,
+        `${where} there are ${total} messages. ${range}`
+      );
       break;
     case 'senders':
-      text = `${where} יש ${f.distinctSenders.toLocaleString()} שולחים שונים, ב-${f.totalInScope.toLocaleString()} הודעות.`;
+      text = tr(
+        `${where} יש ${f.distinctSenders.toLocaleString()} שולחים שונים, ב-${total} הודעות.`,
+        `${where} there are ${f.distinctSenders.toLocaleString()} different senders, in ${total} messages.`
+      );
       break;
     case 'oldest':
       text = f.totalInScope
-        ? `ההודעה הישנה ביותר ${where} היא מתאריך ${fmtDate(f.oldest)}.`
-        : `${where} אין הודעות.`;
+        ? tr(
+            `ההודעה הישנה ביותר ${where} היא מתאריך ${fmtDate(f.oldest)}.`,
+            `${where}, the oldest message is from ${fmtDate(f.oldest)}.`
+          )
+        : none;
       break;
     case 'newest':
       text = f.totalInScope
-        ? `ההודעה החדשה ביותר ${where} היא מתאריך ${fmtDate(f.newest)}.`
-        : `${where} אין הודעות.`;
+        ? tr(
+            `ההודעה החדשה ביותר ${where} היא מתאריך ${fmtDate(f.newest)}.`,
+            `${where}, the newest message is from ${fmtDate(f.newest)}.`
+          )
+        : none;
       break;
     default:
       text = f.totalInScope
-        ? `${where}: ${f.totalInScope.toLocaleString()} הודעות. ${range}`
-        : `${where} אין הודעות.`;
+        ? tr(`${where}: ${total} הודעות. ${range}`, `${where}: ${total} messages. ${range}`)
+        : none;
   }
-  return `${text.trim()}\n\n---\n${LOCAL_ANSWER_FOOTER}`;
+  return `${text.trim()}\n\n---\n${tr(LOCAL_ANSWER_FOOTER, LOCAL_ANSWER_FOOTER_EN)}`;
 }

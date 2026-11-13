@@ -24,11 +24,12 @@ import {
 import { GeminiDemoProvider } from './core/gemini-demo-provider';
 import {
   answerScopeMetadataLocally,
-  OFFLINE_SUMMARY_LABEL,
-  OFFLINE_SUMMARY_LANGUAGE_HINT,
+  offlineSummaryLabel,
+  offlineSummaryLanguageHint,
   rebuildCitationsFromSources,
   scopePhrase,
 } from './core/scope-answers';
+import { tr } from './core/offline-i18n';
 import { nextQueryGeneration, shouldAcceptAssistantResponse } from './core/query-generation';
 import { createGeminiIpcTransport, geminiUsageIpc } from './gemini-ipc-transport';
 import { mailspringAdapter } from './mailspring-adapter';
@@ -429,7 +430,7 @@ class AISidebarStore extends MailspringStore {
           this._state.conversation.push({
             id: `error-${Date.now()}`,
             role: 'system',
-            content: `❌ שגיאה: ${REAL_SELECTED_SCOPE_REASON}`,
+            content: `❌ ${tr('שגיאה', 'Error')}: ${REAL_SELECTED_SCOPE_REASON}`,
             timestamp: new Date(),
           });
           return;
@@ -478,7 +479,7 @@ class AISidebarStore extends MailspringStore {
         this._state.conversation.push({
           id: `error-${Date.now()}`,
           role: 'system',
-          content: `❌ שגיאה: ${NON_SYNTHETIC_LIVE_REASON}`,
+          content: `❌ ${tr('שגיאה', 'Error')}: ${NON_SYNTHETIC_LIVE_REASON}`,
           timestamp: new Date(),
         });
         return;
@@ -488,7 +489,7 @@ class AISidebarStore extends MailspringStore {
         this._state.conversation.push({
           id: `error-${Date.now()}`,
           role: 'system',
-          content: `❌ שגיאה: ${selectedScopeReason}`,
+          content: `❌ ${tr('שגיאה', 'Error')}: ${selectedScopeReason}`,
           timestamp: new Date(),
         });
         return;
@@ -562,7 +563,7 @@ class AISidebarStore extends MailspringStore {
           this._state.conversation.push({
             id: `error-${Date.now()}`,
             role: 'system',
-            content: `❌ שגיאה: תשובה נדחתה (fail-closed, origin=${validated.origin}). ${validated.message}`,
+            content: `❌ ${tr('שגיאה', 'Error')}: תשובה נדחתה (fail-closed, origin=${validated.origin}). ${validated.message}`,
             timestamp: new Date(),
           });
         }
@@ -601,7 +602,7 @@ class AISidebarStore extends MailspringStore {
         const errorMessage: ConversationMessage = {
           id: `error-${Date.now()}`,
           role: 'system',
-          content: `${icon} ${icon === '❌' ? 'שגיאה: ' : ''}${errorMsg}`,
+          content: `${icon} ${icon === '❌' ? tr('שגיאה: ', 'Error: ') : ''}${errorMsg}`,
           timestamp: new Date(),
           geminiErrorKind: geminiReason,
         };
@@ -657,7 +658,10 @@ class AISidebarStore extends MailspringStore {
       this._state.conversation.push({
         id: `system-${Date.now()}`,
         role: 'system',
-        content: 'לא נמצאו הודעות בטווח הזה. לא נשלח דבר ל-Gemini.',
+        content: tr(
+          'לא נמצאו הודעות בטווח הזה. לא נשלח דבר ל-Gemini.',
+          'No messages found in this range. Nothing was sent to Gemini.'
+        ),
         timestamp: new Date(),
       });
       return;
@@ -713,7 +717,7 @@ class AISidebarStore extends MailspringStore {
         this._state.conversation.push({
           id: `error-${Date.now()}`,
           role: 'system',
-          content: `❌ שגיאה: תשובת Gemini נדחתה (${validated.reason}). ${validated.message}`,
+          content: `❌ ${tr('שגיאה', 'Error')}: תשובת Gemini נדחתה (${validated.reason}). ${validated.message}`,
           timestamp: new Date(),
         });
       }
@@ -723,15 +727,29 @@ class AISidebarStore extends MailspringStore {
     const sentAll = ctx.sent === inScope;
     const coverage =
       scope.mode === 'selected-messages'
-        ? `🔎 נשלחו ל-Gemini ${ctx.sent} מתוך ${inScope} ההודעות שנבחרו (טקסט בלבד, בלי קבצים מצורפים).`
-        : `🔎 ${scopePhrase(ctx.facts)}: ${inScope.toLocaleString()} הודעות. ` +
-          `נקראו מקומית ${ctx.scanned}, התאימו לשאלה ${ctx.matched}, ` +
-          `נשלחו ל-Gemini ${ctx.sent}${sentAll ? ' (כולן)' : ` מתוך ${inScope.toLocaleString()}`} ` +
-          `(טקסט בלבד, בלי קבצים מצורפים).` +
-          (ctx.matched === 0 && !sentAll
-            ? ' לא נמצאה התאמה למילים בשאלה, לכן נשלחו ההודעות החדשות ביותר.'
-            : '');
-    const tokens = validated.result.tokensUsed ? ` · ${validated.result.tokensUsed} טוקנים` : '';
+        ? tr(
+            `🔎 נשלחו ל-Gemini ${ctx.sent} מתוך ${inScope} ההודעות שנבחרו (טקסט בלבד, בלי קבצים מצורפים).`,
+            `🔎 Sent to Gemini: ${ctx.sent} of the ${inScope} selected messages (text only, no attachments).`
+          )
+        : tr(
+            `🔎 ${scopePhrase(ctx.facts)}: ${inScope.toLocaleString()} הודעות. ` +
+              `נקראו מקומית ${ctx.scanned}, התאימו לשאלה ${ctx.matched}, ` +
+              `נשלחו ל-Gemini ${ctx.sent}${sentAll ? ' (כולן)' : ` מתוך ${inScope.toLocaleString()}`} ` +
+              `(טקסט בלבד, בלי קבצים מצורפים).` +
+              (ctx.matched === 0 && !sentAll
+                ? ' לא נמצאה התאמה למילים בשאלה, לכן נשלחו ההודעות החדשות ביותר.'
+                : ''),
+            `🔎 ${scopePhrase(ctx.facts)}: ${inScope.toLocaleString()} messages. ` +
+              `Read locally ${ctx.scanned}, matched the question ${ctx.matched}, ` +
+              `sent to Gemini ${ctx.sent}${sentAll ? ' (all)' : ` of ${inScope.toLocaleString()}`} ` +
+              `(text only, no attachments).` +
+              (ctx.matched === 0 && !sentAll
+                ? ' No match for the words in the question, so the newest messages were sent.'
+                : '')
+          );
+    const tokens = validated.result.tokensUsed
+      ? tr(` · ${validated.result.tokensUsed} טוקנים`, ` · ${validated.result.tokensUsed} tokens`)
+      : '';
     this._state.conversation.push({
       id: `assistant-${Date.now()}`,
       role: 'assistant',
@@ -770,11 +788,11 @@ class AISidebarStore extends MailspringStore {
     }
     const offline = isOfflineArchiveMode();
     await this.submitQuery(
-      offline ? `${REAL_SELECTED_QUERY}${OFFLINE_SUMMARY_LANGUAGE_HINT}` : REAL_SELECTED_QUERY,
+      offline ? `${REAL_SELECTED_QUERY}${offlineSummaryLanguageHint()}` : REAL_SELECTED_QUERY,
       {
         allowRealSelected: true,
         sentSnapshot: { messageId: preview.messageId, snapshotEpoch: preview.snapshotEpoch },
-        displayLabel: offline ? OFFLINE_SUMMARY_LABEL : undefined,
+        displayLabel: offline ? offlineSummaryLabel() : undefined,
       }
     );
   }

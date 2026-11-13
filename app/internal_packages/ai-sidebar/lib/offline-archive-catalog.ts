@@ -16,6 +16,7 @@ import {
   planScopedRetrieval,
   selectScopedForGemini,
 } from './core/gemini-context';
+import { tr } from './core/offline-i18n';
 
 /**
  * Stable, collision-free folder id for a folder path. Letters/digits/dot stay
@@ -244,8 +245,11 @@ function browserScope(mode: ResolvedScope['mode']): ResolvedScope {
       messageIds: selected.map((m) => m.id),
       accountIds: [OFFLINE_ARCHIVE_ACCOUNT_ID],
       description: selected.length
-        ? `${selected.length} הודעות נבחרות מהעותק המקומי / ${selected.length} selected local message(s)`
-        : 'לא נבחרה הודעה — בחר הודעה ברשימה / No message selected',
+        ? tr(
+            `${selected.length} הודעות נבחרות מהעותק המקומי / ${selected.length} selected local message(s)`,
+            `${selected.length} selected local message(s)`
+          )
+        : tr('לא נבחרה הודעה — בחר הודעה ברשימה / No message selected', 'No message selected'),
       isEmpty: selected.length === 0,
       messageCount: selected.length,
     };
@@ -265,8 +269,11 @@ function browserScope(mode: ResolvedScope['mode']): ResolvedScope {
         : undefined,
       accountIds: [OFFLINE_ARCHIVE_ACCOUNT_ID],
       description: folder
-        ? `תיקייה: ${folder.name} (${count}, בלי תת-תיקיות) / Folder (${count})`
-        : 'לא נבחרה תיקייה / No folder selected',
+        ? tr(
+            `תיקייה: ${folder.name} (${count}, בלי תת-תיקיות) / Folder (${count})`,
+            `Folder: ${folder.name} (${count}, without subfolders)`
+          )
+        : tr('לא נבחרה תיקייה / No folder selected', 'No folder selected'),
       isEmpty: count === 0,
       messageCount: count,
     };
@@ -274,7 +281,10 @@ function browserScope(mode: ResolvedScope['mode']): ResolvedScope {
   return {
     mode,
     accountIds: [OFFLINE_ARCHIVE_ACCOUNT_ID],
-    description: `כל העותק המקומי (${catalog.length} הודעות) / Whole offline copy (${catalog.length})`,
+    description: tr(
+      `כל העותק המקומי (${catalog.length} הודעות) / Whole offline copy (${catalog.length})`,
+      `Whole offline copy (${catalog.length} messages)`
+    ),
     isEmpty: catalog.length === 0,
     messageCount: catalog.length,
   };

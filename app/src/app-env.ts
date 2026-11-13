@@ -64,7 +64,12 @@ export default class AppEnvConstructor {
     const { devMode, safeMode, resourcePath, configDirPath, windowType } = this.getLoadSettings();
     const specMode = this.inSpecMode();
 
-    initializeLocalization({ configDirPath });
+    // The offline experiment defaults to Hebrew when its profile has no
+    // language choice; other modes keep the system default.
+    initializeLocalization({
+      configDirPath,
+      defaultLocale: loadSettings?.windowProps?.offlineArchive === true ? 'he' : undefined,
+    });
 
     // Add 'src/global/' to module search path.
     const globalPath = path.join(resourcePath, 'src', 'global');

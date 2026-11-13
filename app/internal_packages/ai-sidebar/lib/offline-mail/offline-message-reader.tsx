@@ -1,5 +1,6 @@
 import React from 'react';
 import { offlineMailStore } from './offline-mail-store';
+import { tr } from '../core/offline-i18n';
 import { OfflineStoreComponent } from './use-offline-store';
 import { buildSandboxedHtmlDocument, containsHebrew } from '../core/offline-mail-mime';
 
@@ -24,8 +25,10 @@ export class OfflineMessageReader extends OfflineStoreComponent<Record<string, n
       return (
         <div className="offline-reader empty" data-offline-reader="multi">
           <div className="offline-reader-placeholder">
-            {s.selectedIds.length} messages selected — use the AI panel “Selected” scope to ask
-            about them.
+            {tr(
+              `${s.selectedIds.length} הודעות נבחרו — בחר "נבחרות" בחלון ה-AI כדי לשאול עליהן.`,
+              `${s.selectedIds.length} messages selected — use the AI panel “Selected” range to ask about them.`
+            )}
           </div>
         </div>
       );
@@ -34,7 +37,10 @@ export class OfflineMessageReader extends OfflineStoreComponent<Record<string, n
       return (
         <div className="offline-reader empty" data-offline-reader="none">
           <div className="offline-reader-placeholder">
-            Select a message to read it (local copy, read-only).
+            {tr(
+              'בחר הודעה כדי לקרוא אותה (עותק מקומי, קריאה בלבד).',
+              'Select a message to read it (local copy, read-only).'
+            )}
           </div>
         </div>
       );
@@ -42,7 +48,7 @@ export class OfflineMessageReader extends OfflineStoreComponent<Record<string, n
     if (open.loading) {
       return (
         <div className="offline-reader empty" data-offline-reader="loading">
-          <div className="offline-reader-placeholder">Opening…</div>
+          <div className="offline-reader-placeholder">{tr('פותח…', 'Opening…')}</div>
         </div>
       );
     }
@@ -50,7 +56,8 @@ export class OfflineMessageReader extends OfflineStoreComponent<Record<string, n
       return (
         <div className="offline-reader empty" data-offline-reader="error">
           <div className="offline-reader-placeholder">
-            Could not open this message: {open.error}
+            {tr('לא ניתן לפתוח את ההודעה: ', 'Could not open this message: ')}
+            {open.error}
           </div>
         </div>
       );
@@ -69,16 +76,21 @@ export class OfflineMessageReader extends OfflineStoreComponent<Record<string, n
         <div className="offline-reader-actions">
           <span
             className="offline-readonly-pill"
-            title="Reply, forward, move and delete are disabled in the offline experiment"
+            title={tr(
+              'שליחה, העברה למקום אחר ומחיקה כבויות בניסוי הלא מקוון',
+              'Sending, moving and deleting are disabled in the offline experiment'
+            )}
           >
-            קריאה בלבד · Read-only — reply/send/move/delete disabled
+            {tr('קריאה בלבד · אין שליחה/העברה/מחיקה', 'Read-only · no send/move/delete')}
           </span>
           {m.html ? (
             <button
               className="btn btn-small"
               onClick={() => this.setState({ showText: !this.state.showText })}
             >
-              {this.state.showText ? 'Show formatted' : 'Show plain text'}
+              {this.state.showText
+                ? tr('הצג מעוצב', 'Show formatted')
+                : tr('הצג טקסט פשוט', 'Show plain text')}
             </button>
           ) : null}
         </div>
@@ -86,21 +98,21 @@ export class OfflineMessageReader extends OfflineStoreComponent<Record<string, n
           {m.subject}
         </h2>
         <dl className="offline-reader-headers">
-          <dt>From</dt>
+          <dt>{tr('מאת', 'From')}</dt>
           <dd dir="auto">{m.from}</dd>
           {m.to ? (
             <>
-              <dt>To</dt>
+              <dt>{tr('אל', 'To')}</dt>
               <dd dir="auto">{m.to}</dd>
             </>
           ) : null}
           {m.cc ? (
             <>
-              <dt>Cc</dt>
+              <dt>{tr('עותק', 'Cc')}</dt>
               <dd dir="auto">{m.cc}</dd>
             </>
           ) : null}
-          <dt>Date</dt>
+          <dt>{tr('תאריך', 'Date')}</dt>
           <dd>{m.date}</dd>
         </dl>
         {m.attachments.length ? (
@@ -117,7 +129,7 @@ export class OfflineMessageReader extends OfflineStoreComponent<Record<string, n
             key={open.id}
             className="offline-reader-html"
             data-offline-reader-body="html"
-            title="Message body"
+            title={tr('גוף ההודעה', 'Message body')}
             sandbox=""
             referrerPolicy="no-referrer"
             srcDoc={buildSandboxedHtmlDocument(m.html as string)}

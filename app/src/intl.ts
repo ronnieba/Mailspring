@@ -181,8 +181,18 @@ let locale = null;
 
 export let isRTL = false;
 
-export function initializeLocalization({ configDirPath }) {
-  locale = automaticLocale;
+/**
+ * @param defaultLocale used instead of the system language when the profile
+ *   has no explicit choice. Only the offline experiment passes one (Hebrew).
+ */
+export function initializeLocalization({
+  configDirPath,
+  defaultLocale,
+}: {
+  configDirPath: string;
+  defaultLocale?: string;
+}) {
+  locale = defaultLocale || automaticLocale;
 
   // Load the user's language choice if they've explicitly set one in settings
   // Note we can't use our nice Config class becuase the config-schema itself

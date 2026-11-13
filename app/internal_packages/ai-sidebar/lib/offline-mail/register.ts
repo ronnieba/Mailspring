@@ -11,8 +11,19 @@ import { OfflineMessageList } from './offline-message-list';
 import { OfflineMessageReader } from './offline-message-reader';
 import { OfflinePaneToggles } from './offline-pane-toggles';
 import { offlineMailStore } from './offline-mail-store';
+import { offlineLang, offlineLangBodyClass, offlineDir } from '../core/offline-i18n';
+
+/** Mark <body> with the offline UI language so styles can follow it. */
+export function applyOfflineLanguageToDocument(doc: Document = document): void {
+  const lang = offlineLang();
+  doc.body.classList.remove(offlineLangBodyClass('he'), offlineLangBodyClass('en'));
+  doc.body.classList.add(offlineLangBodyClass(lang));
+  doc.documentElement.setAttribute('lang', lang);
+  doc.body.setAttribute('data-offline-dir', offlineDir());
+}
 
 export function registerOfflineMailBrowser(archivePath: string, sidebar: any) {
+  applyOfflineLanguageToDocument();
   ComponentRegistry.register(OfflineFolderSidebar, {
     location: WorkspaceStore.Location.RootSidebar,
   });

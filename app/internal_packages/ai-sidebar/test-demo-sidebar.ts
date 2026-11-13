@@ -209,8 +209,8 @@ function run() {
     assertContains(sidebarTs, '__mailspringDemoSidebar');
   });
   test('Full Scan radio has a stable AX name and stores retrievalMode', () => {
-    assertContains(sidebarTs, 'aria-label="סריקה מלאה"');
-    assertContains(sidebarTs, 'aria-label="דירוג (מהיר)"');
+    assertContains(sidebarTs, "aria-label={tr('סריקה מלאה', 'Full scan')}");
+    assertContains(sidebarTs, "aria-label={tr('דירוג (מהיר)', 'Ranked (fast)')}");
     assertContains(sidebarTs, 'data-retrieval-mode');
     assertContains(storeTs, 'this._state.retrievalMode');
   });
@@ -238,7 +238,7 @@ function run() {
     assertContains(sidebarTs, 'data-message-id');
   });
   test('Cancel is visible while processing and late responses are generation-gated', () => {
-    assertContains(sidebarTs, 'aria-label="ביטול"');
+    assertContains(sidebarTs, "aria-label={tr('ביטול', 'Cancel')}");
     assertContains(storeTs, 'shouldAcceptAssistantResponse');
     assertContains(storeTs, 'nextQueryGeneration');
     assertContains(mainJs, 'demo-delay-ms');

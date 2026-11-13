@@ -16,6 +16,9 @@ import {
   GEMINI_DISPLAY_NAME,
   GEMINI_OFFLINE_ARCHIVE_SYSTEM_INSTRUCTION,
   GEMINI_OFFLINE_SCOPED_SYSTEM_INSTRUCTION,
+  geminiUiLangFromLocale,
+  localizeOfflineInstruction,
+  GeminiUiLang,
   GEMINI_REAL_SELECTED_SYSTEM_INSTRUCTION,
   GEMINI_RESPONSE_FORMAT,
   GEMINI_SYSTEM_INSTRUCTION,
@@ -39,6 +42,16 @@ import {
   unconfiguredGeminiStatus,
 } from './gemini-demo-protocol';
 import { getCapturedGeminiDemoCredentials } from './gemini-demo-secret';
+
+/** UI language of the offline window (main process locale); Hebrew if unknown. */
+function currentUiLang(): GeminiUiLang {
+  try {
+    // eslint-disable-next-line @typescript-eslint/no-var-requires
+    return geminiUiLangFromLocale(require('../intl').getCurrentLocale());
+  } catch {
+    return 'he';
+  }
+}
 
 const DEFAULT_TIMEOUT_MS = 60000;
 
@@ -611,9 +624,9 @@ export async function runGeminiDemoQuery(
     const body = JSON.stringify({
       model: GEMINI_DEMO_MODEL,
       system_instruction: offlineScoped
-        ? GEMINI_OFFLINE_SCOPED_SYSTEM_INSTRUCTION
+        ? localizeOfflineInstruction(GEMINI_OFFLINE_SCOPED_SYSTEM_INSTRUCTION, currentUiLang())
         : offlineArchive
-          ? GEMINI_OFFLINE_ARCHIVE_SYSTEM_INSTRUCTION
+          ? localizeOfflineInstruction(GEMINI_OFFLINE_ARCHIVE_SYSTEM_INSTRUCTION, currentUiLang())
           : realSelectedSummary
             ? GEMINI_REAL_SELECTED_SYSTEM_INSTRUCTION
             : GEMINI_SYSTEM_INSTRUCTION,

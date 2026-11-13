@@ -9,6 +9,7 @@ import AISidebarStore from './ai-sidebar-store';
 import { ScopeMode, RetrievalMode, ConversationMessage, Citation } from './core/types';
 import { DemoMessagePreview, isDemoMode } from './synthetic-demo';
 import { shell } from 'electron';
+import { tr, offlineDir, offlineDateLocale } from './core/offline-i18n';
 import {
   GEMINI_BILLING_URL,
   GEMINI_DISPLAY_NAME,
@@ -331,7 +332,9 @@ class AISidebarInner extends React.Component<Record<string, never>, AISidebarSta
         onClick={this._onTogglePreview}
       >
         <span className="preview-toggle-label">{label}</span>
-        <span className="preview-toggle-action">{expanded ? 'הסתר ▴' : 'הצג ▾'}</span>
+        <span className="preview-toggle-action">
+          {expanded ? tr('הסתר ▴', 'Hide ▴') : tr('הצג ▾', 'Show ▾')}
+        </span>
       </button>
     );
   }
@@ -439,9 +442,11 @@ class AISidebarInner extends React.Component<Record<string, never>, AISidebarSta
             </>
           ) : offlineArchive && geminiConfigured ? (
             <>
-              <b>🟢 Gemini מחובר</b> (בתשלום, פרויקט yahoo-agent). &quot;שלח&quot; שואל את Gemini על
-              הטווח שבחרת: קודם חיפוש מקומי, ואז נשלחות עד {GEMINI_SCOPED_MAX_MESSAGES} ההודעות
-              הרלוונטיות (טקסט בלבד, בלי קבצים מצורפים). רק בלחיצה.
+              <b>{tr('🟢 Gemini מחובר', '🟢 Gemini connected')}</b>{' '}
+              {tr(
+                `(בתשלום, פרויקט yahoo-agent). "שלח" שואל את Gemini על הטווח שבחרת: קודם חיפוש מקומי, ואז נשלחות עד ${GEMINI_SCOPED_MAX_MESSAGES} ההודעות הרלוונטיות (טקסט בלבד, בלי קבצים מצורפים). רק בלחיצה.`,
+                `(paid, project yahoo-agent). "Send" asks Gemini about the range you chose: first a local search, then up to ${GEMINI_SCOPED_MAX_MESSAGES} of the most relevant messages are sent (text only, no attachments). Only when you click.`
+              )}
               <br />
               <small>
                 Gemini on · paid · sent only on click · max {GEMINI_SCOPED_MAX_MESSAGES} messages ·
@@ -450,17 +455,21 @@ class AISidebarInner extends React.Component<Record<string, never>, AISidebarSta
             </>
           ) : offlineArchive ? (
             <>
-              <b>⚪ Mock AI בלבד</b> — Gemini לא מחובר. התשובות מקומיות (הדגמה), בלי חיבור חיצוני.
+              <b>{tr('⚪ Mock AI בלבד', '⚪ Mock AI only')}</b>{' '}
+              {tr(
+                '— Gemini לא מחובר. התשובות מקומיות (הדגמה), בלי חיבור חיצוני.',
+                '— Gemini is not connected. Answers are local (demo), with no outside connection.'
+              )}
               <button
                 type="button"
                 className="gemini-recheck-btn"
                 data-gemini-recheck="true"
                 onClick={this._onRecheckGemini}
               >
-                בדוק שוב
+                {tr('בדוק שוב', 'Check again')}
               </button>
               <details className="gemini-howto">
-                <summary>איך מפעילים Gemini?</summary>
+                <summary>{tr('איך מפעילים Gemini?', 'How do I turn on Gemini?')}</summary>
                 {this._renderGeminiHowto()}
               </details>
             </>
@@ -495,7 +504,12 @@ class AISidebarInner extends React.Component<Record<string, never>, AISidebarSta
     if (isOfflineArchiveMode() && !isOfflineArchiveBrowserDriven()) {
       return (
         <div className="ai-sidebar-scope" data-offline-archive-scope="true">
-          <span className="scope-label">טווח: הודעה אחת מהארכיון המקומי (מנותק)</span>
+          <span className="scope-label">
+            {tr(
+              'טווח: הודעה אחת מהארכיון המקומי (מנותק)',
+              'Range: one message from the local archive (offline)'
+            )}
+          </span>
         </div>
       );
     }
@@ -511,35 +525,35 @@ class AISidebarInner extends React.Component<Record<string, never>, AISidebarSta
     return (
       <div className="ai-sidebar-scope">
         <span className="scope-label" id="scope-label">
-          טווח חיפוש:
+          {tr('טווח חיפוש:', 'Search range:')}
         </span>
         <div className="scope-buttons" role="group" aria-labelledby="scope-label">
           <button
             className={classNames('scope-btn', { active: scopeMode === 'selected-messages' })}
             onClick={() => this._onScopeModeChange('selected-messages')}
-            title="הודעות נבחרות"
-            aria-label="הודעות נבחרות"
+            title={tr('הודעות נבחרות', 'Selected messages')}
+            aria-label={tr('הודעות נבחרות', 'Selected messages')}
             data-scope-mode="selected-messages"
           >
-            📧 נבחרות
+            {tr('📧 נבחרות', '📧 Selected')}
           </button>
           <button
             className={classNames('scope-btn', { active: scopeMode === 'current-folder' })}
             onClick={() => this._onScopeModeChange('current-folder')}
-            title="תיקייה נוכחית (תיבת דואר נכנס בדמו)"
-            aria-label="תיקייה"
+            title={tr('תיקייה נוכחית (תיבת דואר נכנס בדמו)', 'Current folder')}
+            aria-label={tr('תיקייה', 'Folder')}
             data-scope-mode="current-folder"
           >
-            📁 תיקייה
+            {tr('📁 תיקייה', '📁 Folder')}
           </button>
           <button
             className={classNames('scope-btn', { active: scopeMode === 'all-mail' })}
             onClick={() => this._onScopeModeChange('all-mail')}
-            title="כל הדואר"
-            aria-label="כל הדואר"
+            title={tr('כל הדואר', 'All mail')}
+            aria-label={tr('כל הדואר', 'All mail')}
             data-scope-mode="all-mail"
           >
-            📬 הכל
+            {tr('📬 הכל', '📬 All')}
           </button>
         </div>
 
@@ -557,9 +571,12 @@ class AISidebarInner extends React.Component<Record<string, never>, AISidebarSta
               <span className="empty-scope">
                 {scopeMode === 'selected-messages'
                   ? isOfflineArchiveMode()
-                    ? 'ℹ️ עוד לא סימנת הודעות. סמן הודעות ברשימה, או בחר "תיקייה" / "הכל".'
+                    ? tr(
+                        'ℹ️ עוד לא סימנת הודעות. סמן הודעות ברשימה, או בחר "תיקייה" / "הכל".',
+                        'ℹ️ No messages marked yet. Mark messages in the list, or choose "Folder" / "All".'
+                      )
                     : '❌ לא נבחרו הודעות - בחר הודעות מהרשימה'
-                  : '❌ אין הודעות בטווח'}
+                  : tr('❌ אין הודעות בטווח', '❌ No messages in this range')}
               </span>
             ) : (
               <span className="scope-description">{resolvedScope.description}</span>
@@ -575,9 +592,9 @@ class AISidebarInner extends React.Component<Record<string, never>, AISidebarSta
               name="retrieval"
               checked={this.state.retrievalMode === 'ranked'}
               onChange={() => this._onRetrievalModeChange('ranked')}
-              aria-label="דירוג (מהיר)"
+              aria-label={tr('דירוג (מהיר)', 'Ranked (fast)')}
             />
-            <span>דירוג (מהיר)</span>
+            <span>{tr('דירוג (מהיר)', 'Ranked (fast)')}</span>
           </label>
           <label>
             <input
@@ -585,9 +602,9 @@ class AISidebarInner extends React.Component<Record<string, never>, AISidebarSta
               name="retrieval"
               checked={this.state.retrievalMode === 'exhaustive'}
               onChange={() => this._onRetrievalModeChange('exhaustive')}
-              aria-label="סריקה מלאה"
+              aria-label={tr('סריקה מלאה', 'Full scan')}
             />
-            <span>סריקה מלאה</span>
+            <span>{tr('סריקה מלאה', 'Full scan')}</span>
           </label>
         </div>
       </div>
@@ -635,11 +652,11 @@ class AISidebarInner extends React.Component<Record<string, never>, AISidebarSta
       return null;
     }
     const pct = Math.round(u.budgetUsedRatio * 100);
-    const since = u.since ? new Date(u.since).toLocaleString('he-IL') : null;
+    const since = u.since ? new Date(u.since).toLocaleString(offlineDateLocale()) : null;
     return (
       <div
         className={classNames('gemini-usage', { warn: u.warn })}
-        dir="rtl"
+        dir={offlineDir()}
         data-gemini-usage="true"
         data-gemini-usage-warn={u.warn ? 'true' : 'false'}
       >
@@ -651,18 +668,23 @@ class AISidebarInner extends React.Component<Record<string, never>, AISidebarSta
           onClick={() => this.setState({ usageExpanded: !this.state.usageExpanded })}
         >
           <span>
-            📊 Gemini היום: {u.today.calls} קריאות · {fmtTokens(u.today.totalTokens)} טוקנים · ≈
+            {tr(
+              `📊 Gemini היום: ${u.today.calls} קריאות · ${fmtTokens(u.today.totalTokens)} טוקנים · ≈`,
+              `📊 Gemini today: ${u.today.calls} calls · ${fmtTokens(u.today.totalTokens)} tokens · ≈`
+            )}
             {fmtIls(u.today.ils)}
-            {u.warn ? ` · ⚠️ ${pct}% מהתקציב` : ''}
+            {u.warn ? tr(` · ⚠️ ${pct}% מהתקציב`, ` · ⚠️ ${pct}% of budget`) : ''}
           </span>
           <span className="gemini-usage-more">
-            {this.state.usageExpanded ? 'הסתר ▴' : 'פרטים ▾'}
+            {this.state.usageExpanded ? tr('הסתר ▴', 'Hide ▴') : tr('פרטים ▾', 'Details ▾')}
           </span>
         </button>
         {u.warn && (
           <div className="gemini-usage-warning" data-gemini-budget-warning="true">
-            ⚠️ לפי הספירה המקומית נוצלו כ-{pct}% מהתקציב ({fmtIls(u.total.ils)} מתוך ₪{u.budgetIls}
-            ). זו הערכה בלבד — היתרה המדויקת מוצגת בדף החיוב של Google.
+            {tr(
+              `⚠️ לפי הספירה המקומית נוצלו כ-${pct}% מהתקציב (${fmtIls(u.total.ils)} מתוך ₪${u.budgetIls}). זו הערכה בלבד — היתרה המדויקת מוצגת בדף החיוב של Google.`,
+              `⚠️ By the local count about ${pct}% of the budget is used (${fmtIls(u.total.ils)} of ₪${u.budgetIls}). This is an estimate only — the exact balance is on Google's billing page.`
+            )}
           </div>
         )}
         {this.state.usageExpanded && (
@@ -671,21 +693,29 @@ class AISidebarInner extends React.Component<Record<string, never>, AISidebarSta
               <thead>
                 <tr>
                   <th />
-                  <th>קריאות</th>
-                  <th>טוקנים</th>
-                  <th>$ משוער</th>
-                  <th>₪ משוער</th>
+                  <th>{tr('קריאות', 'Calls')}</th>
+                  <th>{tr('טוקנים', 'Tokens')}</th>
+                  <th>{tr('$ משוער', 'Est. $')}</th>
+                  <th>{tr('₪ משוער', 'Est. ₪')}</th>
                 </tr>
               </thead>
               <tbody>
-                {this._usageRow('היום', u.today)}
-                {this._usageRow('בהפעלה הזו', u.session)}
-                {this._usageRow(since ? `מאז ${since}` : 'מאז החיבור', u.total)}
+                {this._usageRow(tr('היום', 'Today'), u.today)}
+                {this._usageRow(tr('בהפעלה הזו', 'This session'), u.session)}
+                {this._usageRow(
+                  since
+                    ? tr(`מאז ${since}`, `Since ${since}`)
+                    : tr('מאז החיבור', 'Since connecting'),
+                  u.total
+                )}
               </tbody>
             </table>
             <div className="gemini-usage-budget">
               <span>
-                תקציב: ₪{u.budgetIls} · נוצל כ-{pct}% (הערכה)
+                {tr(
+                  `תקציב: ₪${u.budgetIls} · נוצל כ-${pct}% (הערכה)`,
+                  `Budget: ₪${u.budgetIls} · about ${pct}% used (estimate)`
+                )}
               </span>
               <input
                 type="number"
@@ -693,13 +723,13 @@ class AISidebarInner extends React.Component<Record<string, never>, AISidebarSta
                 step={1}
                 dir="ltr"
                 placeholder={String(u.budgetIls)}
-                aria-label="תקציב בשקלים"
+                aria-label={tr('תקציב בשקלים', 'Budget in shekels')}
                 data-gemini-budget-input="true"
                 value={this.state.budgetDraft}
                 onChange={(e) => this.setState({ budgetDraft: e.target.value })}
               />
               <button type="button" onClick={this._onSaveBudget} data-gemini-budget-save="true">
-                שמור
+                {tr('שמור', 'Save')}
               </button>
             </div>
             <div className="gemini-usage-actions">
@@ -709,7 +739,7 @@ class AISidebarInner extends React.Component<Record<string, never>, AISidebarSta
                 data-gemini-open-billing="true"
                 onClick={() => this._openExternal(GEMINI_BILLING_URL)}
               >
-                💳 פתח יתרה ב-Google
+                {tr('💳 פתח יתרה ב-Google', '💳 Open balance at Google')}
               </button>
               <button
                 type="button"
@@ -717,14 +747,16 @@ class AISidebarInner extends React.Component<Record<string, never>, AISidebarSta
                 data-gemini-usage-reset="true"
                 onClick={this._onResetUsage}
               >
-                {this.state.usageResetArmed ? 'לחץ שוב לאישור איפוס' : 'אפס מונה'}
+                {this.state.usageResetArmed
+                  ? tr('לחץ שוב לאישור איפוס', 'Click again to confirm reset')
+                  : tr('אפס מונה', 'Reset meter')}
               </button>
             </div>
             <p className="gemini-usage-note">
-              הערכה בלבד: {u.model} לפי ${u.pricing.input} / ${u.pricing.output} למיליון טוקנים
-              (קלט/פלט, מחירון Google מ-{u.pricingChecked}), ₪ לפי שער {u.usdToIls}. אין API רשמי
-              ליתרת הקרדיט — היתרה המדויקת (יעד הטענה ₪60 ל-yahoo-agent) מוצגת רק בדף החיוב של
-              Google. שימוש לפני {since || 'החיבור'} לא נרשם כאן.
+              {tr(
+                `הערכה בלבד: ${u.model} לפי $${u.pricing.input} / $${u.pricing.output} למיליון טוקנים (קלט/פלט, מחירון Google מ-${u.pricingChecked}), ₪ לפי שער ${u.usdToIls}. אין API רשמי ליתרת הקרדיט — היתרה המדויקת (יעד הטענה ₪60 ל-yahoo-agent) מוצגת רק בדף החיוב של Google. שימוש לפני ${since || 'החיבור'} לא נרשם כאן.`,
+                `Estimate only: ${u.model} at $${u.pricing.input} / $${u.pricing.output} per million tokens (input/output, Google price list from ${u.pricingChecked}), ₪ at rate ${u.usdToIls}. There is no official API for the credit balance — the exact balance (₪60 top-up target for yahoo-agent) is only on Google's billing page. Usage before ${since || 'connecting'} is not counted here.`
+              )}
             </p>
           </div>
         )}
@@ -744,41 +776,82 @@ class AISidebarInner extends React.Component<Record<string, never>, AISidebarSta
     const n = estimateGeminiSendCount(count);
     const text =
       resolvedScope.mode === 'selected-messages'
-        ? `בלחיצה על "שלח" יישלחו ל-Gemini ${n} הודעות נבחרות` +
-          (count > n ? ` (מתוך ${count}, החדשות ביותר)` : '')
-        : `בלחיצה על "שלח": חיפוש מקומי ב-${count.toLocaleString()} הודעות, ` +
-          `ואז יישלחו ל-Gemini עד ${n} הרלוונטיות ביותר`;
+        ? tr(
+            `בלחיצה על "שלח" יישלחו ל-Gemini ${n} הודעות נבחרות` +
+              (count > n ? ` (מתוך ${count}, החדשות ביותר)` : ''),
+            `Clicking "Send" sends ${n} selected messages to Gemini` +
+              (count > n ? ` (of ${count}, newest first)` : '')
+          )
+        : tr(
+            `בלחיצה על "שלח": חיפוש מקומי ב-${count.toLocaleString()} הודעות, ` +
+              `ואז יישלחו ל-Gemini עד ${n} הרלוונטיות ביותר`,
+            `Clicking "Send": local search in ${count.toLocaleString()} messages, ` +
+              `then up to ${n} of the most relevant are sent to Gemini`
+          );
     return (
-      <div className="gemini-estimate" dir="rtl" data-gemini-estimate={n}>
-        ✨ {text}. עלות משוערת: {GEMINI_SCOPED_COST_NOTE} לשאלה לכל היותר. בלי קבצים מצורפים.
+      <div className="gemini-estimate" dir={offlineDir()} data-gemini-estimate={n}>
+        ✨ {text}
+        {tr(
+          `. עלות משוערת: ${GEMINI_SCOPED_COST_NOTE} לשאלה לכל היותר. בלי קבצים מצורפים.`,
+          `. Estimated cost: at most ${GEMINI_SCOPED_COST_NOTE} per question. No attachments.`
+        )}
       </div>
     );
   }
 
   _renderOfflineGuide() {
     return (
-      <div className="ai-sidebar-guide" dir="rtl" data-offline-guide="true">
-        <div className="guide-title">מה זה? עוזר שעונה על שאלות על הדואר שלך</div>
-        <div>הוא עובד רק על העותק המקומי (קריאה בלבד), בלי חיבור ל-Yahoo.</div>
+      <div className="ai-sidebar-guide" dir={offlineDir()} data-offline-guide="true">
+        <div className="guide-title">
+          {tr(
+            'מה זה? עוזר שעונה על שאלות על הדואר שלך',
+            'What is this? An assistant that answers questions about your mail'
+          )}
+        </div>
+        <div>
+          {tr(
+            'הוא עובד רק על העותק המקומי (קריאה בלבד), בלי חיבור ל-Yahoo.',
+            'It works only on the local copy (read-only), with no connection to Yahoo.'
+          )}
+        </div>
         <ol>
           <li>
-            בחר טווח למעלה: <b>נבחרות</b> = ההודעות שסימנת ברשימה, <b>תיקייה</b> = התיקייה הפתוחה,{' '}
-            <b>הכל</b> = כל תיבת הדואר.
+            {tr('בחר טווח למעלה: ', 'Choose a range above: ')}
+            <b>{tr('נבחרות', 'Selected')}</b>
+            {tr(' = ההודעות שסימנת ברשימה, ', ' = the messages you marked in the list, ')}
+            <b>{tr('תיקייה', 'Folder')}</b>
+            {tr(' = התיקייה הפתוחה, ', ' = the open folder, ')}
+            <b>{tr('הכל', 'All')}</b>
+            {tr(' = כל תיבת הדואר.', ' = the whole mailbox.')}
           </li>
-          <li>כתוב שאלה בתיבה למטה, למשל: "חפש חשבוניות מהחודש האחרון".</li>
           <li>
-            לחץ <b>שלח</b>. לחיצה על מקור בתשובה פותחת את ההודעה.
+            {tr(
+              'כתוב שאלה בתיבה למטה, למשל: "חפש חשבוניות מהחודש האחרון".',
+              'Type a question in the box below, for example: "Find invoices from last month".'
+            )}
+          </li>
+          <li>
+            {tr('לחץ ', 'Click ')}
+            <b>{tr('שלח', 'Send')}</b>
+            {tr(
+              '. לחיצה על מקור בתשובה פותחת את ההודעה.',
+              '. Clicking a source in the answer opens the message.'
+            )}
           </li>
         </ol>
         {this.state.geminiStatus?.configured ? (
           <div className="guide-note">
-            Gemini מחובר: &quot;שלח&quot; עונה עם Gemini (בתשלום). בתיקייה או בכל הדואר מתבצע קודם
-            חיפוש מקומי, ונשלחות רק ההודעות הרלוונטיות (עד {GEMINI_SCOPED_MAX_MESSAGES}). &quot;סכם
-            עם Gemini&quot; מסכם הודעה אחת שנבחרה.
+            {tr(
+              `Gemini מחובר: "שלח" עונה עם Gemini (בתשלום). בתיקייה או בכל הדואר מתבצע קודם חיפוש מקומי, ונשלחות רק ההודעות הרלוונטיות (עד ${GEMINI_SCOPED_MAX_MESSAGES}). "סכם עם Gemini" מסכם הודעה אחת שנבחרה.`,
+              `Gemini connected: "Send" answers with Gemini (paid). For a folder or all mail a local search runs first, and only the relevant messages are sent (up to ${GEMINI_SCOPED_MAX_MESSAGES}). "Summarize with Gemini" summarizes one selected message.`
+            )}
           </div>
         ) : (
           <div className="guide-note">
-            כרגע התשובות הן הדגמה בלבד (Mock) - חיפוש מקומי פשוט, לא AI אמיתי. Gemini כבוי.
+            {tr(
+              'כרגע התשובות הן הדגמה בלבד (Mock) - חיפוש מקומי פשוט, לא AI אמיתי. Gemini כבוי.',
+              'Right now answers are a demo only (Mock) - a simple local search, not real AI. Gemini is off.'
+            )}
           </div>
         )}
       </div>
@@ -848,21 +921,21 @@ class AISidebarInner extends React.Component<Record<string, never>, AISidebarSta
             }
           >
             {msg.geminiErrorKind === 'invalid-key'
-              ? '🔑 פתח את מפתחות ה-API ב-Google'
-              : '💳 פתח יתרה וחיוב ב-Google'}
+              ? tr('🔑 פתח את מפתחות ה-API ב-Google', '🔑 Open API keys at Google')
+              : tr('💳 פתח יתרה וחיוב ב-Google', '💳 Open balance and billing at Google')}
           </button>
         )}
 
         {msg.citations && msg.citations.length > 0 && (
           <div className="message-citations">
-            <div className="citations-header">📎 מקורות:</div>
+            <div className="citations-header">{tr('📎 מקורות:', '📎 Sources:')}</div>
             {msg.citations.map((citation, i) => (
               <button
                 key={`${citation.messageId}-${i}`}
                 className="citation-btn"
                 onClick={() => this._onCitationClick(citation)}
-                title={`${isSelectedSummarySurface() ? 'Selected' : 'DEMO'} ${citation.messageId}\nמ: ${citation.from}\n${citation.snippet}`}
-                aria-label={`${isSelectedSummarySurface() ? 'מקור' : 'מקור DEMO'} ${citation.messageId}: ${citation.subject}`}
+                title={`${isSelectedSummarySurface() ? 'Selected' : 'DEMO'} ${citation.messageId}\n${tr('מ:', 'From:')} ${citation.from}\n${citation.snippet}`}
+                aria-label={`${isSelectedSummarySurface() ? tr('מקור', 'Source') : 'מקור DEMO'} ${citation.messageId}: ${citation.subject}`}
                 data-message-id={citation.messageId}
               >
                 <span className="citation-index">[{i + 1}]</span>
@@ -878,14 +951,17 @@ class AISidebarInner extends React.Component<Record<string, never>, AISidebarSta
         {msg.isMock && (
           <div className="mock-indicator">
             {isOfflineArchiveMode()
-              ? '🔧 תשובת הדגמה (Mock) — Gemini לא מחובר'
+              ? tr(
+                  '🔧 תשובת הדגמה (Mock) — Gemini לא מחובר',
+                  '🔧 Demo answer (Mock) — Gemini not connected'
+                )
               : '🔧 Mock Response'}
           </div>
         )}
         {msg.role === 'assistant' && msg.isMock === false && (
           <div className="live-indicator">
             {isOfflineArchiveMode()
-              ? '✨ Gemini (בתשלום · yahoo-agent)'
+              ? tr('✨ Gemini (בתשלום · yahoo-agent)', '✨ Gemini (paid · yahoo-agent)')
               : isRealSelectedSummaryMode()
                 ? 'Gemini Developer API · one selected message · paid project required'
                 : 'Gemini Developer API · DEMO synthetic · paid project required'}
@@ -918,19 +994,26 @@ class AISidebarInner extends React.Component<Record<string, never>, AISidebarSta
         <Spinner visible />
         <span className="progress-text">
           {this.state.progressPhase === 'local'
-            ? `מחפש בעותק המקומי... ${progress?.processed || 0}${
-                progress?.totalEligible ? ` / ${progress.totalEligible}` : ''
-              }`
+            ? tr('מחפש בעותק המקומי... ', 'Searching the local copy... ') +
+              `${progress?.processed || 0}${progress?.totalEligible ? ` / ${progress.totalEligible}` : ''}`
             : this.state.progressPhase === 'gemini'
-              ? `שולח ${progress?.totalEligible || 0} הודעות ל-Gemini וממתין לתשובה...`
+              ? tr(
+                  `שולח ${progress?.totalEligible || 0} הודעות ל-Gemini וממתין לתשובה...`,
+                  `Sending ${progress?.totalEligible || 0} messages to Gemini and waiting for the answer...`
+                )
               : progress
-                ? `מעבד ${progress.processed || 0}${
-                    progress.totalEligible ? ` מתוך ${progress.totalEligible}` : ''
-                  } הודעות...`
-                : 'מעבד...'}
+                ? tr(
+                    `מעבד ${progress.processed || 0}${
+                      progress.totalEligible ? ` מתוך ${progress.totalEligible}` : ''
+                    } הודעות...`,
+                    `Processing ${progress.processed || 0}${
+                      progress.totalEligible ? ` of ${progress.totalEligible}` : ''
+                    } messages...`
+                  )
+                : tr('מעבד...', 'Processing...')}
         </span>
-        <button className="cancel-btn" onClick={this._onCancel} aria-label="ביטול">
-          ביטול
+        <button className="cancel-btn" onClick={this._onCancel} aria-label={tr('ביטול', 'Cancel')}>
+          {tr('ביטול', 'Cancel')}
         </button>
       </div>
     );
@@ -1003,7 +1086,10 @@ class AISidebarInner extends React.Component<Record<string, never>, AISidebarSta
         >
           <p>
             {offline
-              ? 'שאל שאלה ולחץ "שלח" (לפי הטווח שנבחר), או בחר הודעה אחת ולחץ "סכם". שום דבר לא נשלח בלי לחיצה.'
+              ? tr(
+                  'שאל שאלה ולחץ "שלח" (לפי הטווח שנבחר), או בחר הודעה אחת ולחץ "סכם". שום דבר לא נשלח בלי לחיצה.',
+                  'Ask a question and click "Send" (for the chosen range), or select one message and click "Summarize". Nothing is sent without a click.'
+                )
               : 'בחר הודעה אחת בשרשור. סיכום נשלח רק אחרי לחיצה על Summarize.'}
           </p>
           <p>
@@ -1027,7 +1113,10 @@ class AISidebarInner extends React.Component<Record<string, never>, AISidebarSta
         data-preview-collapsed={this.state.previewExpanded ? 'false' : 'true'}
       >
         {this._renderPreviewToggle(
-          `📄 ההודעה שתישלח: ${this._selectedSendCount()} · נשלחת רק בלחיצה`
+          tr(
+            `📄 ההודעה שתישלח: ${this._selectedSendCount()} · נשלחת רק בלחיצה`,
+            `📄 Message to send: ${this._selectedSendCount()} · sent only on click`
+          )
         )}
         {this.state.previewExpanded && this._renderRealPreviewDetails(preview, offline)}
       </div>
@@ -1047,17 +1136,20 @@ class AISidebarInner extends React.Component<Record<string, never>, AISidebarSta
       <>
         <div className="demo-preview-banner">
           {offline
-            ? 'הודעה מארכיון מקומי — תישלח ל-Gemini רק אחרי Summarize'
+            ? tr(
+                'הודעה מארכיון מקומי — תישלח ל-Gemini רק אחרי Summarize',
+                'Message from the local archive — sent to Gemini only after Summarize'
+              )
             : 'הודעה נבחרת — תישלח ל-Gemini רק אחרי Summarize'}
         </div>
         <dl className="demo-preview-meta">
-          <dt>מזהה</dt>
+          <dt>{tr('מזהה', 'ID')}</dt>
           <dd>{preview.messageId}</dd>
-          <dt>נושא</dt>
+          <dt>{tr('נושא', 'Subject')}</dt>
           <dd>{preview.subject}</dd>
-          <dt>מאת</dt>
+          <dt>{tr('מאת', 'From')}</dt>
           <dd>{preview.from}</dd>
-          <dt>תאריך</dt>
+          <dt>{tr('תאריך', 'Date')}</dt>
           <dd>{preview.date}</dd>
         </dl>
         <pre className="demo-preview-body" data-preview-wrap="true">
@@ -1084,24 +1176,27 @@ class AISidebarInner extends React.Component<Record<string, never>, AISidebarSta
         data-demo-preview={preview.messageId}
         data-preview-collapsed={this.state.previewExpanded ? 'false' : 'true'}
       >
-        {this._renderPreviewToggle('📄 תצוגת מקור · 1')}
+        {this._renderPreviewToggle(tr('📄 תצוגת מקור · 1', '📄 Source view · 1'))}
         {this.state.previewExpanded && (
           <>
             <div className="demo-preview-banner">
               {offline
-                ? 'תצוגת אותה הודעה מארכיון מקומי — Yahoo לא בשימוש'
+                ? tr(
+                    'תצוגת אותה הודעה מארכיון מקומי — Yahoo לא בשימוש',
+                    'Same message from the local archive — Yahoo not used'
+                  )
                 : realSelected
                   ? 'תצוגת אותה הודעה נבחרת — לא סומן כנקרא'
                   : '🧪 DEMO מקור סינתטי — לא תיבת דואר אמיתית'}
             </div>
             <dl className="demo-preview-meta">
-              <dt>מזהה</dt>
+              <dt>{tr('מזהה', 'ID')}</dt>
               <dd>{preview.messageId}</dd>
-              <dt>נושא</dt>
+              <dt>{tr('נושא', 'Subject')}</dt>
               <dd>{preview.subject}</dd>
-              <dt>מאת</dt>
+              <dt>{tr('מאת', 'From')}</dt>
               <dd>{preview.from}</dd>
-              <dt>תיקייה</dt>
+              <dt>{tr('תיקייה', 'Folder')}</dt>
               <dd>{preview.folderName}</dd>
             </dl>
             <pre className="demo-preview-body" data-preview-wrap="true">
@@ -1112,7 +1207,7 @@ class AISidebarInner extends React.Component<Record<string, never>, AISidebarSta
               onClick={() => AISidebarStore.closeDemoPreview()}
               aria-label="סגור תצוגת מקור DEMO"
             >
-              סגור תצוגת מקור
+              {tr('סגור תצוגת מקור', 'Close source view')}
             </button>
           </>
         )}
@@ -1145,8 +1240,8 @@ class AISidebarInner extends React.Component<Record<string, never>, AISidebarSta
             Summarize
           </button>
           {this.state.conversation.length > 0 && (
-            <button className="clear-btn" onClick={this._onClear} aria-label="נקה">
-              נקה
+            <button className="clear-btn" onClick={this._onClear} aria-label={tr('נקה', 'Clear')}>
+              {tr('נקה', 'Clear')}
             </button>
           )}
         </div>
@@ -1160,7 +1255,7 @@ class AISidebarInner extends React.Component<Record<string, never>, AISidebarSta
     return (
       <div className="ai-sidebar-input">
         <label className="input-label" htmlFor="ai-sidebar-question">
-          ✍️ שאלה ל-AI
+          {tr('✍️ שאלה ל-AI', '✍️ Question for the AI')}
         </label>
         <textarea
           id="ai-sidebar-question"
@@ -1168,8 +1263,11 @@ class AISidebarInner extends React.Component<Record<string, never>, AISidebarSta
           className={classNames('input-textarea', { 'has-text': hasText })}
           placeholder={
             resolvedScope?.isEmpty
-              ? 'בחר הודעות או תיקייה תחילה…'
-              : '✍️ כתוב כאן שאלה ל-AI… (Enter לשליחה)'
+              ? tr('בחר הודעות או תיקייה תחילה…', 'Choose messages or a folder first…')
+              : tr(
+                  '✍️ כתוב כאן שאלה ל-AI… (Enter לשליחה)',
+                  '✍️ Type a question for the AI… (Enter to send)'
+                )
           }
           value={this.state.inputValue}
           onChange={this._onInputChange}
@@ -1182,16 +1280,16 @@ class AISidebarInner extends React.Component<Record<string, never>, AISidebarSta
             className={classNames('submit-btn', { ready: canSend })}
             onClick={this._onSubmit}
             disabled={!canSend}
-            aria-label="שלח"
+            aria-label={tr('שלח', 'Send')}
             title={
               canSend
-                ? 'שלח את השאלה (Enter)'
+                ? tr('שלח את השאלה (Enter)', 'Send the question (Enter)')
                 : isProcessing
-                  ? 'ממתין לתשובה…'
-                  : 'כתוב שאלה כדי לשלוח'
+                  ? tr('ממתין לתשובה…', 'Waiting for the answer…')
+                  : tr('כתוב שאלה כדי לשלוח', 'Type a question to send')
             }
           >
-            {canSend ? 'שלח ➤' : 'שלח'}
+            {canSend ? tr('שלח ➤', 'Send ➤') : tr('שלח', 'Send')}
           </button>
           {isOfflineArchiveMode() && (
             <button
@@ -1203,18 +1301,24 @@ class AISidebarInner extends React.Component<Record<string, never>, AISidebarSta
               aria-label="Summarize selected message with Gemini"
               title={
                 this.state.geminiStatus?.configured
-                  ? 'שולח ל-Gemini (בתשלום) רק את ההודעה האחת שנבחרה'
-                  : 'Gemini לא מחובר - לחיצה תסביר איך להפעיל'
+                  ? tr(
+                      'שולח ל-Gemini (בתשלום) רק את ההודעה האחת שנבחרה',
+                      'Sends only the one selected message to Gemini (paid)'
+                    )
+                  : tr(
+                      'Gemini לא מחובר - לחיצה תסביר איך להפעיל',
+                      'Gemini not connected - click to see how to turn it on'
+                    )
               }
               data-offline-archive-summarize="true"
               data-gemini-configured={this.state.geminiStatus?.configured ? 'true' : 'false'}
             >
-              ✨ סכם עם Gemini
+              {tr('✨ סכם עם Gemini', '✨ Summarize with Gemini')}
             </button>
           )}
           {this.state.conversation.length > 0 && (
-            <button className="clear-btn" onClick={this._onClear} aria-label="נקה">
-              נקה
+            <button className="clear-btn" onClick={this._onClear} aria-label={tr('נקה', 'Clear')}>
+              {tr('נקה', 'Clear')}
             </button>
           )}
         </div>
@@ -1238,24 +1342,24 @@ class AISidebarInner extends React.Component<Record<string, never>, AISidebarSta
       <div
         className="ai-sidebar"
         ref={this._rootRef}
-        dir="rtl"
+        dir={offline ? offlineDir() : 'rtl'}
         data-demo-ready={demo ? 'true' : undefined}
         data-real-selected-summary={realSelected ? 'true' : undefined}
         data-offline-archive={offline ? 'true' : undefined}
       >
         <div className="ai-sidebar-header">
-          <h2>🤖 עוזר AI</h2>
+          <h2>{tr('🤖 עוזר AI', '🤖 AI assistant')}</h2>
           <span
             className={classNames('provider-badge', {
               'gemini-on': offline && !!this.state.geminiStatus?.configured,
             })}
             data-provider-badge="true"
-            dir="rtl"
+            dir={offline ? offlineDir() : 'rtl'}
           >
             {offline
               ? this.state.geminiStatus?.configured
-                ? 'מצב: Gemini מחובר'
-                : 'מצב: Mock (Gemini כבוי)'
+                ? tr('מצב: Gemini מחובר', 'Status: Gemini connected')
+                : tr('מצב: Mock (Gemini כבוי)', 'Status: Mock (Gemini off)')
               : this.state.providerName}
           </span>
         </div>
@@ -1311,11 +1415,20 @@ class AISidebarInner extends React.Component<Record<string, never>, AISidebarSta
         )}
 
         <div className="ai-sidebar-footer">
-          <small>
-            ⚠️ אב-טיפוס - קריאה בלבד, ללא שינויים לדואר
-            <br />
-            Read-only prototype - no mail modifications
-          </small>
+          {offline ? (
+            <small>
+              {tr(
+                '⚠️ אב-טיפוס - קריאה בלבד, ללא שינויים לדואר',
+                '⚠️ Prototype - read-only, no mail modifications'
+              )}
+            </small>
+          ) : (
+            <small>
+              ⚠️ אב-טיפוס - קריאה בלבד, ללא שינויים לדואר
+              <br />
+              Read-only prototype - no mail modifications
+            </small>
+          )}
         </div>
       </div>
     );
@@ -1342,5 +1455,5 @@ AISidebar.containerStyles = {
 // Mark as sidebar panel for the panel switcher
 AISidebar.sidebarPanel = {
   id: 'ai-sidebar',
-  title: 'עוזר AI',
+  title: tr('עוזר AI', 'AI assistant'),
 };

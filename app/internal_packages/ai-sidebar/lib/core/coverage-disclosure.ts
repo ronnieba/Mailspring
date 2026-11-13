@@ -1,4 +1,5 @@
 import { SearchResult } from './types';
+import { tr } from './offline-i18n';
 
 /**
  * Host-calculated coverage footer. Ranked must keep the top-k warning.
@@ -11,35 +12,54 @@ export function buildCoverageDisclosure(searchResult: SearchResult, syncCoverage
   const { progress, retrievalMode } = searchResult;
   const lines: string[] = [];
 
-  lines.push('**📊 כיסוי ומצב:**');
+  lines.push(tr('**📊 כיסוי ומצב:**', '**📊 Coverage and status:**'));
 
   if (retrievalMode === 'ranked') {
-    lines.push(`• מצב: דירוג (top-k) - לא סריקה מלאה`);
+    lines.push(
+      tr(`• מצב: דירוג (top-k) - לא סריקה מלאה`, `• Mode: ranked (top-k) - not a full scan`)
+    );
     if (progress.processed !== null) {
-      lines.push(`• הודעות שעובדו: ${progress.processed}`);
+      lines.push(
+        tr(`• הודעות שעובדו: ${progress.processed}`, `• Messages processed: ${progress.processed}`)
+      );
     }
-    lines.push(`⚠️ לא כל ההודעות נסרקו - תוצאות מדורגות בלבד`);
+    lines.push(
+      tr(
+        `⚠️ לא כל ההודעות נסרקו - תוצאות מדורגות בלבד`,
+        `⚠️ Not every message was scanned - ranked results only`
+      )
+    );
   } else {
-    lines.push(`• מצב: סריקה מלאה (exhaustive)`);
+    lines.push(tr(`• מצב: סריקה מלאה (exhaustive)`, `• Mode: full scan (exhaustive)`));
     if (progress.totalEligible !== null) {
-      lines.push(`• סה"כ בטווח (נסרקו): ${progress.totalEligible}`);
+      lines.push(
+        tr(
+          `• סה"כ בטווח (נסרקו): ${progress.totalEligible}`,
+          `• Total in range (scanned): ${progress.totalEligible}`
+        )
+      );
     } else {
-      lines.push(`• סה"כ בטווח: לא ידוע`);
+      lines.push(tr(`• סה"כ בטווח: לא ידוע`, `• Total in range: unknown`));
     }
-    lines.push(`• עובדו: ${progress.processed}`);
+    lines.push(tr(`• עובדו: ${progress.processed}`, `• Processed: ${progress.processed}`));
     if (progress.isComplete) {
-      lines.push(`• סריקת הטווח הושלמה`);
+      lines.push(tr(`• סריקת הטווח הושלמה`, `• Range scan complete`));
     } else {
-      lines.push(`⚠️ סריקה לא הושלמה`);
+      lines.push(tr(`⚠️ סריקה לא הושלמה`, `⚠️ Scan not complete`));
     }
   }
 
   if (progress.missingBodies > 0) {
-    lines.push(`⚠️ ${progress.missingBodies} הודעות ללא גוף (לא סונכרנו)`);
+    lines.push(
+      tr(
+        `⚠️ ${progress.missingBodies} הודעות ללא גוף (לא סונכרנו)`,
+        `⚠️ ${progress.missingBodies} messages without a body (not synced)`
+      )
+    );
   }
 
   if (syncCoverage < 100) {
-    lines.push(`• סנכרון: ${syncCoverage.toFixed(0)}%`);
+    lines.push(tr(`• סנכרון: ${syncCoverage.toFixed(0)}%`, `• Sync: ${syncCoverage.toFixed(0)}%`));
   }
 
   return lines.join('\n');
