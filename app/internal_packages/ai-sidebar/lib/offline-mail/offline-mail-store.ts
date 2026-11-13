@@ -24,6 +24,8 @@ import { cleanAttachmentTemp } from '../core/offline-attachments';
 import {
   buildThreads,
   dedupeCopies,
+  messageKey,
+  uniqueInFolder,
   OfflineThread,
   readThreadedPref,
   writeThreadedPref,
@@ -209,10 +211,20 @@ class OfflineMailStore {
     this._emit();
   }
 
+  /** Unique messages per exact folder (what the badge, header and list show). */
   private _countsByFolder(): { [p: string]: number } {
     const out: { [p: string]: number } = {};
     for (const [k, v] of this._byFolder) {
       out[k] = v.length;
+    }
+    return out;
+  }
+
+  /** Raw files per folder (duplicate copies included), to compare with the manifest. */
+  private _rawCountsByFolder(): { [p: string]: number } {
+    const out: { [p: string]: number } = {};
+    for (const e of this.index?.entries || []) {
+      out[e.folder] = (out[e.folder] || 0) + 1;
     }
     return out;
   }
@@ -227,8 +239,16 @@ class OfflineMailStore {
       list.push(e);
       this._byFolder.set(e.folder, list);
     }
-    for (const list of this._byFolder.values()) {
+    for (const [k, list] of this._byFolder) {
       list.sort((a, b) => b.ts - a.ts);
+      // The same message stored twice in one folder is listed (and counted) once.
+      this._byFolder.set(k, uniqueInFolder(list));
+    }
+    const listed = new Set<string>();
+    for (const list of this._byFolder.values()) {
+      for (const e of list) {
+        listed.add(e.id);
+      }
     }
     const grouped = buildThreads(index.entries);
     this._threads = grouped.threads;
@@ -236,22 +256,25 @@ class OfflineMailStore {
     this._rowsCache = null;
     this.folders = buildFolderTree(index);
     const root = this.root as string;
-    const messages: OfflineArchiveMessage[] = index.entries.map((e) => ({
-      id: e.id,
-      threadId: this._threadOf.get(e.id) || `thread-${e.id}`,
-      accountId: OFFLINE_ARCHIVE_ACCOUNT_ID,
-      folderId: folderIdFor(e.folder),
-      folderPath: e.folder,
-      subject: e.subject,
-      from: e.from,
-      date: e.ts ? new Date(e.ts).toISOString() : '',
-      snippet: '',
-      bodyText: '',
-      sha256: '',
-      byteLength: e.size,
-      attachmentCount: e.hasAttachments ? 1 : 0,
-      sourceRelPath: e.rel,
-    }));
+    const messages: OfflineArchiveMessage[] = index.entries
+      .filter((e) => listed.has(e.id))
+      .map((e) => ({
+        id: e.id,
+        threadId: this._threadOf.get(e.id) || `thread-${e.id}`,
+        accountId: OFFLINE_ARCHIVE_ACCOUNT_ID,
+        folderId: folderIdFor(e.folder),
+        folderPath: e.folder,
+        subject: e.subject,
+        from: e.from,
+        date: e.ts ? new Date(e.ts).toISOString() : '',
+        snippet: '',
+        bodyText: '',
+        sha256: '',
+        byteLength: e.size,
+        attachmentCount: e.hasAttachments ? 1 : 0,
+        sourceRelPath: e.rel,
+        dedupeKey: messageKey(e),
+      }));
     const folderCounts = this._countsByFolder();
     setOfflineArchiveBrowserCatalog(
       messages,
@@ -259,7 +282,7 @@ class OfflineMailStore {
         version: 1,
         kind: 'offline-archive',
         originalRoot: root,
-        messageCount: messages.length,
+        messageCount: new Set(messages.map((m) => m.dedupeKey)).size,
         folderCounts,
         sha256All: '',
         unreadable: index.unreadable.map((u) => ({ path: u.rel, reason: u.reason })),
@@ -704,7 +727,8 @@ class OfflineMailStore {
 
   /** Sanitized counts only (no names), for logs and verification hooks. */
   summary() {
-    const counts = this._countsByFolder();
+    const counts = this._rawCountsByFolder();
+    const unique = this._countsByFolder();
     const manifestCounts = this.index?.manifestFolderCounts || null;
     let mismatchedFolders = 0;
     if (manifestCounts) {
@@ -730,6 +754,9 @@ class OfflineMailStore {
       status: this.status,
       messages: this.index ? this.index.entries.length : 0,
       foldersWithMail: Object.keys(counts).length,
+      /** Same message stored twice in one folder (shown and counted once). */
+      duplicateCopies: Object.keys(counts).reduce((n, k) => n + counts[k] - (unique[k] || 0), 0),
+      listedMessages: Object.values(unique).reduce((n, v) => n + v, 0),
       foldersTotal: this.folderCount(),
       manifestMessageCount: this.index?.manifestMessageCount ?? null,
       manifestFolderCount: manifestCounts ? Object.keys(manifestCounts).length : null,

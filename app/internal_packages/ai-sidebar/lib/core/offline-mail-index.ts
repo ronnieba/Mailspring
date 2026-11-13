@@ -10,6 +10,7 @@ import * as crypto from 'crypto';
 import * as fs from 'fs';
 import * as path from 'path';
 import { isForbiddenArchiveRoot, splitMboxrd } from './offline-archive-format';
+import { messageKey } from './offline-threads';
 import {
   containsHebrew,
   parseOfflineMail,
@@ -474,8 +475,16 @@ function roleRank(name: string): number {
 export function buildFolderTree(
   index: Pick<OfflineMailIndex, 'entries' | 'folderNames'>
 ): OfflineFolderNode[] {
+  // Unique messages in each exact folder: a duplicate copy (same Message-ID
+  // stored twice in one folder) counts once, like the message list.
   const counts: { [p: string]: number } = {};
+  const seen = new Set<string>();
   for (const e of index.entries) {
+    const k = `${e.folder}\u0000${messageKey(e)}`;
+    if (seen.has(k)) {
+      continue;
+    }
+    seen.add(k);
     counts[e.folder] = (counts[e.folder] || 0) + 1;
   }
   const allPaths = new Set<string>(Object.keys(counts));

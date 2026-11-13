@@ -189,6 +189,34 @@ export function dedupeCopies(
   });
 }
 
+/**
+ * One key per message: its Message-ID (lowercased) or, without one, its own
+ * file id. Copies of the same message share a key.
+ */
+export function messageKey(e: { id: string; msgId?: string }): string {
+  const mid = ids(e.msgId)[0];
+  return mid ? `mid:${mid}` : `id:${e.id}`;
+}
+
+/**
+ * Messages of ONE folder with duplicate copies (same Message-ID twice in the
+ * same folder) kept once: the first in list order (newest when sorted).
+ * This is what the folder badge, the list header and the list all count.
+ */
+export function uniqueInFolder<T extends { id: string; msgId?: string }>(list: T[]): T[] {
+  const seen = new Set<string>();
+  const out: T[] = [];
+  for (const e of list) {
+    const k = messageKey(e);
+    if (seen.has(k)) {
+      continue;
+    }
+    seen.add(k);
+    out.push(e);
+  }
+  return out;
+}
+
 // ---- "Conversations" view preference (offline profile) ----
 
 export const OFFLINE_VIEW_PREFS_FILE = 'offline-view-prefs.json';

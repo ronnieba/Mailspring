@@ -42,6 +42,11 @@ export type OfflineArchiveMessage = {
   byteLength: number;
   attachmentCount: number;
   sourceRelPath: string;
+  /**
+   * Same value for copies of one message (Message-ID, else the file's own id).
+   * Whole-copy counts and searches count each message once.
+   */
+  dedupeKey?: string;
 };
 
 export type OfflineArchiveManifest = {

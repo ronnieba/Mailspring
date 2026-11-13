@@ -63,10 +63,20 @@ const byId = new Map<string, OfflineArchiveMessage>();
 const lazyBodies = new Map<string, string>();
 const LAZY_BODY_CACHE = 200;
 
+/** Whole copy with each message once (copies in several folders share a dedupeKey). */
+let uniqueCatalog: OfflineArchiveMessage[] = [];
+
 function rebuildById() {
   byId.clear();
+  const seen = new Set<string>();
+  uniqueCatalog = [];
   for (const m of catalog) {
     byId.set(m.id, m);
+    const k = m.dedupeKey || m.id;
+    if (!seen.has(k)) {
+      seen.add(k);
+      uniqueCatalog.push(m);
+    }
   }
 }
 
@@ -288,11 +298,11 @@ function browserScope(mode: ResolvedScope['mode']): ResolvedScope {
     mode,
     accountIds: [OFFLINE_ARCHIVE_ACCOUNT_ID],
     description: tr(
-      `כל העותק המקומי (${catalog.length} הודעות) / Whole offline copy (${catalog.length})`,
-      `Whole offline copy (${catalog.length} messages)`
+      `כל העותק המקומי (${uniqueCatalog.length} הודעות) / Whole offline copy (${uniqueCatalog.length})`,
+      `Whole offline copy (${uniqueCatalog.length} messages)`
     ),
-    isEmpty: catalog.length === 0,
-    messageCount: catalog.length,
+    isEmpty: uniqueCatalog.length === 0,
+    messageCount: uniqueCatalog.length,
   };
 }
 
@@ -402,7 +412,7 @@ function rowsInScope(scope: ResolvedScope): OfflineArchiveMessage[] {
     }
     return catalog.filter((m) => inScopeFolder(m, scope.folder));
   }
-  return catalog;
+  return browserDriven ? uniqueCatalog : catalog;
 }
 
 export interface OfflineGeminiContext {

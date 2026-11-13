@@ -191,6 +191,34 @@
   flex: 1;
   overflow-y: auto;
   outline: none;
+  // Always show that the list scrolls (some themes hide scrollbars).
+  &::-webkit-scrollbar {
+    width: 10px;
+  }
+  &::-webkit-scrollbar-thumb {
+    background: rgba(128, 128, 128, 0.55);
+    border-radius: 5px;
+  }
+  &::-webkit-scrollbar-track {
+    background: rgba(128, 128, 128, 0.12);
+  }
+}
+
+// "▼ N more below": the list continues past the bottom of the window.
+.offline-list-more {
+  flex: none;
+  width: 100%;
+  padding: 3px 8px;
+  font-size: 12px;
+  border: none;
+  border-top: 1px solid @border-color-primary;
+  background: @list-bg;
+  color: @text-color-subtle;
+  cursor: pointer;
+  text-align: center;
+  &:hover {
+    text-decoration: underline;
+  }
 }
 
 .offline-message-row {
@@ -578,6 +606,11 @@ body[class*='less-is-more'] {
   }
   .offline-list-header {
     border-bottom-color: var(--ofl-border);
+  }
+  .offline-list-more {
+    background: var(--ofl-list-bg);
+    color: var(--ofl-subtle);
+    border-top-color: var(--ofl-border);
   }
   .offline-list-title .offline-list-count,
   .offline-row-line1 .offline-row-date,

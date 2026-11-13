@@ -37,18 +37,46 @@ export class OfflineMessageList extends OfflineStoreComponent<Record<string, nev
   static containerStyles = { minWidth: 280, maxWidth: 900 };
 
   state: State = { scrollTop: 0, height: 800 };
-  private _scrollRef = React.createRef<HTMLDivElement>();
+  private _scrollRef: { current: HTMLDivElement | null } = { current: null };
   private _lastFolder: string | null = null;
   private _ro: ResizeObserver | null = null;
 
   componentDidMount() {
     super.componentDidMount();
-    const el = this._scrollRef.current;
-    if (el && typeof ResizeObserver !== 'undefined') {
-      this._ro = new ResizeObserver(() => this.setState({ height: el.clientHeight }));
-      this._ro.observe(el);
+    if (typeof ResizeObserver !== 'undefined') {
+      this._ro = new ResizeObserver(() => {
+        const el = this._scrollRef.current;
+        if (el && el.clientHeight > 0) {
+          this.setState({ height: el.clientHeight });
+        }
+      });
+      if (this._scrollRef.current) {
+        this._ro.observe(this._scrollRef.current);
+      }
     }
   }
+
+  /**
+   * The scroll box is re-created after the drafts list was shown. Watch the
+   * new one; the old (detached) one reports height 0, which used to leave only
+   * the first 8 rows drawn with blank space below.
+   */
+  _setScrollEl = (el: HTMLDivElement | null) => {
+    const prev = this._scrollRef.current;
+    if (prev === el) {
+      return;
+    }
+    if (prev && this._ro) {
+      this._ro.unobserve(prev);
+    }
+    this._scrollRef.current = el;
+    if (el && this._ro) {
+      this._ro.observe(el);
+    }
+    if (el && prev) {
+      this.setState({ scrollTop: el.scrollTop, height: el.clientHeight || this.state.height });
+    }
+  };
 
   componentWillUnmount() {
     super.componentWillUnmount();
@@ -207,13 +235,17 @@ export class OfflineMessageList extends OfflineStoreComponent<Record<string, nev
     const rows = s.visibleRows();
     const messageCount = s.visibleMessages().length;
     const folder = s.findFolder(s.currentFolder);
-    const { scrollTop, height } = this.state;
+    const { scrollTop } = this.state;
+    const liveHeight = this._scrollRef.current ? this._scrollRef.current.clientHeight : 0;
+    const height = liveHeight > 0 ? liveHeight : this.state.height || 800;
     const selectedSet = new Set(s.selectedKeys);
     const checkedInView = rows.reduce((n, r) => n + (selectedSet.has(r.key) ? 1 : 0), 0);
     const allChecked = rows.length > 0 && checkedInView === rows.length;
     const someChecked = checkedInView > 0;
     const start = Math.max(0, Math.floor(scrollTop / ROW_HEIGHT) - OVERSCAN);
     const end = Math.min(rows.length, Math.ceil((scrollTop + height) / ROW_HEIGHT) + OVERSCAN);
+    // Rows not (fully) on screen below the visible part: shown as "N more below".
+    const below = Math.max(0, rows.length - Math.floor((scrollTop + height) / ROW_HEIGHT));
     const visible: React.ReactNode[] = [];
     for (let i = start; i < end; i++) {
       visible.push(this._renderRow(rows[i], i));
@@ -233,16 +265,24 @@ export class OfflineMessageList extends OfflineStoreComponent<Record<string, nev
                 : ''}
             <span
               className="offline-list-count"
-              title={
-                s.threaded
-                  ? tr(
-                      `${rows.length.toLocaleString()} שיחות, ${messageCount.toLocaleString()} הודעות`,
-                      `${rows.length.toLocaleString()} conversations, ${messageCount.toLocaleString()} messages`
-                    )
-                  : undefined
-              }
+              data-offline-list-messages={messageCount}
+              data-offline-list-conversations={s.threaded ? rows.length : undefined}
+              title={tr(
+                'הודעות = ההודעות בתיקייה הזו בלבד (עותק כפול של אותה הודעה נספר פעם אחת). ' +
+                  'שיחות = שורות ברשימה; שיחה יכולה להציג גם הודעות מתיקיות אחרות, והן לא נספרות כאן.',
+                'Messages = messages in this folder only (a duplicate copy of the same message counts once). ' +
+                  'Conversations = rows in the list; a conversation may also show messages from other folders, which are not counted here.'
+              )}
             >
-              {rows.length.toLocaleString()}
+              {s.threaded
+                ? tr(
+                    `${messageCount.toLocaleString()} הודעות · ${rows.length.toLocaleString()} שיחות`,
+                    `${messageCount.toLocaleString()} messages · ${rows.length.toLocaleString()} conversations`
+                  )
+                : tr(
+                    `${messageCount.toLocaleString()} הודעות`,
+                    `${messageCount.toLocaleString()} messages`
+                  )}
             </span>
             <label
               className="offline-list-threaded"
@@ -316,7 +356,7 @@ export class OfflineMessageList extends OfflineStoreComponent<Record<string, nev
         </div>
         <div
           className="offline-list-scroll"
-          ref={this._scrollRef}
+          ref={this._setScrollEl}
           tabIndex={0}
           role="listbox"
           aria-multiselectable
@@ -325,6 +365,21 @@ export class OfflineMessageList extends OfflineStoreComponent<Record<string, nev
         >
           <div style={{ height: rows.length * ROW_HEIGHT, position: 'relative' }}>{visible}</div>
         </div>
+        {below > 0 ? (
+          <button
+            type="button"
+            className="offline-list-more"
+            data-offline-list-more={below}
+            onClick={() => {
+              const el = this._scrollRef.current;
+              if (el) {
+                el.scrollTop += Math.max(ROW_HEIGHT, el.clientHeight - ROW_HEIGHT);
+              }
+            }}
+          >
+            {tr(`▼ עוד ${below.toLocaleString()} למטה`, `▼ ${below.toLocaleString()} more below`)}
+          </button>
+        ) : null}
       </div>
     );
   }
