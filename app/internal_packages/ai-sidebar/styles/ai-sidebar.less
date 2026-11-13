@@ -2,6 +2,14 @@
  * AI Sidebar styles - RTL Hebrew layout with mixed content support.
  */
 
+@import 'ui-variables';
+
+// This panel lays itself out RTL explicitly (dir=rtl) on every UI language.
+// Mailspring runs rtlcss over all stylesheets when the OS UI is RTL (e.g.
+// Hebrew Windows), which flipped direction: rtl to ltr and mirrored paddings
+// here. Keep this file out of that flip so Hebrew and English UIs match.
+/*!rtl:begin:ignore*/
+
 // Native 7c17ae32: answer/source HEIGHT-clipped at ~299pt because the
 // MessageListSidebar column scrolled as a whole while .ai-sidebar overflow
 // hid the conversation. Keep the column/panel from eating the inner scrollport.
@@ -22,6 +30,17 @@
   min-width: 0;
   min-height: 0;
   overflow: hidden;
+  // No Mailspring theme defines these CSS custom properties, so without this
+  // block the panel rendered black text on a transparent panel - unreadable on
+  // the dark theme. Map them from the active theme's less variables so the
+  // panel follows ui-light and ui-dark alike.
+  --background-primary: @background-primary;
+  --background-secondary: @background-secondary;
+  --background-tertiary: fade(@text-color, 10%);
+  --text-color: @text-color;
+  --text-color-subtle: @text-color-subtle;
+  --border-color-divider: @border-color-divider;
+  --color-primary: @component-active-color;
   background: var(--background-primary);
   color: var(--text-color);
   font-family: system-ui, -apple-system, sans-serif;
@@ -844,3 +863,53 @@
     }
   }
 }
+
+// Offline experiment: short Hebrew how-to shown in the empty state.
+.ai-sidebar .ai-sidebar-guide {
+  margin: 0 0 12px 0;
+  padding: 10px 12px;
+  border: 1px solid var(--border-color-divider);
+  border-radius: 6px;
+  background: var(--background-secondary);
+  color: var(--text-color);
+  font-size: 13px;
+  line-height: 1.55;
+  text-align: right;
+  direction: rtl;
+
+  .guide-title {
+    font-weight: 600;
+    margin-bottom: 4px;
+  }
+  ol {
+    margin: 6px 0;
+    padding-right: 20px;
+    padding-left: 0;
+  }
+  li {
+    margin: 3px 0;
+  }
+  .guide-note {
+    margin-top: 6px;
+    color: var(--text-color-subtle);
+    font-size: 12px;
+  }
+}
+
+// Clear selected state for scope buttons on any theme.
+.ai-sidebar .ai-sidebar-scope .scope-buttons .scope-btn {
+  font-weight: 500;
+  &.active {
+    font-weight: 700;
+    box-shadow: 0 0 0 1px var(--color-primary);
+  }
+}
+
+// Offline: an empty "selected" scope is the normal starting point, not an error.
+.ai-sidebar .ai-sidebar-scope .scope-status.empty.hint {
+  background: var(--background-secondary);
+  color: var(--text-color);
+  border: 1px solid var(--border-color-divider);
+}
+
+/*!rtl:end:ignore*/

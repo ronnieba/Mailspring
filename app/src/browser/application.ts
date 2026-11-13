@@ -466,6 +466,17 @@ export default class Application extends EventEmitter {
         },
         behavior
       );
+      // Offline experiment: four columns (folders, list, reader, AI panel)
+      // need the room, so open maximized once the window has loaded.
+      const offlineWin = this.windowManager.get(WindowManager.MAIN_WINDOW);
+      if (offlineWin) {
+        offlineWin.waitForLoad(() => {
+          const bw = offlineWin.browserWindow;
+          if (bw && !bw.isDestroyed() && !bw.isMaximized()) {
+            bw.maximize();
+          }
+        });
+      }
     } else if (hasAccount) {
       this.windowManager.ensureWindow(
         WindowManager.MAIN_WINDOW,

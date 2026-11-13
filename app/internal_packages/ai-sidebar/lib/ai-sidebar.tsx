@@ -312,11 +312,21 @@ class AISidebarInner extends React.Component<Record<string, never>, AISidebarSta
         </div>
 
         {resolvedScope && (
-          <div className={classNames('scope-status', { empty: resolvedScope.isEmpty })}>
+          <div
+            className={classNames('scope-status', {
+              empty: resolvedScope.isEmpty,
+              hint:
+                resolvedScope.isEmpty &&
+                isOfflineArchiveMode() &&
+                scopeMode === 'selected-messages',
+            })}
+          >
             {resolvedScope.isEmpty ? (
               <span className="empty-scope">
                 {scopeMode === 'selected-messages'
-                  ? '❌ לא נבחרו הודעות - בחר הודעות מהרשימה'
+                  ? isOfflineArchiveMode()
+                    ? 'ℹ️ עוד לא סימנת הודעות. סמן הודעות ברשימה, או בחר "תיקייה" / "הכל".'
+                    : '❌ לא נבחרו הודעות - בחר הודעות מהרשימה'
                   : '❌ אין הודעות בטווח'}
               </span>
             ) : (
@@ -351,10 +361,35 @@ class AISidebarInner extends React.Component<Record<string, never>, AISidebarSta
     );
   }
 
+  _renderOfflineGuide() {
+    return (
+      <div className="ai-sidebar-guide" dir="rtl" data-offline-guide="true">
+        <div className="guide-title">מה זה? עוזר שעונה על שאלות על הדואר שלך</div>
+        <div>הוא עובד רק על העותק המקומי (קריאה בלבד), בלי חיבור ל-Yahoo.</div>
+        <ol>
+          <li>
+            בחר טווח למעלה: <b>נבחרות</b> = ההודעות שסימנת ברשימה, <b>תיקייה</b> = התיקייה הפתוחה,{' '}
+            <b>הכל</b> = כל תיבת הדואר.
+          </li>
+          <li>כתוב שאלה בתיבה למטה, למשל: "חפש חשבוניות מהחודש האחרון".</li>
+          <li>
+            לחץ <b>שלח</b>. לחיצה על מקור בתשובה פותחת את ההודעה.
+          </li>
+        </ol>
+        <div className="guide-note">
+          כרגע התשובות הן הדגמה בלבד (Mock) - חיפוש מקומי פשוט, לא AI אמיתי. Gemini כבוי.
+        </div>
+      </div>
+    );
+  }
+
   _renderConversation() {
     const { conversation } = this.state;
 
     if (conversation.length === 0) {
+      if (isOfflineArchiveMode()) {
+        return <div className="ai-sidebar-empty">{this._renderOfflineGuide()}</div>;
+      }
       return (
         <div className="ai-sidebar-empty">
           <div className="empty-icon">💬</div>
