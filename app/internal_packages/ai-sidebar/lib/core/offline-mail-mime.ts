@@ -294,11 +294,72 @@ function splitMultipart(bodyLatin1: string, boundary: string): string[] {
 type Walk = {
   text: string[];
   html: string[];
-  attachments: OfflineMailAttachment[];
+  attachments: WalkAttachment[];
   inlineImages: { [cid: string]: string };
   notes: Set<string>;
   withBytes?: boolean;
+  /** Structure only (indexing): no attachment bytes are decoded. */
+  scanOnly?: boolean;
 };
+
+/** Attachment candidate during the walk; `cid` set for images with a Content-ID. */
+type WalkAttachment = OfflineMailAttachment & { cid?: string };
+
+/** Signature parts are not attachments for the user (S/MIME, PGP). */
+const SIGNATURE_TYPES = new Set([
+  'application/pkcs7-signature',
+  'application/x-pkcs7-signature',
+  'application/pgp-signature',
+]);
+/** Report / receipt parts that belong to the message body. */
+const BODY_LIKE_TYPES = new Set([
+  'message/delivery-status',
+  'message/global-delivery-status',
+  'message/disposition-notification',
+  'text/rfc822-headers',
+  'message/global-headers',
+]);
+
+function encodedSize(body: string, cte: string): number {
+  const enc = (cte || '').trim().toLowerCase();
+  if (enc === 'base64') {
+    const n = body.replace(/[^A-Za-z0-9+/=]/g, '').length;
+    return Math.floor((n * 3) / 4);
+  }
+  return body.length;
+}
+
+/** Content-IDs the HTML body points at (cid:...). */
+export function referencedCids(htmlParts: string[]): Set<string> {
+  const out = new Set<string>();
+  for (const h of htmlParts) {
+    const re = /cid:([^"'()\s>]+)/gi;
+    let m: RegExpExecArray | null;
+    while ((m = re.exec(h))) {
+      out.add(m[1].toLowerCase());
+      try {
+        out.add(decodeURIComponent(m[1]).toLowerCase());
+      } catch {
+        // keep raw
+      }
+    }
+  }
+  return out;
+}
+
+/**
+ * Only real attachments: an image the HTML shows through cid: is part of the
+ * message, not an attachment. Everything else that reached the list stays.
+ */
+function finalizeAttachments(walk: Walk): OfflineMailAttachment[] {
+  const refs = referencedCids(walk.html);
+  return walk.attachments
+    .filter((a) => !(a.cid && refs.has(a.cid.toLowerCase())))
+    .map((a) => {
+      const { cid, ...rest } = a;
+      return rest;
+    });
+}
 
 function walkEntity(rawLatin1: string, walk: Walk, depth: number, parentType: string): void {
   if (depth > MAX_DEPTH) {
@@ -354,12 +415,12 @@ function walkEntity(rawLatin1: string, walk: Walk, depth: number, parentType: st
 
   const isAttachment = disp === 'attachment' || (!!filename && !ct.startsWith('text/'));
   if (ct === 'message/rfc822' || ct === 'message/global') {
-    const msgBytes = decodeTransfer(body, cte);
+    const msgBytes = walk.scanOnly ? null : decodeTransfer(body, cte);
     walk.attachments.push({
       filename: filename || 'attached-message.eml',
       contentType: ct,
-      size: msgBytes.length,
-      ...(walk.withBytes ? { data: msgBytes } : {}),
+      size: msgBytes ? msgBytes.length : encodedSize(body, cte),
+      ...(walk.withBytes && msgBytes ? { data: msgBytes } : {}),
     });
     walk.notes.add('nested-message-as-attachment');
     return;
@@ -383,20 +444,67 @@ function walkEntity(rawLatin1: string, walk: Walk, depth: number, parentType: st
     return;
   }
 
-  const bytes = decodeTransfer(body, cte);
+  // Not attachments: signatures, delivery reports, and unnamed text parts
+  // (calendar / vcard alternatives of the body).
+  if (SIGNATURE_TYPES.has(ct) || /\.p7s$/i.test(filename)) {
+    walk.notes.add('signature-part');
+    return;
+  }
+  if (BODY_LIKE_TYPES.has(ct)) {
+    return;
+  }
+  if (!filename && disp !== 'attachment' && ct.startsWith('text/')) {
+    return;
+  }
+  const bytes = walk.scanOnly ? null : decodeTransfer(body, cte);
   const cid = (first(h, 'content-id') || '').replace(/^<|>$/g, '').trim();
-  if (cid && ct.startsWith('image/') && bytes.length <= MAX_INLINE_IMAGE_BYTES) {
+  if (cid && ct.startsWith('image/') && bytes && bytes.length <= MAX_INLINE_IMAGE_BYTES) {
     walk.inlineImages[cid] = `data:${ct};base64,${bytes.toString('base64')}`;
-    if (disp !== 'attachment') {
-      return;
-    }
   }
   walk.attachments.push({
     filename: filename || `(unnamed ${ct || 'part'})`,
     contentType: ct,
-    size: bytes.length,
-    ...(walk.withBytes ? { data: bytes } : {}),
+    size: bytes ? bytes.length : encodedSize(body, cte),
+    // An image with a Content-ID is inline when the HTML shows it (decided at the end).
+    ...(cid && ct.startsWith('image/') ? { cid } : {}),
+    ...(walk.withBytes && bytes ? { data: bytes } : {}),
   });
+}
+
+/** Main Content-Type of a message (lower case), from its header block. */
+export function topContentType(raw: Buffer | string): string {
+  const rawLatin1 = typeof raw === 'string' ? raw : raw.toString('latin1');
+  const { headerText } = splitHeadersAndBody(rawLatin1);
+  return mainValue(first(parseHeaderBlock(headerText), 'content-type')) || 'text/plain';
+}
+
+export type OfflineAttachmentScan = { count: number; bytes: number; names: string[] };
+
+/**
+ * Real attachments of a message from its MIME structure, without decoding
+ * attachment bytes (for the index: list 📎, filters, sort, AI metadata).
+ */
+export function scanOfflineMailAttachments(raw: Buffer | string): OfflineAttachmentScan {
+  const rawLatin1 = typeof raw === 'string' ? raw : raw.toString('latin1');
+  const walk: Walk = {
+    text: [],
+    html: [],
+    attachments: [],
+    inlineImages: {},
+    notes: new Set(),
+    scanOnly: true,
+  };
+  try {
+    walkEntity(rawLatin1, walk, 0, '');
+  } catch (err) {
+    walk.notes.add('mime-parse-error');
+  }
+  const list = finalizeAttachments(walk);
+  return {
+    count: list.length,
+    bytes: list.reduce((n, a) => n + (a.size || 0), 0),
+    names: list.map((a) => a.filename).slice(0, 50),
+  };
 }
 
 const ENTITY_MAP: { [k: string]: string } = {
@@ -486,7 +594,7 @@ export function parseOfflineMail(
     messageId: first(h, 'message-id'),
     text,
     html,
-    attachments: walk.attachments,
+    attachments: finalizeAttachments(walk),
     notes: Array.from(walk.notes),
   };
 }

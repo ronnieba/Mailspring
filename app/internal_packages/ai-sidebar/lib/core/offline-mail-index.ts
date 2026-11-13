@@ -16,10 +16,56 @@ import {
   parseOfflineMail,
   parseOfflineMailHeaders,
   ParsedOfflineMail,
+  scanOfflineMailAttachments,
+  topContentType,
 } from './offline-mail-mime';
 
 export const OFFLINE_INDEX_VERSION = 3;
 const HEAD_BYTES = 64 * 1024;
+/** Bump to re-check attachments of every cached entry once (structure, not headers). */
+export const ATTACH_SCAN_VERSION = 1;
+/** Messages larger than this are not read whole; they are counted as having attachments. */
+const FULL_SCAN_MAX_BYTES = 80 * 1024 * 1024;
+/** Large files are read one at a time (memory). */
+const BIG_READ_BYTES = 8 * 1024 * 1024;
+let bigReadChain: Promise<unknown> = Promise.resolve();
+
+/** Only multipart messages other than plain body alternatives can carry attachments past the head. */
+export function needsFullAttachmentScan(topType: string, size: number): boolean {
+  return (
+    size > HEAD_BYTES && topType.startsWith('multipart/') && topType !== 'multipart/alternative'
+  );
+}
+
+/**
+ * Real attachments of one mail file (read-only). Small files and single-part
+ * messages are judged from the first chunk; multipart ones are read whole.
+ */
+export async function scanAttachmentsOfFile(
+  abs: string,
+  size: number,
+  head: Buffer
+): Promise<{ count: number; bytes: number }> {
+  const top = topContentType(head);
+  if (!needsFullAttachmentScan(top, size)) {
+    const s = scanOfflineMailAttachments(head);
+    return { count: s.count, bytes: s.bytes };
+  }
+  if (size > FULL_SCAN_MAX_BYTES) {
+    return { count: 1, bytes: size };
+  }
+  const read = () => fs.promises.readFile(abs, { flag: 'r' });
+  let buf: Buffer;
+  if (size > BIG_READ_BYTES) {
+    const p = bigReadChain.then(read, read);
+    bigReadChain = p.catch(() => undefined);
+    buf = await p;
+  } else {
+    buf = await read();
+  }
+  const s = scanOfflineMailAttachments(buf);
+  return { count: s.count, bytes: s.bytes };
+}
 
 export type OfflineIndexEntry = {
   id: string;
@@ -45,6 +91,11 @@ export type OfflineIndexEntry = {
   msgId?: string;
   inReplyTo?: string;
   refs?: string;
+  /** Real attachments (MIME structure; inline cid images, signatures, body parts excluded). */
+  attachCount?: number;
+  attachBytes?: number;
+  /** ATTACH_SCAN_VERSION the attachment fields were computed with. */
+  attachScan?: number;
 };
 
 export type OfflineMailIndex = {
@@ -58,7 +109,7 @@ export type OfflineMailIndex = {
   manifestFolderCounts: { [stored: string]: number } | null;
   manifestMessageCount: number | null;
   unreadable: Array<{ rel: string; reason: string }>;
-  stats: { reused: number; parsed: number; ms: number };
+  stats: { reused: number; parsed: number; rescanned?: number; ms: number };
 };
 
 export type IndexProgress = {
@@ -302,6 +353,7 @@ export async function buildOfflineMailIndex(
   const unreadable: Array<{ rel: string; reason: string }> = [];
   let reused = 0;
   let parsed = 0;
+  let rescanned = 0;
   const concurrency = Math.max(1, opts.concurrency || 24);
   let done = 0;
   progress({ phase: 'headers', done, total: files.length });
@@ -315,6 +367,7 @@ export async function buildOfflineMailIndex(
       const folder = path.posix.basename(rel, path.posix.extname(rel));
       return splitMboxrd(raw).map((part, i) => {
         const h = parseOfflineMailHeaders(part.slice(0, HEAD_BYTES));
+        const att = scanOfflineMailAttachments(part);
         const partRel = `${rel}#${i + 1}`;
         return {
           id: offlineEntryId(partRel),
@@ -326,7 +379,7 @@ export async function buildOfflineMailIndex(
           from: h.from,
           date: h.date,
           ts: parseTs(h.date),
-          hasAttachments: h.hasAttachments,
+          hasAttachments: att.count > 0,
           hebrew: containsHebrew(h.subject) || containsHebrew(h.from),
           to: h.to,
           cc: h.cc,
@@ -334,6 +387,9 @@ export async function buildOfflineMailIndex(
           msgId: h.msgId,
           inReplyTo: h.inReplyTo,
           refs: h.refs,
+          attachCount: att.count,
+          attachBytes: att.bytes,
+          attachScan: ATTACH_SCAN_VERSION,
         };
       });
     }
@@ -346,11 +402,26 @@ export async function buildOfflineMailIndex(
       old.to !== undefined &&
       old.msgId !== undefined
     ) {
-      reused++;
-      return [old];
+      if (old.attachScan === ATTACH_SCAN_VERSION) {
+        reused++;
+        return [old];
+      }
+      // Older entry: headers are fine, only the attachment flag is re-checked (once).
+      const att = await scanAttachmentsOfFile(abs, fst.size, await readHead(abs, HEAD_BYTES));
+      rescanned++;
+      return [
+        {
+          ...old,
+          hasAttachments: att.count > 0,
+          attachCount: att.count,
+          attachBytes: att.bytes,
+          attachScan: ATTACH_SCAN_VERSION,
+        },
+      ];
     }
     const head = await readHead(abs, HEAD_BYTES);
     const h = parseOfflineMailHeaders(head);
+    const att = await scanAttachmentsOfFile(abs, fst.size, head);
     parsed++;
     return [
       {
@@ -363,7 +434,7 @@ export async function buildOfflineMailIndex(
         from: h.from,
         date: h.date,
         ts: parseTs(h.date),
-        hasAttachments: h.hasAttachments,
+        hasAttachments: att.count > 0,
         hebrew: containsHebrew(h.subject) || containsHebrew(h.from),
         to: h.to,
         cc: h.cc,
@@ -371,6 +442,9 @@ export async function buildOfflineMailIndex(
         msgId: h.msgId,
         inReplyTo: h.inReplyTo,
         refs: h.refs,
+        attachCount: att.count,
+        attachBytes: att.bytes,
+        attachScan: ATTACH_SCAN_VERSION,
       },
     ];
   };
@@ -405,7 +479,7 @@ export async function buildOfflineMailIndex(
     manifestFolderCounts: manifest.counts,
     manifestMessageCount: manifest.total,
     unreadable,
-    stats: { reused, parsed, ms: Date.now() - started },
+    stats: { reused, parsed, rescanned, ms: Date.now() - started },
   };
   if (opts.cachePath) {
     try {

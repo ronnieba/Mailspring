@@ -226,7 +226,7 @@ class OfflineMailStore {
       console.log(
         `[Offline mail] indexed ${index.entries.length} messages in ${
           Object.keys(this._countsByFolder()).length
-        } folders (reused ${index.stats.reused}, parsed ${index.stats.parsed}, ${index.stats.ms}ms, unreadable ${index.unreadable.length})`
+        } folders (reused ${index.stats.reused}, parsed ${index.stats.parsed}, attachments re-checked ${index.stats.rescanned || 0}, ${index.stats.ms}ms, unreadable ${index.unreadable.length})`
       );
     } catch (err) {
       this.status = 'error';
@@ -297,7 +297,7 @@ class OfflineMailStore {
         bodyText: '',
         sha256: '',
         byteLength: e.size,
-        attachmentCount: e.hasAttachments ? 1 : 0,
+        attachmentCount: e.hasAttachments ? e.attachCount || 1 : 0,
         sourceRelPath: e.rel,
         dedupeKey: messageKey(e),
       }));
@@ -587,7 +587,8 @@ class OfflineMailStore {
         subject: e.subject,
         from: e.from,
         hasAttachments: e.hasAttachments,
-        size: e.size,
+        // Real attachment bytes when known (older caches: message size).
+        size: e.hasAttachments ? e.attachBytes || e.size : 0,
       };
     }
     const ents = r.ids.map((x) => this._byId.get(x)).filter(Boolean) as OfflineIndexEntry[];
@@ -596,7 +597,7 @@ class OfflineMailStore {
       subject: (ents[0] || r.entry).subject,
       from: senderName((ents[0] || r.entry).from),
       hasAttachments: ents.some((x) => x.hasAttachments),
-      size: ents.reduce((n, x) => n + (x.hasAttachments ? x.size || 0 : 0), 0),
+      size: ents.reduce((n, x) => n + (x.hasAttachments ? x.attachBytes || x.size || 0 : 0), 0),
     };
   }
 
