@@ -109,6 +109,8 @@ interface AISidebarState {
   /** Open-draft scope: "✍️ write with AI" mode and its conversation opt-in. */
   draftWriteMode: boolean;
   draftIncludeThread: boolean;
+  /** Earlier turns the next click sends as context (conversation memory). */
+  draftHistoryTurns: number;
   /** Write-with-AI previews: "replace the subject too" ticks, by message id. */
   composeSubjectTicks: { [msgId: string]: boolean };
   /** Bumped on local-drafts changes (apply/undo buttons). */
@@ -165,6 +167,7 @@ class AISidebarInner extends React.Component<Record<string, never>, AISidebarSta
     draftIncludeSubject: false,
     draftWriteMode: false,
     draftIncludeThread: false,
+    draftHistoryTurns: 0,
     composeSubjectTicks: {},
     draftsRev: 0,
     copiedId: null,
@@ -192,6 +195,7 @@ class AISidebarInner extends React.Component<Record<string, never>, AISidebarSta
         draftIncludeSubject: storeState.draftIncludeSubject,
         draftWriteMode: storeState.draftWriteMode,
         draftIncludeThread: storeState.draftIncludeThread,
+        draftHistoryTurns: storeState.draftHistoryTurns,
       });
     });
 
@@ -691,6 +695,7 @@ class AISidebarInner extends React.Component<Record<string, never>, AISidebarSta
     return (
       <div className="ai-draft-tools" dir={offlineDir()} data-ai-draft-tools="true">
         <div className="ai-draft-chips ai-draft-mode-row">{writeChip}</div>
+        {this._renderDraftConversationBar()}
         <div
           className="ai-draft-chips"
           role="group"
@@ -730,6 +735,62 @@ class AISidebarInner extends React.Component<Record<string, never>, AISidebarSta
     );
   }
 
+  /** Apply an AI answer and remember it in the draft conversation as "applied". */
+  _applyAi(
+    msgId: string,
+    draftId: string,
+    text: string,
+    how: 'replace' | 'append',
+    subject: string | null
+  ) {
+    if (offlineDraftsStore.applyAiText(draftId, text, how, { subject })) {
+      AISidebarStore.markDraftTurnApplied(msgId, how);
+    }
+  }
+
+  _undoAi() {
+    if (offlineDraftsStore.undoAi()) {
+      AISidebarStore.markDraftTurnUndone();
+    }
+  }
+
+  /** "Continues the conversation" indicator + 🆕 New conversation. */
+  _renderDraftConversationBar() {
+    const n = this.state.draftHistoryTurns;
+    return (
+      <div
+        className={classNames('ai-draft-conv', { active: n > 0 })}
+        data-ai-draft-conv={n}
+        role="status"
+      >
+        <span className="ai-draft-conv-text">
+          {n > 0
+            ? tr(
+                `🔗 ממשיך את השיחה: ${n} ${n === 1 ? 'בקשה קודמת ותשובה נשלחות' : 'בקשות ותשובות קודמות נשלחות'} כהקשר (עד 6 האחרונות). אפשר לבקש "קצר יותר", "בעברית" וכו׳.`,
+                `🔗 Continuing the conversation: ${n} earlier ${n === 1 ? 'request and answer are' : 'requests and answers are'} sent as context (last 6 at most). You can ask "shorter", "in Hebrew", etc.`
+              )
+            : tr(
+                'שיחה חדשה: הבקשה הבאה תתחיל בלי הקשר קודם.',
+                'New conversation: the next request starts without earlier context.'
+              )}
+        </span>
+        <button
+          type="button"
+          className="btn btn-small ai-draft-new-conv"
+          data-ai-draft-new-conv="true"
+          disabled={n === 0 || this.state.isProcessing}
+          title={tr(
+            'שוכח את הבקשות והתשובות הקודמות על הטיוטה הזו',
+            'Forgets the earlier requests and answers about this draft'
+          )}
+          onClick={() => AISidebarStore.resetDraftConversation()}
+        >
+          {tr('🆕 שיחה חדשה', '🆕 New conversation')}
+        </button>
+      </div>
+    );
+  }
+
   /** Write-with-AI panel: what will be sent, with the reply/forward disclosure. */
   _renderWriteTools(writeChip: React.ReactNode) {
     const { draftIncludeSubject, draftIncludeThread } = this.state;
@@ -744,6 +805,7 @@ class AISidebarInner extends React.Component<Record<string, never>, AISidebarSta
         data-ai-write-tools={kind}
       >
         <div className="ai-draft-chips ai-draft-mode-row">{writeChip}</div>
+        {this._renderDraftConversationBar()}
         <div className="ai-write-hint">
           {kind === 'reply'
             ? tr(
@@ -882,11 +944,7 @@ class AISidebarInner extends React.Component<Record<string, never>, AISidebarSta
                     'Writes the reply above the quote (the quote is kept). Can be undone.'
                   )
             }
-            onClick={() =>
-              offlineDraftsStore.applyAiText(dc.draftId, dc.body, 'replace', {
-                subject: subjectArg(),
-              })
-            }
+            onClick={() => this._applyAi(msg.id, dc.draftId, dc.body, 'replace', subjectArg())}
           >
             {tr('✅ החל על הטיוטה', '✅ Apply to draft')}
           </button>
@@ -895,11 +953,7 @@ class AISidebarInner extends React.Component<Record<string, never>, AISidebarSta
             className="btn btn-small"
             data-ai-compose-apply="append"
             disabled={!exists || this.state.isProcessing}
-            onClick={() =>
-              offlineDraftsStore.applyAiText(dc.draftId, dc.body, 'append', {
-                subject: subjectArg(),
-              })
-            }
+            onClick={() => this._applyAi(msg.id, dc.draftId, dc.body, 'append', subjectArg())}
           >
             {tr('➕ הוסף בסוף', '➕ Add at the end')}
           </button>
@@ -924,7 +978,7 @@ class AISidebarInner extends React.Component<Record<string, never>, AISidebarSta
               type="button"
               className="btn btn-small"
               data-ai-draft-undo="true"
-              onClick={() => offlineDraftsStore.undoAi()}
+              onClick={() => this._undoAi()}
             >
               {tr('↩️ בטל שינוי', '↩️ Undo change')}
             </button>
@@ -960,7 +1014,7 @@ class AISidebarInner extends React.Component<Record<string, never>, AISidebarSta
               'מחליף את הטקסט שלך בטיוטה (הציטוט נשמר). אפשר לבטל.',
               'Replaces your text in the draft (the quote is kept). Can be undone.'
             )}
-            onClick={() => offlineDraftsStore.applyAiText(da.draftId, da.text, 'replace')}
+            onClick={() => this._applyAi(msg.id, da.draftId, da.text, 'replace', null)}
           >
             {tr('✅ החל על הטיוטה', '✅ Apply to draft')}
           </button>
@@ -971,7 +1025,7 @@ class AISidebarInner extends React.Component<Record<string, never>, AISidebarSta
             className="btn btn-small"
             data-ai-draft-apply="append"
             disabled={!exists || this.state.isProcessing}
-            onClick={() => offlineDraftsStore.applyAiText(da.draftId, da.text, 'append')}
+            onClick={() => this._applyAi(msg.id, da.draftId, da.text, 'append', null)}
           >
             {tr('➕ הוסף בסוף', '➕ Add at the end')}
           </button>
@@ -997,7 +1051,7 @@ class AISidebarInner extends React.Component<Record<string, never>, AISidebarSta
             type="button"
             className="btn btn-small"
             data-ai-draft-undo="true"
-            onClick={() => offlineDraftsStore.undoAi()}
+            onClick={() => this._undoAi()}
           >
             {tr('↩️ בטל שינוי', '↩️ Undo change')}
           </button>
@@ -1011,6 +1065,12 @@ class AISidebarInner extends React.Component<Record<string, never>, AISidebarSta
 
   _writePlaceholder(): string {
     const d = offlineDraftsStore.showing ? offlineDraftsStore.open : null;
+    if (this.state.draftHistoryTurns > 0) {
+      return tr(
+        '🔗 המשך לשפר את התשובה האחרונה, למשל: "קצר יותר", "תתייחס לתוכן המייל", "בעברית" (Enter לכתיבה)',
+        '🔗 Keep refining the last answer, e.g. "shorter", "refer to the mail content", "in Hebrew" (Enter to write)'
+      );
+    }
     if (d && d.kind === 'reply') {
       return tr(
         '✍️ מה לענות? למשל: "תענה שאני מסכים אבל רק ביום שלישי" (Enter לכתיבה)',
@@ -1333,7 +1393,8 @@ class AISidebarInner extends React.Component<Record<string, never>, AISidebarSta
         className={classNames('message', {
           'message-user': isUser,
           'message-assistant': msg.role === 'assistant',
-          'message-error': isError,
+          'message-error': isError && !msg.notice,
+          'message-notice': isError && !!msg.notice,
           'message-mock': msg.isMock,
         })}
       >

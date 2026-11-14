@@ -62,10 +62,19 @@ export function proofreadDraftViaIpc(
 }
 
 /** The only fields the open-draft assist ever sends (see buildDraftAssistRequest). */
+/** One earlier turn of the same draft conversation (sent only on click). */
+export interface DraftHistoryIpcTurn {
+  instruction: string;
+  output: string;
+  subject?: string;
+  applied?: 'replace' | 'append' | null;
+}
+
 export interface DraftAssistIpcRequest {
   request: string;
   draftText: string;
   draftSubject?: string;
+  draftHistory?: DraftHistoryIpcTurn[];
 }
 
 /**
@@ -87,6 +96,9 @@ export function draftAssistViaIpc(
   if (typeof req.draftSubject === 'string') {
     payload.draftSubject = req.draftSubject;
   }
+  if (Array.isArray(req.draftHistory) && req.draftHistory.length) {
+    payload.draftHistory = req.draftHistory;
+  }
   return ipcRenderer.invoke(GEMINI_IPC_QUERY, payload);
 }
 
@@ -97,6 +109,7 @@ export interface DraftComposeIpcRequest {
   draftSubject?: string;
   composeKind: 'new' | 'reply' | 'forward';
   composeContext?: string;
+  draftHistory?: DraftHistoryIpcTurn[];
 }
 
 /**
@@ -119,6 +132,9 @@ export function draftComposeViaIpc(
   };
   if (typeof req.draftSubject === 'string') {
     payload.draftSubject = req.draftSubject;
+  }
+  if (Array.isArray(req.draftHistory) && req.draftHistory.length) {
+    payload.draftHistory = req.draftHistory;
   }
   if (typeof req.composeContext === 'string') {
     payload.composeContext = req.composeContext;

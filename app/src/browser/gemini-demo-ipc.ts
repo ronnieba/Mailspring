@@ -9,6 +9,7 @@ import { IpcMain } from 'electron';
 import { handleFromMailspringWindows } from './trusted-ipc';
 import {
   sanitizeGeminiScopeFacts,
+  sanitizeDraftHistory,
   GEMINI_IPC_CANCEL,
   GEMINI_IPC_QUERY,
   GEMINI_IPC_STATUS,
@@ -145,6 +146,9 @@ function parseQuery(raw: unknown): GeminiDemoQueryInput {
             r.composeKind === 'reply' || r.composeKind === 'forward' ? r.composeKind : 'new',
           ...(typeof r.composeContext === 'string' ? { composeContext: r.composeContext } : {}),
         }
+      : {}),
+    ...(draftAssist && sanitizeDraftHistory(r.draftHistory)
+      ? { draftHistory: sanitizeDraftHistory(r.draftHistory) }
       : {}),
   };
 }

@@ -52,6 +52,12 @@ powershell -NoProfile -ExecutionPolicy Bypass -File scripts\start-offline-archiv
   explicit "Write" click; preview first; Apply / Add at end / Copy; the
   subject changes only when empty or ticked; one-step undo restores body and
   subject. Usage is logged as `offline-draft-compose`.
+- Draft conversation memory (write with AI and draft help): follow-ups such as
+  "shorter", "refer to the mail", "in Hebrew" are sent with the earlier
+  instructions and Gemini answers about the same draft (marked applied or
+  not), last 6 turns / 16,000 characters, plus the current draft text. Kept in
+  memory only; "🆕 New conversation", "Clear chat" or opening another draft
+  resets it. A "🔗 continuing" bar shows when context will be sent.
 
 ## Gemini on Windows
 

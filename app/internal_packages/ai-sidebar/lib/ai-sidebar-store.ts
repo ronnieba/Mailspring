@@ -82,6 +82,8 @@ import {
   OFFLINE_ARCHIVE_SCOPE_REASON,
   REAL_SELECTED_SCOPE_REASON,
   unconfiguredGeminiStatus,
+  sanitizeDraftHistory,
+  DraftHistoryTurn,
 } from '../../../src/browser/gemini-demo-protocol';
 
 function isExplicitSelectedSurface(): boolean {
@@ -140,6 +142,8 @@ interface AISidebarState {
   draftIncludeSubject: boolean;
   /** Open-draft scope: "✍️ write with AI" (on for an empty / near-empty draft). */
   draftWriteMode: boolean;
+  /** Earlier turns about the open draft that the next click sends as context. */
+  draftHistoryTurns: number;
   /** Write with AI on a reply/forward: send the whole conversation, not just the original. */
   draftIncludeThread: boolean;
 }
@@ -189,7 +193,19 @@ class AISidebarStore extends MailspringStore {
     draftIncludeSubject: false,
     draftWriteMode: false,
     draftIncludeThread: false,
+    draftHistoryTurns: 0,
   };
+  /**
+   * Draft conversation memory (in memory only): the instructions and Gemini
+   * answers about ONE draft, sent back as context on the next explicit click.
+   * Reset by "New conversation", "Clear chat", or opening another draft.
+   */
+  private _draftConv: {
+    draftId: string | null;
+    turns: Array<DraftHistoryTurn & { msgId: string }>;
+  } = { draftId: null, turns: [] };
+  private _lastAppliedMsgId: string | null = null;
+  private _draftMsgSeq = 0;
   private _draftAssistTransport: DraftAssistTransport = draftAssistViaIpc;
   private _draftComposeTransport: DraftComposeTransport = draftComposeViaIpc;
   private _composeSources: ComposeSourceLoader = defaultComposeSources;
@@ -261,6 +277,72 @@ class AISidebarStore extends MailspringStore {
     }
   }
 
+  /** What the next click sends as conversation history for this draft. */
+  draftHistoryFor(draftId: string): DraftHistoryTurn[] | undefined {
+    if (this._draftConv.draftId !== draftId || !this._draftConv.turns.length) {
+      return undefined;
+    }
+    return sanitizeDraftHistory(
+      this._draftConv.turns.map(({ instruction, output, subject, applied }) => ({
+        instruction,
+        output,
+        ...(subject ? { subject } : {}),
+        applied: applied || null,
+      }))
+    );
+  }
+
+  private _recordDraftTurn(draftId: string, msgId: string, turn: DraftHistoryTurn) {
+    if (this._draftConv.draftId !== draftId) {
+      this._draftConv = { draftId, turns: [] };
+    }
+    this._draftConv.turns.push({ ...turn, applied: null, msgId });
+    // Memory stays small; the request itself is capped again (6 turns / 16k chars).
+    if (this._draftConv.turns.length > 12) {
+      this._draftConv.turns.shift();
+    }
+    this._state.draftHistoryTurns = this._draftConv.turns.length;
+  }
+
+  /** The panel's Apply / Add at end buttons: remember which answer is in the draft. */
+  markDraftTurnApplied(msgId: string, how: 'replace' | 'append') {
+    const t = this._draftConv.turns.find((x) => x.msgId === msgId);
+    if (t) {
+      t.applied = how;
+      this._lastAppliedMsgId = msgId;
+    }
+  }
+
+  /** Undo of the last AI change: that answer is no longer in the draft. */
+  markDraftTurnUndone() {
+    const t = this._draftConv.turns.find((x) => x.msgId === this._lastAppliedMsgId);
+    if (t) {
+      t.applied = null;
+    }
+    this._lastAppliedMsgId = null;
+  }
+
+  /** "🆕 New conversation": the next request starts without earlier turns. */
+  resetDraftConversation(announce = true) {
+    const had = this._draftConv.turns.length > 0;
+    this._draftConv = { draftId: null, turns: [] };
+    this._lastAppliedMsgId = null;
+    this._state.draftHistoryTurns = 0;
+    if (announce && had) {
+      this._state.conversation.push({
+        id: `system-newconv-${Date.now()}`,
+        notice: true,
+        role: 'system',
+        content: tr(
+          '🆕 שיחה חדשה - הבקשה הבאה תישלח בלי הבקשות והתשובות הקודמות.',
+          '🆕 New conversation - the next request is sent without the earlier requests and answers.'
+        ),
+        timestamp: new Date(),
+      });
+    }
+    this.trigger();
+  }
+
   setDraftWriteMode(on: boolean) {
     this._state.draftWriteMode = !!on;
     this.trigger();
@@ -299,6 +381,25 @@ class AISidebarStore extends MailspringStore {
       const open = offlineDraftsStore.open;
       this._state.draftWriteMode = !!open && isNearEmptyDraft(open.body);
       this._state.draftIncludeThread = false;
+      // Another draft: its conversation starts fresh.
+      if (this._draftConv.draftId && this._draftConv.draftId !== openDraftId) {
+        const had = this._draftConv.turns.length > 0;
+        this._draftConv = { draftId: null, turns: [] };
+        this._lastAppliedMsgId = null;
+        this._state.draftHistoryTurns = 0;
+        if (had) {
+          this._state.conversation.push({
+            id: `system-newconv-${Date.now()}`,
+            notice: true,
+            role: 'system',
+            content: tr(
+              '🆕 נפתחה טיוטה אחרת - שיחה חדשה (בלי ההקשר של הטיוטה הקודמת).',
+              '🆕 Another draft was opened - new conversation (without the previous draft context).'
+            ),
+            timestamp: new Date(),
+          });
+        }
+      }
       if (this._state.scopeMode !== 'open-draft') {
         this._scopeBeforeDraft = this._state.scopeMode;
         await this.setScopeMode('open-draft');
@@ -836,7 +937,9 @@ class AISidebarStore extends MailspringStore {
     }
     this._state.progressPhase = 'gemini';
     this.trigger();
-    const result = await this._draftAssistTransport(startedGeneration, built.req);
+    const history = this.draftHistoryFor(d.id);
+    const req = history ? { ...built.req, draftHistory: history } : built.req;
+    const result = await this._draftAssistTransport(startedGeneration, req);
     if (!stillCurrent()) {
       return;
     }
@@ -863,9 +966,13 @@ class AISidebarStore extends MailspringStore {
           (built.req.draftSubject ? ' and the subject' : '') +
           (quoted ? ', without the quote' : '') +
           ', no recipients.'
-      ) + tokens;
+      ) +
+      this._historyNote(history) +
+      tokens;
+    const msgId = `assistant-draft-${Date.now()}-${++this._draftMsgSeq}`;
+    this._recordDraftTurn(d.id, msgId, { instruction: query, output: text });
     this._state.conversation.push({
-      id: `assistant-${Date.now()}`,
+      id: msgId,
       role: 'assistant',
       content: `${text}\n\n---\n${note}`,
       citations: [],
@@ -873,6 +980,16 @@ class AISidebarStore extends MailspringStore {
       isMock: false,
       draftAssist: { draftId: d.id, kind, text },
     });
+  }
+
+  private _historyNote(history: DraftHistoryTurn[] | undefined): string {
+    if (!history || !history.length) {
+      return '';
+    }
+    return tr(
+      ` 🔗 המשך שיחה: נשלחו גם ${history.length} בקשות ותשובות קודמות על הטיוטה הזו.`,
+      ` 🔗 Follow-up: ${history.length} earlier requests and answers about this draft were sent too.`
+    );
   }
 
   /**
@@ -957,7 +1074,9 @@ class AISidebarStore extends MailspringStore {
     }
     this._state.progressPhase = 'gemini';
     this.trigger();
-    const result = await this._draftComposeTransport(startedGeneration, built.req);
+    const history = this.draftHistoryFor(d.id);
+    const req = history ? { ...built.req, draftHistory: history } : built.req;
+    const result = await this._draftComposeTransport(startedGeneration, req);
     if (!stillCurrent()) {
       return;
     }
@@ -1023,9 +1142,16 @@ class AISidebarStore extends MailspringStore {
             ' ⚠️ The original message was not found in the copy, so this was written without it.'
           )
         : '') +
+      this._historyNote(history) +
       tokens;
+    const msgId = `assistant-draft-${Date.now()}-${++this._draftMsgSeq}`;
+    this._recordDraftTurn(d.id, msgId, {
+      instruction: query,
+      output: clean.body,
+      ...(clean.subject ? { subject: clean.subject } : {}),
+    });
     this._state.conversation.push({
-      id: `assistant-${Date.now()}`,
+      id: msgId,
       role: 'assistant',
       content: note,
       citations: [],
@@ -1253,6 +1379,9 @@ class AISidebarStore extends MailspringStore {
    */
   clearConversation() {
     this.cancel();
+    this._draftConv = { draftId: null, turns: [] };
+    this._lastAppliedMsgId = null;
+    this._state.draftHistoryTurns = 0;
     this._state.conversation = [];
     this._state.error = null;
     this._state.progress = null;

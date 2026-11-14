@@ -6,6 +6,16 @@
  */
 import { Actions, WorkspaceStore } from 'mailspring-exports';
 import AISidebarStore from '../ai-sidebar-store';
+import { offlineDraftsStore } from './offline-drafts-store';
+
+/** Undo of the last AI change from the draft editor (keeps the AI conversation in sync). */
+export function undoAiChange(): boolean {
+  if (offlineDraftsStore.undoAi()) {
+    AISidebarStore.markDraftTurnUndone();
+    return true;
+  }
+  return false;
+}
 
 export function startWriteWithAi(): void {
   const loc = WorkspaceStore.Location.MessageListSidebar;

@@ -23,6 +23,10 @@ import {
   GEMINI_DRAFT_ASSIST_RESPONSE_FORMAT,
   GEMINI_OFFLINE_DRAFT_ASSIST_SYSTEM_INSTRUCTION,
   GEMINI_DRAFT_COMPOSE_RESPONSE_FORMAT,
+  DRAFT_HISTORY_MAX_TURNS,
+  DRAFT_HISTORY_MAX_OUTPUT_CHARS,
+  DRAFT_HISTORY_MAX_CHARS,
+  draftHistoryChars,
   GEMINI_OFFLINE_DRAFT_COMPOSE_SYSTEM_INSTRUCTION,
   OFFLINE_DRAFT_COMPOSE_MAX_CONTEXT_CHARS,
   OFFLINE_DRAFT_COMPOSE_REASON,
@@ -547,9 +551,42 @@ export function admitOfflineProofreadQuery(req: GeminiDemoQueryInput): GeminiHos
 }
 
 /** Open-draft assist: the user's request + one draft text, no mail at all. */
+/** Earlier turns: optional, bounded, plain strings only. */
+export function draftHistoryAdmissible(h: unknown): boolean {
+  if (h === undefined) {
+    return true;
+  }
+  if (!Array.isArray(h) || h.length === 0 || h.length > DRAFT_HISTORY_MAX_TURNS) {
+    return false;
+  }
+  for (const t of h) {
+    if (
+      !t ||
+      typeof t !== 'object' ||
+      typeof t.instruction !== 'string' ||
+      typeof t.output !== 'string' ||
+      t.instruction.length > OFFLINE_DRAFT_ASSIST_MAX_REQUEST_CHARS ||
+      t.output.length > DRAFT_HISTORY_MAX_OUTPUT_CHARS ||
+      (t.subject !== undefined &&
+        (typeof t.subject !== 'string' ||
+          t.subject.length > OFFLINE_DRAFT_ASSIST_MAX_SUBJECT_CHARS)) ||
+      (t.applied !== undefined &&
+        t.applied !== null &&
+        t.applied !== 'replace' &&
+        t.applied !== 'append')
+    ) {
+      return false;
+    }
+  }
+  return draftHistoryChars(h) <= DRAFT_HISTORY_MAX_CHARS;
+}
+
 export function admitOfflineDraftAssistQuery(req: GeminiDemoQueryInput): GeminiHostFailure | null {
   const no = () => fail('offline-archive-scope', OFFLINE_DRAFT_ASSIST_REASON);
   if (req.mode !== 'offline-draft-assist') {
+    return no();
+  }
+  if (!draftHistoryAdmissible(req.draftHistory)) {
     return no();
   }
   if (!Array.isArray(req.messages) || req.messages.length !== 0) {
@@ -589,6 +626,9 @@ export function admitOfflineDraftAssistQuery(req: GeminiDemoQueryInput): GeminiH
 export function admitOfflineDraftComposeQuery(req: GeminiDemoQueryInput): GeminiHostFailure | null {
   const no = () => fail('offline-archive-scope', OFFLINE_DRAFT_COMPOSE_REASON);
   if (req.mode !== 'offline-draft-compose') {
+    return no();
+  }
+  if (!draftHistoryAdmissible(req.draftHistory)) {
     return no();
   }
   if (!Array.isArray(req.messages) || req.messages.length !== 0) {
@@ -797,10 +837,16 @@ export async function runGeminiDemoQuery(
             req.composeKind || 'new',
             req.draftText || '',
             req.draftSubject,
-            req.composeContext
+            req.composeContext,
+            req.draftHistory
           )
         : offlineDraftAssist
-          ? buildDraftAssistInput(req.query, req.draftText || '', req.draftSubject)
+          ? buildDraftAssistInput(
+              req.query,
+              req.draftText || '',
+              req.draftSubject,
+              req.draftHistory
+            )
           : offlineProofread
             ? buildProofreadInput(req.query)
             : buildUntrustedGeminiInput(req.query, req.messages, {

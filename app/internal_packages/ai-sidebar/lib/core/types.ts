@@ -108,6 +108,8 @@ export interface ConversationMessage {
   geminiErrorKind?: string;
   /** Open-draft scope: the answer can be applied to this draft. */
   draftAssist?: { draftId: string; kind: 'rewrite' | 'answer'; text: string };
+  /** Informational system line (not an error), e.g. "new conversation". */
+  notice?: boolean;
   /** Write with AI: a preview of the written mail; nothing changes until "Apply". */
   draftCompose?: {
     draftId: string;

@@ -1341,6 +1341,38 @@ body.ofl-lang-en .ai-sidebar {
     color: var(--text-color-subtle);
   }
 }
+.ai-sidebar .ai-draft-conv {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin: 0 0 6px;
+  padding: 4px 8px;
+  border-radius: 6px;
+  font-size: 11px;
+  color: var(--text-color-subtle);
+  border: 1px dashed var(--border-color-divider);
+  .ai-draft-conv-text {
+    flex: 1;
+    line-height: 1.4;
+  }
+  .ai-draft-new-conv {
+    font-size: 11px;
+    white-space: nowrap;
+  }
+  &.active {
+    color: var(--text-color);
+    border-style: solid;
+    border-color: var(--color-primary, #1a73e8);
+    background: rgba(26, 115, 232, 0.08);
+  }
+}
+.ai-sidebar .message.message-notice {
+  background: transparent;
+  border: 1px dashed var(--border-color-divider);
+  color: var(--text-color-subtle);
+  font-size: 12px;
+  text-align: center;
+}
 .ai-sidebar .message-content.ai-compose-note {
   font-size: 11px;
   opacity: 0.85;

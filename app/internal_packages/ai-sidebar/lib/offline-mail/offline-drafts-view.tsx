@@ -25,7 +25,7 @@ import { chooseFilesToAttach, droppedFilePaths, openWithDefaultApp } from './off
 import { draftAttachmentPath } from '../core/offline-attachments';
 import { ProofSegment } from '../core/text-diff';
 import { offlineDateLocale, offlineDir, tr } from '../core/offline-i18n';
-import { startWriteWithAi } from './write-with-ai';
+import { startWriteWithAi, undoAiChange } from './write-with-ai';
 
 class DraftsComponent<P = Record<string, never>, S = Record<string, never>> extends React.Component<
   P,
@@ -577,7 +577,7 @@ export class OfflineDraftEditor extends DraftsComponent<Record<string, never>, E
               <button
                 className="btn btn-small"
                 data-offline-ai-undo="true"
-                onClick={() => s.undoAi()}
+                onClick={() => undoAiChange()}
               >
                 {tr('↩️ בטל', '↩️ Undo')}
               </button>
