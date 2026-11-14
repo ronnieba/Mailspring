@@ -24,12 +24,22 @@ export const WHISPER_MODEL_PREFERENCE = [
   'ggml-base.bin',
 ];
 
+/** Model order for the GPU (CUDA) build: the bigger, more accurate turbo model first. */
+export const WHISPER_GPU_MODEL_PREFERENCE = [
+  'ggml-large-v3-turbo-q5_0.bin',
+  'ggml-large-v3-turbo-q8_0.bin',
+  'ggml-large-v3-turbo.bin',
+  ...WHISPER_MODEL_PREFERENCE.filter((n) => !n.includes('turbo')),
+];
+
 export type WhisperSetup = {
   dir: string;
   cli: string;
   model: string;
   modelName: string;
   modelBytes: number;
+  /** CUDA build (bin-cuda); falls back to the CPU build if it fails. */
+  gpu: boolean;
 };
 
 /** Folders where the local Whisper may be (first existing wins). */
@@ -58,26 +68,39 @@ function isFile(p: string): boolean {
   }
 }
 
-/** The whisper-cli and model in `dir`, or null. voice.json {"model": "..."} picks the model. */
+function readVoiceJson(dir: string): any {
+  try {
+    const j = JSON.parse(fs.readFileSync(path.join(dir, 'voice.json'), 'utf8'));
+    return j && typeof j === 'object' ? j : {};
+  } catch {
+    return {};
+  }
+}
+
+/**
+ * The whisper-cli and model in `dir`, or null. CPU build in bin/, CUDA build
+ * in bin-cuda/ (opts.gpu). voice.json {"model": "...", "gpuModel": "...",
+ * "gpu": false} picks the models / turns the GPU off.
+ */
 export function findWhisperIn(
   dir: string,
-  platform: string = process.platform
+  platform: string = process.platform,
+  opts: { gpu?: boolean } = {}
 ): WhisperSetup | null {
   const exe = platform === 'win32' ? 'whisper-cli.exe' : 'whisper-cli';
+  const bin = opts.gpu ? 'bin-cuda' : 'bin';
+  const conf = readVoiceJson(dir);
+  if (opts.gpu && conf.gpu === false) return null;
   const cli = [
-    path.join(dir, 'bin', 'Release', exe),
-    path.join(dir, 'bin', exe),
-    path.join(dir, exe),
+    path.join(dir, bin, 'Release', exe),
+    path.join(dir, bin, exe),
+    ...(opts.gpu ? [] : [path.join(dir, exe)]),
   ].find(isFile);
   if (!cli) return null;
   const models = path.join(dir, 'models');
-  let wanted: string | null = null;
-  try {
-    const j = JSON.parse(fs.readFileSync(path.join(dir, 'voice.json'), 'utf8'));
-    if (j && typeof j.model === 'string' && /^[\w.-]+\.bin$/.test(j.model)) wanted = j.model;
-  } catch {
-    wanted = null;
-  }
+  const key = opts.gpu ? 'gpuModel' : 'model';
+  const wanted: string | null =
+    typeof conf[key] === 'string' && /^[\w.-]+\.bin$/.test(conf[key]) ? conf[key] : null;
   let names: string[] = [];
   try {
     names = fs.readdirSync(models).filter((n) => /^ggml-[\w.-]+\.bin$/.test(n));
@@ -86,7 +109,9 @@ export function findWhisperIn(
   }
   const pick =
     (wanted && names.includes(wanted) && wanted) ||
-    WHISPER_MODEL_PREFERENCE.find((n) => names.includes(n)) ||
+    (opts.gpu ? WHISPER_GPU_MODEL_PREFERENCE : WHISPER_MODEL_PREFERENCE).find((n) =>
+      names.includes(n)
+    ) ||
     names.sort()[0];
   if (!pick) return null;
   const model = path.join(models, pick);
@@ -96,15 +121,38 @@ export function findWhisperIn(
   } catch {
     return null;
   }
-  return { dir, cli, model, modelName: pick.replace(/^ggml-|\.bin$/g, ''), modelBytes };
+  return {
+    dir,
+    cli,
+    model,
+    modelName: pick.replace(/^ggml-|\.bin$/g, ''),
+    modelBytes,
+    gpu: !!opts.gpu,
+  };
 }
 
-export function findWhisper(dirs: string[] = whisperDirCandidates()): WhisperSetup | null {
+/** GPU (CUDA) and CPU setups from the first folder that has either. */
+export function findWhisperSetups(dirs: string[] = whisperDirCandidates()): {
+  gpu: WhisperSetup | null;
+  cpu: WhisperSetup | null;
+} {
   for (const d of dirs) {
-    const s = findWhisperIn(d);
-    if (s) return s;
+    const gpu = process.platform === 'win32' ? findWhisperIn(d, 'win32', { gpu: true }) : null;
+    const cpu = findWhisperIn(d);
+    if (gpu || cpu) return { gpu, cpu };
   }
-  return null;
+  return { gpu: null, cpu: null };
+}
+
+/** Preferred setup: the GPU build when present, else the CPU build. */
+export function findWhisper(dirs: string[] = whisperDirCandidates()): WhisperSetup | null {
+  const s = findWhisperSetups(dirs);
+  return s.gpu || s.cpu;
+}
+
+/** Did whisper-cli really run on the GPU (its log on stderr)? */
+export function whisperUsedGpu(stderr: string): boolean {
+  return /using CUDA\d* backend|CUDA\d+ total size/.test(String(stderr || ''));
 }
 
 /** 16-bit mono PCM WAV. */
@@ -245,6 +293,7 @@ export function whisperArgs(o: {
   lang: string;
   threads: number;
   longestSec: number;
+  gpu?: boolean;
 }): string[] {
   const a = [
     '-m',
@@ -254,11 +303,13 @@ export function whisperArgs(o: {
     '-t',
     String(Math.max(1, Math.min(32, o.threads))),
     '-nt',
-    '-np',
     '-oj',
   ];
+  // GPU runs keep the log on stderr: it is how a silent CPU run is detected (whisperUsedGpu).
+  if (!o.gpu) a.splice(a.indexOf('-nt') + 1, 0, '-np');
   // Short audio: a smaller audio context is much faster on CPU (the window is 30 s otherwise).
-  if (o.longestSec > 0 && o.longestSec < 14) a.push('-ac', '768');
+  // (The GPU is fast with the full context, which is a bit more accurate.)
+  if (!o.gpu && o.longestSec > 0 && o.longestSec < 14) a.push('-ac', '768');
   for (const f of o.files) a.push('-f', f);
   return a;
 }

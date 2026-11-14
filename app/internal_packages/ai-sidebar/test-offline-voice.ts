@@ -18,6 +18,8 @@ import {
   decodeWav,
   encodeWav16,
   findWhisperIn,
+  findWhisperSetups,
+  whisperUsedGpu,
   matchFolder,
   parseVoiceCommand,
   parseWhisperJson,
@@ -96,6 +98,71 @@ async function main() {
     fs.writeFileSync(path.join(dir, 'voice.json'), JSON.stringify({ model: '../../evil.bin' }));
     assert(findWhisperIn(dir, 'win32')!.modelName === 'medium-q5_0', 'no path tricks');
     fs.rmSync(dir, { recursive: true, force: true });
+  });
+
+  await test('GPU (CUDA) build preferred with the turbo model; CPU build keeps medium; GPU can be turned off', () => {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'ofl-whisper-gpu-'));
+    fs.mkdirSync(path.join(dir, 'bin', 'Release'), { recursive: true });
+    fs.mkdirSync(path.join(dir, 'models'));
+    fs.writeFileSync(path.join(dir, 'bin', 'Release', 'whisper-cli.exe'), 'x');
+    fs.writeFileSync(path.join(dir, 'models', 'ggml-medium-q5_0.bin'), 'xxx');
+    fs.writeFileSync(path.join(dir, 'models', 'ggml-large-v3-turbo-q5_0.bin'), 'xxxx');
+    assert(findWhisperIn(dir, 'win32', { gpu: true }) === null, 'no CUDA build yet');
+    fs.mkdirSync(path.join(dir, 'bin-cuda', 'Release'), { recursive: true });
+    fs.writeFileSync(path.join(dir, 'bin-cuda', 'Release', 'whisper-cli.exe'), 'x');
+    const g = findWhisperIn(dir, 'win32', { gpu: true })!;
+    const c = findWhisperIn(dir, 'win32')!;
+    assert(
+      g.gpu && g.modelName === 'large-v3-turbo-q5_0' && g.cli.includes('bin-cuda'),
+      JSON.stringify(g)
+    );
+    assert(
+      !c.gpu && c.modelName === 'medium-q5_0' && !c.cli.includes('bin-cuda'),
+      JSON.stringify(c)
+    );
+    fs.writeFileSync(
+      path.join(dir, 'voice.json'),
+      JSON.stringify({ model: 'ggml-medium-q5_0.bin', gpuModel: 'ggml-medium-q5_0.bin' })
+    );
+    assert(findWhisperIn(dir, 'win32', { gpu: true })!.modelName === 'medium-q5_0', 'gpuModel');
+    fs.writeFileSync(path.join(dir, 'voice.json'), JSON.stringify({ gpu: false }));
+    assert(findWhisperIn(dir, 'win32', { gpu: true }) === null, 'gpu off');
+    if (process.platform === 'win32') {
+      fs.writeFileSync(path.join(dir, 'voice.json'), '{}');
+      const both = findWhisperSetups([dir]);
+      assert(both.gpu && both.cpu, 'both');
+    }
+    assert(
+      whisperUsedGpu('whisper_backend_init_gpu: using CUDA0 backend') &&
+        whisperUsedGpu('whisper_model_load: CUDA0 total size = 573 MB'),
+      'gpu log'
+    );
+    assert(!whisperUsedGpu('whisper_backend_init: using CPU backend'), 'cpu log');
+    const a = whisperArgs({
+      model: 'm',
+      files: ['a.wav'],
+      lang: 'he',
+      threads: 4,
+      longestSec: 3,
+      gpu: true,
+    });
+    assert(!a.includes('-ac') && !a.includes('-np'), 'GPU keeps the full context and its log');
+    fs.rmSync(dir, { recursive: true, force: true });
+  });
+
+  await test('falls back to the CPU build when CUDA fails or quietly runs on the CPU', () => {
+    const v = read('lib/offline-mail/offline-voice.tsx');
+    assert(
+      /if \(!whisperUsedGpu\(log\)\) \{\s*gpuFailed = true;/.test(v),
+      'silent CPU run detected'
+    );
+    assert(
+      /catch \(err\) \{\s*gpuFailed = true;[\s\S]{0,400}const cpu = whisperSetup\(\);[\s\S]{0,300}await runCli\(cpu\.cli, args\(cpu\)\);/.test(
+        v
+      ),
+      'retry on CPU'
+    );
+    assert(/offlineVoiceHooks\.forceCpu \|\| gpuFailed/.test(v), 'GPU skipped after a failure');
   });
 
   await test('WAV: 16 kHz mono 16-bit out; stereo / 22 kHz in → 16 kHz mono', () => {

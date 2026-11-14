@@ -24,7 +24,8 @@ import {
   applySpokenPunctuation,
   decodeWav,
   encodeWav16,
-  findWhisper,
+  findWhisperSetups,
+  whisperUsedGpu,
   matchFolder,
   parseVoiceCommand,
   parseWhisperJson,
@@ -47,24 +48,51 @@ export type VoiceHud = null | {
 /** Tests can swap the microphone (fake stream) or watch runs. */
 export const offlineVoiceHooks: {
   getStream: (() => Promise<MediaStream>) | null;
-  lastRun: { ms: number; parts: number; langs: string[]; text: string; audioSec: number } | null;
+  lastRun: {
+    ms: number;
+    parts: number;
+    langs: string[];
+    text: string;
+    audioSec: number;
+    engine?: string;
+  } | null;
   runs: number;
-} = { getStream: null, lastRun: null, runs: 0 };
+  /** Tests / benchmarks: force the CPU build. */
+  forceCpu: boolean;
+} = { getStream: null, lastRun: null, runs: 0, forceCpu: false };
 
-let setupCache: WhisperSetup | null | undefined;
+let setupCache: { gpu: WhisperSetup | null; cpu: WhisperSetup | null } | undefined;
+/** Set when the CUDA build failed (or silently ran on the CPU) this session. */
+let gpuFailed = false;
 
-export function whisperSetup(refresh = false): WhisperSetup | null {
+function setups(refresh = false) {
   if (setupCache === undefined || refresh) {
     try {
-      setupCache = findWhisper();
+      setupCache = findWhisperSetups();
     } catch {
-      setupCache = null;
+      setupCache = { gpu: null, cpu: null };
     }
+    if (refresh) gpuFailed = false;
   }
   return setupCache;
 }
 
-function threads(): number {
+/** The setup used now: GPU (CUDA) build first, CPU build as the fallback. */
+export function whisperSetup(refresh = false): WhisperSetup | null {
+  const s = setups(refresh);
+  const noGpu =
+    offlineVoiceHooks.forceCpu || gpuFailed || process.env.MAILAI_WHISPER_NO_GPU === '1';
+  return (!noGpu && s.gpu) || s.cpu || (!noGpu ? null : s.gpu);
+}
+
+/** "medium-q5_0 · CPU" / "large-v3-turbo-q5_0 · GPU" */
+export function whisperEngineLabel(): string {
+  const s = whisperSetup();
+  return s ? `${s.modelName} · ${s.gpu ? 'GPU' : 'CPU'}` : '';
+}
+
+function threads(gpu = false): number {
+  if (gpu) return 4;
   const n = (os.cpus() || []).length || 4;
   return Math.max(2, Math.min(16, Math.floor(n * 0.66)));
 }
@@ -73,17 +101,60 @@ function uiLangCode(): string {
   return offlineLang() === 'en' ? 'en' : 'he';
 }
 
-function runCli(cli: string, args: string[]): Promise<void> {
+function runCli(cli: string, args: string[]): Promise<string> {
   // eslint-disable-next-line @typescript-eslint/no-var-requires
   const cp = require('child_process');
   return new Promise((resolve, reject) => {
     cp.execFile(
       cli,
       args,
-      { windowsHide: true, timeout: 120000, maxBuffer: 8 * 1024 * 1024 },
-      (err: any) => (err ? reject(err) : resolve())
+      { windowsHide: true, timeout: 120000, maxBuffer: 16 * 1024 * 1024 },
+      (err: any, _out: string, errOut: string) =>
+        err ? reject(err) : resolve(String(errOut || ''))
     );
   });
+}
+
+/**
+ * One whisper-cli run with the preferred setup. If the CUDA build fails
+ * (missing driver/DLLs, out of memory…) or quietly ran on the CPU, the GPU is
+ * skipped for the rest of the session and the CPU build is used.
+ */
+async function runWhisper(
+  files: string[],
+  lang: string,
+  longestSec: number
+): Promise<WhisperSetup> {
+  const setup = whisperSetup();
+  if (!setup) throw new Error('whisper-missing');
+  const args = (s: WhisperSetup) =>
+    whisperArgs({ model: s.model, files, lang, threads: threads(s.gpu), longestSec, gpu: s.gpu });
+  if (!setup.gpu) {
+    await runCli(setup.cli, args(setup));
+    return setup;
+  }
+  try {
+    const log = await runCli(setup.cli, args(setup));
+    if (!whisperUsedGpu(log)) {
+      gpuFailed = true;
+      console.warn(
+        '[Offline voice] CUDA build ran without the GPU; using the CPU build from now on'
+      );
+    }
+    return setup;
+  } catch (err) {
+    gpuFailed = true;
+    console.warn(
+      '[Offline voice] CUDA build failed; falling back to the CPU build',
+      (err as any)?.code
+    );
+    const cpu = whisperSetup();
+    if (!cpu || cpu.gpu) throw err;
+    for (const f of files)
+      for (const p of whisperJsonPathCandidates(f)) fs.rmSync(p, { force: true });
+    await runCli(cpu.cli, args(cpu));
+    return cpu;
+  }
 }
 
 function readJsonFor(wav: string): { text: string; lang: string } {
@@ -104,9 +175,8 @@ function readJsonFor(wav: string): { text: string; lang: string } {
 export async function transcribeSamples(
   samples: Float32Array,
   opts: { lang?: string; split?: boolean } = {}
-): Promise<{ text: string; langs: string[]; ms: number; parts: number }> {
-  const setup = whisperSetup();
-  if (!setup) throw new Error('whisper-missing');
+): Promise<{ text: string; langs: string[]; ms: number; parts: number; engine?: string }> {
+  if (!whisperSetup()) throw new Error('whisper-missing');
   const t0 = Date.now();
   const ranges =
     opts.split === false ? [[0, samples.length] as [number, number]] : splitOnSilence(samples);
@@ -120,10 +190,7 @@ export async function transcribeSamples(
     });
     const longest = Math.max(...ranges.map(([a, b]) => (b - a) / VOICE_SAMPLE_RATE));
     const lang = opts.lang || 'auto';
-    await runCli(
-      setup.cli,
-      whisperArgs({ model: setup.model, files, lang, threads: threads(), longestSec: longest })
-    );
+    const used = await runWhisper(files, lang, longest);
     const out = files.map(readJsonFor);
     if (lang === 'auto') {
       const redo = files.filter((_, i) => out[i].text && !acceptDetectedLang(out[i].lang));
@@ -131,16 +198,7 @@ export async function transcribeSamples(
         for (const f of redo)
           for (const p of whisperJsonPathCandidates(f)) fs.rmSync(p, { force: true });
         const fb = uiLangCode();
-        await runCli(
-          setup.cli,
-          whisperArgs({
-            model: setup.model,
-            files: redo,
-            lang: fb,
-            threads: threads(),
-            longestSec: longest,
-          })
-        );
+        await runWhisper(redo, fb, longest);
         files.forEach((f, i) => {
           if (redo.includes(f)) out[i] = { ...readJsonFor(f), lang: fb };
         });
@@ -151,7 +209,13 @@ export async function transcribeSamples(
       .filter(Boolean)
       .join(' ')
       .trim();
-    return { text, langs: out.map((o) => o.lang), ms: Date.now() - t0, parts: files.length };
+    return {
+      text,
+      langs: out.map((o) => o.lang),
+      ms: Date.now() - t0,
+      parts: files.length,
+      engine: `${used.modelName} · ${used.gpu ? 'GPU' : 'CPU'}`,
+    };
   } finally {
     fs.rmSync(dir, { recursive: true, force: true });
   }
@@ -354,10 +418,13 @@ class OfflineVoice {
       mute.connect(ctx.destination);
       this.state = 'recording';
       this.startedAt = Date.now();
-      this._partialTimer = setInterval(() => {
-        this._emit();
-        void this._partialTick();
-      }, 2500);
+      this._partialTimer = setInterval(
+        () => {
+          this._emit();
+          void this._partialTick();
+        },
+        whisperSetup()?.gpu ? 1200 : 2500
+      );
       this._maxTimer = setTimeout(() => void this.stop(), VOICE_MAX_SECONDS * 1000);
       this._emit();
     } catch (err) {
@@ -469,7 +536,7 @@ class OfflineVoice {
       // Wait for a live-text run to finish (one whisper at a time).
       for (let i = 0; i < 100 && this._partialBusy; i++)
         await new Promise((r) => setTimeout(r, 50));
-      let r: { text: string; langs: string[]; ms: number; parts: number };
+      let r: { text: string; langs: string[]; ms: number; parts: number; engine?: string };
       let cmd: VoiceCommand | null = null;
       if (mode === 'command') {
         // Commands are short and in Hebrew or English: the UI language first
@@ -500,6 +567,7 @@ class OfflineVoice {
         langs: r.langs,
         text: r.text,
         audioSec: Math.round(audioSec * 10) / 10,
+        engine: r.engine,
       };
       if (this._cancelled) return;
       this.state = 'idle';
@@ -518,7 +586,7 @@ class OfflineVoice {
           {
             kind: 'ok',
             text: tr('✓ נוסף', '✓ Added'),
-            detail: `${(r.ms / 1000).toFixed(1)}s · ${whisperSetup()?.modelName || ''}`,
+            detail: `${(r.ms / 1000).toFixed(1)}s · ${r.engine || whisperEngineLabel()}`,
           },
           2200
         );
@@ -972,7 +1040,7 @@ export class OfflineVoiceHud extends React.Component<Record<string, never>, { ti
         ) : null}
         <div className="offline-voice-hud-detail">
           {tr('ההקלטה נשארת במחשב (Whisper מקומי)', 'The audio stays on this PC (local Whisper)')}
-          {whisperSetup() ? ` · ${whisperSetup()!.modelName}` : ''}
+          {whisperSetup() ? ` · ${whisperEngineLabel()}` : ''}
         </div>
       </div>
     );
