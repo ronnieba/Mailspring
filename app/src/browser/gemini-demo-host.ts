@@ -22,6 +22,11 @@ import {
   buildProofreadInput,
   GEMINI_DRAFT_ASSIST_RESPONSE_FORMAT,
   GEMINI_OFFLINE_DRAFT_ASSIST_SYSTEM_INSTRUCTION,
+  GEMINI_DRAFT_COMPOSE_RESPONSE_FORMAT,
+  GEMINI_OFFLINE_DRAFT_COMPOSE_SYSTEM_INSTRUCTION,
+  OFFLINE_DRAFT_COMPOSE_MAX_CONTEXT_CHARS,
+  OFFLINE_DRAFT_COMPOSE_REASON,
+  buildDraftComposeInput,
   OFFLINE_DRAFT_ASSIST_MAX_CHARS,
   OFFLINE_DRAFT_ASSIST_MAX_REQUEST_CHARS,
   OFFLINE_DRAFT_ASSIST_MAX_SUBJECT_CHARS,
@@ -577,6 +582,54 @@ export function admitOfflineDraftAssistQuery(req: GeminiDemoQueryInput): GeminiH
   return null;
 }
 
+/**
+ * Write with AI: instruction + the draft's own text (may be empty) + subject
+ * (optional) + for reply/forward the original as plain text. No mail refs.
+ */
+export function admitOfflineDraftComposeQuery(req: GeminiDemoQueryInput): GeminiHostFailure | null {
+  const no = () => fail('offline-archive-scope', OFFLINE_DRAFT_COMPOSE_REASON);
+  if (req.mode !== 'offline-draft-compose') {
+    return no();
+  }
+  if (!Array.isArray(req.messages) || req.messages.length !== 0) {
+    return no();
+  }
+  if (
+    typeof req.query !== 'string' ||
+    !req.query.trim() ||
+    req.query.length > OFFLINE_DRAFT_ASSIST_MAX_REQUEST_CHARS
+  ) {
+    return no();
+  }
+  if (typeof req.draftText !== 'string' || req.draftText.length > OFFLINE_DRAFT_ASSIST_MAX_CHARS) {
+    return no();
+  }
+  if (
+    req.draftSubject !== undefined &&
+    (typeof req.draftSubject !== 'string' ||
+      req.draftSubject.length > OFFLINE_DRAFT_ASSIST_MAX_SUBJECT_CHARS)
+  ) {
+    return no();
+  }
+  const kind = req.composeKind;
+  if (kind !== 'new' && kind !== 'reply' && kind !== 'forward') {
+    return no();
+  }
+  if (req.composeContext !== undefined) {
+    if (
+      kind === 'new' ||
+      typeof req.composeContext !== 'string' ||
+      req.composeContext.length > OFFLINE_DRAFT_COMPOSE_MAX_CONTEXT_CHARS
+    ) {
+      return no();
+    }
+  }
+  if (req.allowedMessageId !== undefined || req.scopeFacts !== undefined) {
+    return no();
+  }
+  return null;
+}
+
 /** System instruction for every mode except open-draft assist. */
 function offlineInstruction(
   offlineProofread: boolean,
@@ -654,7 +707,13 @@ export async function runGeminiDemoQuery(
   const offlineScoped = offlineArchive && req.mode === 'offline-archive-scoped';
   const offlineProofread = offlineArchive && req.mode === 'offline-draft-proofread';
   const offlineDraftAssist = offlineArchive && req.mode === 'offline-draft-assist';
-  if (offlineDraftAssist) {
+  const offlineDraftCompose = offlineArchive && req.mode === 'offline-draft-compose';
+  if (offlineDraftCompose) {
+    const scoped = admitOfflineDraftComposeQuery(req);
+    if (scoped) {
+      return scoped;
+    }
+  } else if (offlineDraftAssist) {
     const scoped = admitOfflineDraftAssistQuery(req);
     if (scoped) {
       return scoped;
@@ -722,22 +781,39 @@ export async function runGeminiDemoQuery(
 
     const body = JSON.stringify({
       model: GEMINI_DEMO_MODEL,
-      system_instruction: offlineDraftAssist
-        ? GEMINI_OFFLINE_DRAFT_ASSIST_SYSTEM_INSTRUCTION
-        : offlineInstruction(offlineProofread, offlineScoped, offlineArchive, realSelectedSummary),
-      input: offlineDraftAssist
-        ? buildDraftAssistInput(req.query, req.draftText || '', req.draftSubject)
-        : offlineProofread
-          ? buildProofreadInput(req.query)
-          : buildUntrustedGeminiInput(req.query, req.messages, {
-              includeBody: realSelectedSummary || offlineArchive,
-              scopeFacts: offlineScoped
-                ? sanitizeGeminiScopeFacts(req.scopeFacts, req.messages.length)
-                : undefined,
-            }),
-      response_format: offlineDraftAssist
-        ? GEMINI_DRAFT_ASSIST_RESPONSE_FORMAT
-        : GEMINI_RESPONSE_FORMAT,
+      system_instruction: offlineDraftCompose
+        ? GEMINI_OFFLINE_DRAFT_COMPOSE_SYSTEM_INSTRUCTION
+        : offlineDraftAssist
+          ? GEMINI_OFFLINE_DRAFT_ASSIST_SYSTEM_INSTRUCTION
+          : offlineInstruction(
+              offlineProofread,
+              offlineScoped,
+              offlineArchive,
+              realSelectedSummary
+            ),
+      input: offlineDraftCompose
+        ? buildDraftComposeInput(
+            req.query,
+            req.composeKind || 'new',
+            req.draftText || '',
+            req.draftSubject,
+            req.composeContext
+          )
+        : offlineDraftAssist
+          ? buildDraftAssistInput(req.query, req.draftText || '', req.draftSubject)
+          : offlineProofread
+            ? buildProofreadInput(req.query)
+            : buildUntrustedGeminiInput(req.query, req.messages, {
+                includeBody: realSelectedSummary || offlineArchive,
+                scopeFacts: offlineScoped
+                  ? sanitizeGeminiScopeFacts(req.scopeFacts, req.messages.length)
+                  : undefined,
+              }),
+      response_format: offlineDraftCompose
+        ? GEMINI_DRAFT_COMPOSE_RESPONSE_FORMAT
+        : offlineDraftAssist
+          ? GEMINI_DRAFT_ASSIST_RESPONSE_FORMAT
+          : GEMINI_RESPONSE_FORMAT,
     });
 
     const res = await fetchImpl(url, {
@@ -792,6 +868,22 @@ export async function runGeminiDemoQuery(
     const modelJson = parsed.value;
     if (!isRecord(modelJson) || typeof modelJson.response !== 'string') {
       return fail('invalid-schema', 'Gemini model JSON response must be a string');
+    }
+    if (offlineDraftCompose) {
+      // Written text only; citations ignored.
+      return {
+        ok: true,
+        payload: {
+          isMock: false,
+          response: modelJson.response,
+          citations: [],
+          tokensUsed: readTokens(envelope),
+          usage: readUsage(envelope),
+          model: GEMINI_DEMO_MODEL,
+          draftKind: 'rewrite',
+          composeSubject: typeof modelJson.subject === 'string' ? modelJson.subject : '',
+        },
+      };
     }
     if (offlineDraftAssist) {
       // Draft help never cites mail: citations are ignored, not fail-closed.

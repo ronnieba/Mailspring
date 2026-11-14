@@ -11,6 +11,7 @@ import { DemoMessagePreview, isDemoMode } from './synthetic-demo';
 import { clipboard, shell } from 'electron';
 import { offlineDraftsStore } from './offline-mail/offline-drafts-store';
 import { DRAFT_QUICK_ACTIONS } from './core/offline-draft-assist';
+import { subjectToApply } from './core/offline-draft-compose';
 import { tr, offlineDir, offlineDateLocale } from './core/offline-i18n';
 import {
   GEMINI_BILLING_URL,
@@ -105,6 +106,11 @@ interface AISidebarState {
   usageResetArmed: boolean;
   budgetDraft: string;
   draftIncludeSubject: boolean;
+  /** Open-draft scope: "✍️ write with AI" mode and its conversation opt-in. */
+  draftWriteMode: boolean;
+  draftIncludeThread: boolean;
+  /** Write-with-AI previews: "replace the subject too" ticks, by message id. */
+  composeSubjectTicks: { [msgId: string]: boolean };
   /** Bumped on local-drafts changes (apply/undo buttons). */
   draftsRev: number;
   /** Message id whose answer was just copied (brief "copied" label). */
@@ -157,6 +163,9 @@ class AISidebarInner extends React.Component<Record<string, never>, AISidebarSta
     usageResetArmed: false,
     budgetDraft: '',
     draftIncludeSubject: false,
+    draftWriteMode: false,
+    draftIncludeThread: false,
+    composeSubjectTicks: {},
     draftsRev: 0,
     copiedId: null,
   };
@@ -181,6 +190,8 @@ class AISidebarInner extends React.Component<Record<string, never>, AISidebarSta
         progressPhase: storeState.progressPhase,
         geminiUsage: storeState.geminiUsage,
         draftIncludeSubject: storeState.draftIncludeSubject,
+        draftWriteMode: storeState.draftWriteMode,
+        draftIncludeThread: storeState.draftIncludeThread,
       });
     });
 
@@ -656,10 +667,30 @@ class AISidebarInner extends React.Component<Record<string, never>, AISidebarSta
 
   /** Open-draft scope: subject opt-in + quick action chips. */
   _renderDraftTools() {
-    const { resolvedScope, isProcessing, draftIncludeSubject } = this.state;
+    const { resolvedScope, isProcessing, draftIncludeSubject, draftWriteMode } = this.state;
     const ready = !!resolvedScope && !resolvedScope.isEmpty && !isProcessing;
+    const writeChip = (
+      <button
+        type="button"
+        className={classNames('ai-draft-chip ai-draft-write-chip', { active: draftWriteMode })}
+        data-ai-draft-write="true"
+        aria-pressed={draftWriteMode}
+        disabled={!resolvedScope || resolvedScope.isEmpty || isProcessing}
+        title={tr(
+          'כתוב הוראה, ו-AI יכתוב את המייל (או את התשובה). קודם תצוגה מקדימה - הטיוטה משתנה רק כשלוחצים "החל".',
+          'Type an instruction and the AI writes the mail (or the reply). You get a preview first - the draft changes only on "Apply".'
+        )}
+        onClick={() => AISidebarStore.setDraftWriteMode(!draftWriteMode)}
+      >
+        {tr('✍️ כתוב עם AI', '✍️ Write with AI')}
+      </button>
+    );
+    if (draftWriteMode) {
+      return this._renderWriteTools(writeChip);
+    }
     return (
       <div className="ai-draft-tools" dir={offlineDir()} data-ai-draft-tools="true">
+        <div className="ai-draft-chips ai-draft-mode-row">{writeChip}</div>
         <div
           className="ai-draft-chips"
           role="group"
@@ -693,6 +724,213 @@ class AISidebarInner extends React.Component<Record<string, never>, AISidebarSta
           {tr(
             '✨ נשלח רק בלחיצה: הבקשה וטקסט הטיוטה שלך. בלי נמענים, בלי הטקסט המצוטט/המועבר ובלי קבצים מצורפים.',
             '✨ Sent only on click: the request and your draft text. No recipients, no quoted/forwarded text and no attachments.'
+          )}
+        </div>
+      </div>
+    );
+  }
+
+  /** Write-with-AI panel: what will be sent, with the reply/forward disclosure. */
+  _renderWriteTools(writeChip: React.ReactNode) {
+    const { draftIncludeSubject, draftIncludeThread } = this.state;
+    const d = offlineDraftsStore.showing ? offlineDraftsStore.open : null;
+    const kind = d ? d.kind : 'new';
+    const answering = kind === 'reply' || kind === 'forward';
+    return (
+      <div
+        className="ai-draft-tools ai-write-tools"
+        dir={offlineDir()}
+        data-ai-draft-tools="true"
+        data-ai-write-tools={kind}
+      >
+        <div className="ai-draft-chips ai-draft-mode-row">{writeChip}</div>
+        <div className="ai-write-hint">
+          {kind === 'reply'
+            ? tr(
+                'כתוב מה לענות (למשל: "תענה שאני מסכים אבל רק ביום שלישי"). ה-AI יכתוב רק את התשובה, מעל הציטוט - הציטוט נשאר כמו שהוא.',
+                'Type what to answer (e.g. "Say I agree, but only on Tuesday"). The AI writes only the reply, above the quote - the quote stays as is.'
+              )
+            : kind === 'forward'
+              ? tr(
+                  'כתוב מה לכתוב מעל ההודעה המועברת. ההודעה המועברת נשארת כמו שהיא.',
+                  'Type what to write above the forwarded message. The forwarded message stays as is.'
+                )
+              : tr(
+                  'כתוב מה המייל צריך להגיד (למשל: "כתוב לי מייל לרואה החשבון שמבקש את הדוח השנתי"). תקבל נושא וגוף לתצוגה מקדימה לפני שמשהו משתנה.',
+                  'Type what the mail should say (e.g. "Write to my accountant asking for the annual report"). You get a subject and body to preview before anything changes.'
+                )}
+        </div>
+        {answering && (
+          <div className="ai-write-disclosure" data-ai-write-disclosure="true" role="note">
+            {tr(
+              '⚠️ בלחיצה על "כתוב" נשלח ל-Gemini גם טקסט ההודעה המקורית (בלי קבצים מצורפים, מקוצר אם הוא ארוך).',
+              '⚠️ On "Write", the text of the original message is also sent to Gemini (no attachments, shortened if long).'
+            )}
+          </div>
+        )}
+        {answering && (
+          <label className="ai-draft-subject">
+            <input
+              type="checkbox"
+              checked={draftIncludeThread}
+              data-ai-write-include-thread="true"
+              onChange={(e) => AISidebarStore.setDraftIncludeThread(e.target.checked)}
+            />
+            <span>
+              {tr(
+                'כלול את כל השיחה (עד 10 הודעות, טקסט בלבד)',
+                'Include the whole conversation (up to 10 messages, text only)'
+              )}
+            </span>
+          </label>
+        )}
+        <label className="ai-draft-subject">
+          <input
+            type="checkbox"
+            checked={draftIncludeSubject}
+            data-ai-draft-include-subject="true"
+            onChange={(e) => AISidebarStore.setDraftIncludeSubject(e.target.checked)}
+          />
+          <span>{tr('לשלוח גם את הנושא', 'Also send the subject')}</span>
+        </label>
+        <div className="gemini-estimate">
+          {answering
+            ? tr(
+                '✨ נשלח רק בלחיצה: ההוראה, הטקסט שכבר כתבת, וטקסט ההודעה המקורית. בלי נמעני הטיוטה ובלי קבצים מצורפים.',
+                '✨ Sent only on click: the instruction, any text you already wrote, and the original message text. No draft recipients, no attachments.'
+              )
+            : tr(
+                '✨ נשלח רק בלחיצה: ההוראה והטקסט שכבר כתבת (אם יש). בלי נמענים ובלי קבצים מצורפים.',
+                '✨ Sent only on click: the instruction and any text you already wrote. No recipients, no attachments.'
+              )}
+        </div>
+      </div>
+    );
+  }
+
+  /** Write-with-AI answer: subject + body preview with Apply / Add at end / Copy / Undo. */
+  _renderDraftComposePreview(msg: ConversationMessage) {
+    const dc = msg.draftCompose;
+    if (!dc) {
+      return null;
+    }
+    const draft = offlineDraftsStore.drafts.find((x) => x.id === dc.draftId) || null;
+    const exists = !!draft;
+    const draftOpen =
+      offlineDraftsStore.showing &&
+      !!offlineDraftsStore.open &&
+      offlineDraftsStore.open.id === dc.draftId;
+    const subjectEmpty = !!draft && !draft.subject.trim();
+    const ticked = !!this.state.composeSubjectTicks[msg.id];
+    const subjectArg = (): string | null =>
+      draft ? subjectToApply(draft.subject, dc.subject, ticked) : null;
+    const copied = this.state.copiedId === msg.id;
+    const copyText = dc.subject && dc.kind === 'new' ? `${dc.subject}\n\n${dc.body}` : dc.body;
+    return (
+      <div className="ai-compose-preview" data-ai-compose-preview={dc.kind}>
+        {dc.subject && (
+          <div className="ai-compose-subject">
+            <span className="ai-compose-label">{tr('נושא:', 'Subject:')}</span>{' '}
+            <span dir="auto" data-ai-compose-subject="true">
+              {dc.subject}
+            </span>
+          </div>
+        )}
+        <div className="ai-compose-body" dir="auto" data-ai-compose-body="true">
+          {dc.body}
+        </div>
+        {dc.subject && exists && (
+          <label className="ai-draft-subject ai-compose-subject-tick">
+            <input
+              type="checkbox"
+              checked={subjectEmpty || ticked}
+              disabled={subjectEmpty}
+              data-ai-compose-replace-subject="true"
+              onChange={(e) =>
+                this.setState({
+                  composeSubjectTicks: {
+                    ...this.state.composeSubjectTicks,
+                    [msg.id]: e.target.checked,
+                  },
+                })
+              }
+            />
+            <span>
+              {subjectEmpty
+                ? tr(
+                    'הנושא בטיוטה ריק - הוא יתמלא',
+                    'The draft subject is empty - it will be filled'
+                  )
+                : tr('גם להחליף את הנושא', 'Also replace the subject')}
+            </span>
+          </label>
+        )}
+        <div className="ai-draft-actions" data-ai-draft-actions="compose">
+          <button
+            type="button"
+            className="btn btn-small ai-draft-apply"
+            data-ai-compose-apply="replace"
+            disabled={!exists || this.state.isProcessing}
+            title={
+              dc.kind === 'new'
+                ? tr(
+                    'מחליף את הטקסט בטיוטה בטקסט הזה. אפשר לבטל.',
+                    'Replaces the draft text with this text. Can be undone.'
+                  )
+                : tr(
+                    'כותב את התשובה מעל הציטוט (הציטוט נשמר). אפשר לבטל.',
+                    'Writes the reply above the quote (the quote is kept). Can be undone.'
+                  )
+            }
+            onClick={() =>
+              offlineDraftsStore.applyAiText(dc.draftId, dc.body, 'replace', {
+                subject: subjectArg(),
+              })
+            }
+          >
+            {tr('✅ החל על הטיוטה', '✅ Apply to draft')}
+          </button>
+          <button
+            type="button"
+            className="btn btn-small"
+            data-ai-compose-apply="append"
+            disabled={!exists || this.state.isProcessing}
+            onClick={() =>
+              offlineDraftsStore.applyAiText(dc.draftId, dc.body, 'append', {
+                subject: subjectArg(),
+              })
+            }
+          >
+            {tr('➕ הוסף בסוף', '➕ Add at the end')}
+          </button>
+          <button
+            type="button"
+            className="btn btn-small"
+            data-ai-compose-copy="true"
+            onClick={() => {
+              clipboard.writeText(copyText);
+              this.setState({ copiedId: msg.id });
+              window.setTimeout(() => {
+                if (this.state.copiedId === msg.id) {
+                  this.setState({ copiedId: null });
+                }
+              }, 1500);
+            }}
+          >
+            {copied ? tr('✔️ הועתק', '✔️ Copied') : tr('📋 העתק', '📋 Copy')}
+          </button>
+          {offlineDraftsStore.canUndoAi && draftOpen && (
+            <button
+              type="button"
+              className="btn btn-small"
+              data-ai-draft-undo="true"
+              onClick={() => offlineDraftsStore.undoAi()}
+            >
+              {tr('↩️ בטל שינוי', '↩️ Undo change')}
+            </button>
+          )}
+          {!exists && (
+            <span className="ai-draft-gone">{tr('הטיוטה נמחקה', 'The draft was deleted')}</span>
           )}
         </div>
       </div>
@@ -768,6 +1006,26 @@ class AISidebarInner extends React.Component<Record<string, never>, AISidebarSta
           <span className="ai-draft-gone">{tr('הטיוטה נמחקה', 'The draft was deleted')}</span>
         )}
       </div>
+    );
+  }
+
+  _writePlaceholder(): string {
+    const d = offlineDraftsStore.showing ? offlineDraftsStore.open : null;
+    if (d && d.kind === 'reply') {
+      return tr(
+        '✍️ מה לענות? למשל: "תענה שאני מסכים אבל רק ביום שלישי" (Enter לכתיבה)',
+        '✍️ What should the reply say? e.g. "Say I agree, but only on Tuesday" (Enter to write)'
+      );
+    }
+    if (d && d.kind === 'forward') {
+      return tr(
+        '✍️ מה לכתוב מעל ההודעה המועברת? (Enter לכתיבה)',
+        '✍️ What should go above the forwarded message? (Enter to write)'
+      );
+    }
+    return tr(
+      '✍️ מה לכתוב? למשל: "כתוב לי מייל לרואה החשבון שמבקש את הדוח השנתי" (Enter לכתיבה)',
+      '✍️ What should I write? e.g. "Write to my accountant asking for the annual report" (Enter to write)'
     );
   }
 
@@ -1079,7 +1337,10 @@ class AISidebarInner extends React.Component<Record<string, never>, AISidebarSta
           'message-mock': msg.isMock,
         })}
       >
-        <div className="message-content">{this._renderMessageContent(msg.content)}</div>
+        {this._renderDraftComposePreview(msg)}
+        <div className={classNames('message-content', { 'ai-compose-note': !!msg.draftCompose })}>
+          {this._renderMessageContent(msg.content)}
+        </div>
         {(msg.geminiErrorKind === 'billing-exhausted' || msg.geminiErrorKind === 'invalid-key') && (
           <button
             type="button"
@@ -1258,17 +1519,22 @@ class AISidebarInner extends React.Component<Record<string, never>, AISidebarSta
           data-offline-archive-empty={offline ? 'true' : undefined}
         >
           <p>
-            {offline && this.state.scopeMode === 'open-draft'
+            {offline && this.state.scopeMode === 'open-draft' && this.state.draftWriteMode
               ? tr(
-                  'עזרה בטיוטה: לחץ על פעולה מהירה או כתוב בקשה ולחץ "שלח". נשלח רק טקסט הטיוטה שלך, ורק בלחיצה.',
-                  'Draft help: click a quick action or type a request and click "Send". Only your draft text is sent, and only on click.'
+                  'כתיבה עם AI: כתוב הוראה ולחץ "כתוב". תקבל תצוגה מקדימה, והטיוטה משתנה רק כשתלחץ "החל" (ואפשר לבטל).',
+                  'Write with AI: type an instruction and click "Write". You get a preview; the draft changes only when you click "Apply" (and it can be undone).'
                 )
-              : offline
+              : offline && this.state.scopeMode === 'open-draft'
                 ? tr(
-                    'שאל שאלה ולחץ "שלח" (לפי הטווח שנבחר), בחר הודעה אחת ולחץ "סכם", או פתח טיוטה כדי לקבל עזרה בכתיבה. שום דבר לא נשלח בלי לחיצה.',
-                    'Ask a question and click "Send" (for the chosen range), select one message and click "Summarize", or open a draft to get writing help. Nothing is sent without a click.'
+                    'עזרה בטיוטה: לחץ על פעולה מהירה או כתוב בקשה ולחץ "שלח". נשלח רק טקסט הטיוטה שלך, ורק בלחיצה.',
+                    'Draft help: click a quick action or type a request and click "Send". Only your draft text is sent, and only on click.'
                   )
-                : 'בחר הודעה אחת בשרשור. סיכום נשלח רק אחרי לחיצה על Summarize.'}
+                : offline
+                  ? tr(
+                      'שאל שאלה ולחץ "שלח" (לפי הטווח שנבחר), בחר הודעה אחת ולחץ "סכם", או פתח טיוטה כדי לקבל עזרה בכתיבה. שום דבר לא נשלח בלי לחיצה.',
+                      'Ask a question and click "Send" (for the chosen range), select one message and click "Summarize", or open a draft to get writing help. Nothing is sent without a click.'
+                    )
+                  : 'בחר הודעה אחת בשרשור. סיכום נשלח רק אחרי לחיצה על Summarize.'}
           </p>
           <p>
             {offline
@@ -1433,7 +1699,9 @@ class AISidebarInner extends React.Component<Record<string, never>, AISidebarSta
     return (
       <div className="ai-sidebar-input">
         <label className="input-label" htmlFor="ai-sidebar-question">
-          {tr('✍️ שאלה ל-AI', '✍️ Question for the AI')}
+          {this.state.scopeMode === 'open-draft' && this.state.draftWriteMode
+            ? tr('✍️ הוראה ל-AI (מה לכתוב)', '✍️ Instruction for the AI (what to write)')
+            : tr('✍️ שאלה ל-AI', '✍️ Question for the AI')}
         </label>
         <textarea
           id="ai-sidebar-question"
@@ -1447,15 +1715,17 @@ class AISidebarInner extends React.Component<Record<string, never>, AISidebarSta
                     'סמן הודעות, בחר תיקייה, או פתח טיוטה…',
                     'Mark messages, choose a folder, or open a draft…'
                   )
-              : this.state.scopeMode === 'open-draft'
-                ? tr(
-                    '📝 מה לעשות עם הטיוטה? למשל: "תקצר לשלוש שורות" (Enter לשליחה)',
-                    '📝 What should I do with the draft? e.g. "Shorten to three lines" (Enter to send)'
-                  )
-                : tr(
-                    '✍️ כתוב כאן שאלה ל-AI… (Enter לשליחה)',
-                    '✍️ Type a question for the AI… (Enter to send)'
-                  )
+              : this.state.scopeMode === 'open-draft' && this.state.draftWriteMode
+                ? this._writePlaceholder()
+                : this.state.scopeMode === 'open-draft'
+                  ? tr(
+                      '📝 מה לעשות עם הטיוטה? למשל: "תקצר לשלוש שורות" (Enter לשליחה)',
+                      '📝 What should I do with the draft? e.g. "Shorten to three lines" (Enter to send)'
+                    )
+                  : tr(
+                      '✍️ כתוב כאן שאלה ל-AI… (Enter לשליחה)',
+                      '✍️ Type a question for the AI… (Enter to send)'
+                    )
           }
           value={this.state.inputValue}
           onChange={this._onInputChange}
@@ -1477,7 +1747,13 @@ class AISidebarInner extends React.Component<Record<string, never>, AISidebarSta
                   : tr('כתוב שאלה כדי לשלוח', 'Type a question to send')
             }
           >
-            {canSend ? tr('שלח ➤', 'Send ➤') : tr('שלח', 'Send')}
+            {this.state.scopeMode === 'open-draft' && this.state.draftWriteMode
+              ? canSend
+                ? tr('✍️ כתוב ➤', '✍️ Write ➤')
+                : tr('✍️ כתוב', '✍️ Write')
+              : canSend
+                ? tr('שלח ➤', 'Send ➤')
+                : tr('שלח', 'Send')}
           </button>
           {isOfflineArchiveMode() && this.state.scopeMode !== 'open-draft' && (
             <button

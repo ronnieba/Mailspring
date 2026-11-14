@@ -108,6 +108,13 @@ export interface ConversationMessage {
   geminiErrorKind?: string;
   /** Open-draft scope: the answer can be applied to this draft. */
   draftAssist?: { draftId: string; kind: 'rewrite' | 'answer'; text: string };
+  /** Write with AI: a preview of the written mail; nothing changes until "Apply". */
+  draftCompose?: {
+    draftId: string;
+    kind: 'new' | 'reply' | 'forward';
+    subject: string;
+    body: string;
+  };
 }
 
 /** Processing budget/limits */

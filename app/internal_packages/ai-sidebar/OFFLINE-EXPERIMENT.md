@@ -43,6 +43,15 @@ powershell -NoProfile -ExecutionPolicy Bypass -File scripts\start-offline-archiv
   index lives only in the offline profile (`offline-search.sqlite`); it is
   built once in the background (progress shown) and afterwards only new,
   changed or removed mail is read. No network.
+- "✍️ Write with AI" for local drafts (AI panel chip, ribbon AI tab, draft
+  toolbar). On by default for an empty/near-empty draft. New mail: Gemini
+  writes subject + body from the user's instruction; reply/forward: only the
+  reply/note above the quote, with the original message (or up to 10
+  conversation messages when ticked) sent as plain text, truncated (12,000 /
+  24,000 characters), never attachments or draft recipients. Only on an
+  explicit "Write" click; preview first; Apply / Add at end / Copy; the
+  subject changes only when empty or ticked; one-step undo restores body and
+  subject. Usage is logged as `offline-draft-compose`.
 
 ## Gemini on Windows
 

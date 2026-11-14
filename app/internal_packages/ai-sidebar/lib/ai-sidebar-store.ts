@@ -35,9 +35,19 @@ import {
   createGeminiIpcTransport,
   draftAssistViaIpc,
   DraftAssistIpcRequest,
+  draftComposeViaIpc,
+  DraftComposeIpcRequest,
   geminiUsageIpc,
 } from './gemini-ipc-transport';
 import { offlineDraftsStore } from './offline-mail/offline-drafts-store';
+import { offlineMailStore } from './offline-mail/offline-mail-store';
+import {
+  buildComposeContext,
+  buildComposeRequest,
+  cleanComposeResult,
+  ComposeSourceMessage,
+  isNearEmptyDraft,
+} from './core/offline-draft-compose';
 import { buildDraftAssistRequest, splitDraftForAssist } from './core/offline-draft-assist';
 import { mailspringAdapter } from './mailspring-adapter';
 import {
@@ -104,8 +114,8 @@ export function resolveOpenDraftScope(): ResolvedScope {
             `📝 The open draft · ${chars.toLocaleString()} characters · "Send" sends only the draft text (no recipients, no quote)`
           )
         : tr(
-            '📝 הטיוטה הפתוחה ריקה - כתוב בה משהו ואז בקש עזרה',
-            '📝 The open draft is empty - write something, then ask for help'
+            '📝 הטיוטה הפתוחה ריקה - כתוב הוראה ו-AI יכתוב את המייל (✍️ כתוב עם AI)',
+            '📝 The open draft is empty - type an instruction and the AI writes the mail (✍️ Write with AI)'
           ),
   };
 }
@@ -128,7 +138,28 @@ interface AISidebarState {
   geminiUsage: GeminiUsageSummary | null;
   /** Open-draft scope: also send the subject (off unless the user ticks it). */
   draftIncludeSubject: boolean;
+  /** Open-draft scope: "✍️ write with AI" (on for an empty / near-empty draft). */
+  draftWriteMode: boolean;
+  /** Write with AI on a reply/forward: send the whole conversation, not just the original. */
+  draftIncludeThread: boolean;
 }
+
+/** Sends one write-with-AI request; injectable so tests never touch IPC. */
+export type DraftComposeTransport = (
+  generation: number,
+  req: DraftComposeIpcRequest
+) => Promise<GeminiHostResult>;
+
+/** Reads the original message (and its conversation) locally; injectable for tests. */
+export interface ComposeSourceLoader {
+  message(id: string): Promise<ComposeSourceMessage | null>;
+  threadIds(id: string): string[];
+}
+
+const defaultComposeSources: ComposeSourceLoader = {
+  message: (id) => offlineMailStore.messageTextFor(id),
+  threadIds: (id) => offlineMailStore.threadIdsFor(id),
+};
 
 /** Sends one open-draft request; injectable so tests never touch IPC. */
 export type DraftAssistTransport = (
@@ -156,8 +187,12 @@ class AISidebarStore extends MailspringStore {
     progressPhase: null,
     geminiUsage: null,
     draftIncludeSubject: false,
+    draftWriteMode: false,
+    draftIncludeThread: false,
   };
   private _draftAssistTransport: DraftAssistTransport = draftAssistViaIpc;
+  private _draftComposeTransport: DraftComposeTransport = draftComposeViaIpc;
+  private _composeSources: ComposeSourceLoader = defaultComposeSources;
   /** Scope to go back to when the open draft closes (auto-selected scope). */
   private _scopeBeforeDraft: ScopeMode | null = null;
   private _realSnapshotEpoch = 0;
@@ -218,6 +253,41 @@ class AISidebarStore extends MailspringStore {
     this.trigger();
   }
 
+  /** Tests only: replace the write-with-AI transport and the local mail reader. */
+  setDraftComposeForTests(t: DraftComposeTransport, sources?: ComposeSourceLoader) {
+    this._draftComposeTransport = t;
+    if (sources) {
+      this._composeSources = sources;
+    }
+  }
+
+  setDraftWriteMode(on: boolean) {
+    this._state.draftWriteMode = !!on;
+    this.trigger();
+  }
+
+  setDraftIncludeThread(on: boolean) {
+    this._state.draftIncludeThread = !!on;
+    this.trigger();
+  }
+
+  /**
+   * Ribbon / draft toolbar "✍️ Write with AI": uses the open draft, or opens
+   * a new empty one, and switches the panel to write mode. Sends nothing.
+   */
+  async startWriteWithAi() {
+    if (!offlineDraftsStore.showing || !offlineDraftsStore.open) {
+      offlineDraftsStore.createNew();
+    }
+    this._state.draftWriteMode = true;
+    if (this._state.scopeMode !== 'open-draft') {
+      this._scopeBeforeDraft = this._scopeBeforeDraft || this._state.scopeMode;
+      await this.setScopeMode('open-draft');
+    }
+    this._state.draftWriteMode = true;
+    this.trigger();
+  }
+
   /**
    * Called when the open local draft changes: a newly opened draft selects
    * the 'open-draft' scope; closing it restores the previous scope. Picking
@@ -225,6 +295,10 @@ class AISidebarStore extends MailspringStore {
    */
   async onOpenDraftChanged(openDraftId: string | null, previousOpenId: string | null) {
     if (openDraftId && openDraftId !== previousOpenId) {
+      // An empty (or nearly empty) draft starts in "write with AI" mode.
+      const open = offlineDraftsStore.open;
+      this._state.draftWriteMode = !!open && isNearEmptyDraft(open.body);
+      this._state.draftIncludeThread = false;
       if (this._state.scopeMode !== 'open-draft') {
         this._scopeBeforeDraft = this._state.scopeMode;
         await this.setScopeMode('open-draft');
@@ -465,7 +539,11 @@ class AISidebarStore extends MailspringStore {
 
     try {
       if (scope.mode === 'open-draft') {
-        await this._runDraftAssist(query, startedGeneration, stillCurrent);
+        if (this._state.draftWriteMode) {
+          await this._runDraftCompose(query, startedGeneration, stillCurrent);
+        } else {
+          await this._runDraftAssist(query, startedGeneration, stillCurrent);
+        }
         return;
       }
       // Offline: pure metadata questions (how many messages, date range, how
@@ -794,6 +872,166 @@ class AISidebarStore extends MailspringStore {
       timestamp: new Date(),
       isMock: false,
       draftAssist: { draftId: d.id, kind, text },
+    });
+  }
+
+  /**
+   * Write with AI: ONE request with the instruction + the draft's own text
+   * (subject only if ticked) and, for a reply/forward, the original message
+   * (or the conversation when ticked) as plain text without attachments.
+   * The answer is only a preview; the draft changes on "Apply".
+   */
+  private async _runDraftCompose(
+    query: string,
+    startedGeneration: number,
+    stillCurrent: () => boolean
+  ) {
+    const d = offlineDraftsStore.open;
+    const sys = (content: string) =>
+      this._state.conversation.push({
+        id: `system-${Date.now()}`,
+        role: 'system',
+        content,
+        timestamp: new Date(),
+      });
+    if (!d) {
+      sys(tr('אין טיוטה פתוחה. לא נשלח דבר.', 'No draft is open. Nothing was sent.'));
+      return;
+    }
+    const kind = d.kind === 'reply' ? 'reply' : d.kind === 'forward' ? 'forward' : 'new';
+    await this.refreshGeminiStatus();
+    if (!this._state.geminiStatus.configured) {
+      sys(
+        tr(
+          'Gemini לא מחובר, ולכן אי אפשר לכתוב עם AI. לא נשלח דבר.',
+          'Gemini is not connected, so Write with AI is unavailable. Nothing was sent.'
+        )
+      );
+      return;
+    }
+    // Original message / conversation: read locally, text only.
+    let context: ReturnType<typeof buildComposeContext> | null = null;
+    let sourceMissing = false;
+    if (kind !== 'new') {
+      const srcId = d.sourceMessageId;
+      const target = srcId ? await this._composeSources.message(srcId) : null;
+      if (!target) {
+        sourceMissing = true;
+      } else {
+        let thread: ComposeSourceMessage[] | null = null;
+        if (this._state.draftIncludeThread) {
+          const ids = this._composeSources.threadIds(srcId);
+          const upTo = ids.indexOf(srcId);
+          const wanted = (upTo >= 0 ? ids.slice(0, upTo) : ids.filter((x) => x !== srcId)).slice(
+            -9
+          );
+          thread = [];
+          for (const id of wanted) {
+            const m = await this._composeSources.message(id);
+            if (m) {
+              thread.push(m);
+            }
+          }
+          thread.push(target);
+        }
+        context = buildComposeContext(target, thread);
+      }
+      if (!stillCurrent()) {
+        return;
+      }
+    }
+    const built = buildComposeRequest(d, query, {
+      includeSubject: this._state.draftIncludeSubject,
+      context: context ? context.text : null,
+    });
+    if (built.ok === false) {
+      sys(
+        built.reason === 'too-long'
+          ? tr(
+              'הטיוטה ארוכה מדי (עד 20,000 תווים). לא נשלח דבר.',
+              'The draft is too long (max 20,000 characters). Nothing was sent.'
+            )
+          : tr('ההוראה ריקה או ארוכה מדי.', 'The instruction is empty or too long.')
+      );
+      return;
+    }
+    this._state.progressPhase = 'gemini';
+    this.trigger();
+    const result = await this._draftComposeTransport(startedGeneration, built.req);
+    if (!stillCurrent()) {
+      return;
+    }
+    if (isGeminiHostFailure(result)) {
+      const failure = new Error(result.message) as Error & { geminiReason?: string };
+      failure.geminiReason = result.reason;
+      throw failure;
+    }
+    const payload = result.payload;
+    const clean = cleanComposeResult(
+      { subject: payload.composeSubject || '', body: String(payload.response || '') },
+      kind
+    );
+    if (!clean.body.trim()) {
+      sys(
+        tr(
+          'Gemini החזיר טקסט ריק. הטיוטה לא שונתה.',
+          'Gemini returned empty text. The draft was not changed.'
+        )
+      );
+      return;
+    }
+    const tokens = payload.tokensUsed
+      ? tr(` · ${payload.tokensUsed} טוקנים`, ` · ${payload.tokensUsed} tokens`)
+      : '';
+    const ownChars = built.req.draftText.length;
+    const parts: string[] = [tr('ההוראה', 'the instruction')];
+    if (ownChars) {
+      parts.push(
+        tr(
+          `טקסט הטיוטה (${ownChars.toLocaleString()} תווים)`,
+          `the draft text (${ownChars.toLocaleString()} characters)`
+        )
+      );
+    }
+    if (built.req.draftSubject) {
+      parts.push(tr('הנושא', 'the subject'));
+    }
+    if (context) {
+      parts.push(
+        context.messages > 1
+          ? tr(
+              `${context.messages} הודעות מהשיחה (טקסט בלבד)`,
+              `${context.messages} messages of the conversation (text only)`
+            )
+          : tr('ההודעה המקורית (טקסט בלבד)', 'the original message (text only)')
+      );
+    }
+    const note =
+      tr(
+        `✍️ נשלחו ל-Gemini: ${parts.join(', ')}. בלי קבצים מצורפים ובלי נמעני הטיוטה.`,
+        `✍️ Sent to Gemini: ${parts.join(', ')}. No attachments, no draft recipients.`
+      ) +
+      (context && context.truncated
+        ? tr(
+            ' (חלק מהטקסט קוצר כדי לשמור על גודל סביר.)',
+            ' (Some text was shortened to keep it small.)'
+          )
+        : '') +
+      (sourceMissing
+        ? tr(
+            ' ⚠️ ההודעה המקורית לא נמצאה בעותק, ולכן נכתב בלי ההקשר שלה.',
+            ' ⚠️ The original message was not found in the copy, so this was written without it.'
+          )
+        : '') +
+      tokens;
+    this._state.conversation.push({
+      id: `assistant-${Date.now()}`,
+      role: 'assistant',
+      content: note,
+      citations: [],
+      timestamp: new Date(),
+      isMock: false,
+      draftCompose: { draftId: d.id, kind, subject: clean.subject, body: clean.body },
     });
   }
 

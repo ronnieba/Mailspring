@@ -25,6 +25,7 @@ import { chooseFilesToAttach, droppedFilePaths, openWithDefaultApp } from './off
 import { draftAttachmentPath } from '../core/offline-attachments';
 import { ProofSegment } from '../core/text-diff';
 import { offlineDateLocale, offlineDir, tr } from '../core/offline-i18n';
+import { startWriteWithAi } from './write-with-ai';
 
 class DraftsComponent<P = Record<string, never>, S = Record<string, never>> extends React.Component<
   P,
@@ -484,6 +485,17 @@ export class OfflineDraftEditor extends DraftsComponent<Record<string, never>, E
             onClick={() => void s.proofread(d.id)}
           >
             {tr('✨ הגהה עם Gemini', '✨ Proofread with Gemini')}
+          </button>
+          <button
+            className="btn btn-small offline-draft-write-ai"
+            data-offline-draft-write-ai="true"
+            title={tr(
+              'AI יכתוב את המייל או את התשובה לפי הוראה שלך, בחלונית ה-AI (נשלח רק בלחיצה על "כתוב")',
+              'The AI writes the mail or the reply from your instruction, in the AI panel (sent only when you click "Write")'
+            )}
+            onClick={() => startWriteWithAi()}
+          >
+            {tr('✍️ כתוב עם AI', '✍️ Write with AI')}
           </button>
           <button
             className={classNames('btn btn-small offline-draft-delete', {

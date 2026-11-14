@@ -90,6 +90,42 @@ export function draftAssistViaIpc(
   return ipcRenderer.invoke(GEMINI_IPC_QUERY, payload);
 }
 
+/** Write with AI: the only fields ever sent (see buildComposeRequest). */
+export interface DraftComposeIpcRequest {
+  request: string;
+  draftText: string;
+  draftSubject?: string;
+  composeKind: 'new' | 'reply' | 'forward';
+  composeContext?: string;
+}
+
+/**
+ * Local drafts, "write with AI" (explicit Send only): instruction + the
+ * draft's own text (+ subject if ticked) + for a reply/forward the original
+ * as plain text. No attachments, no draft recipients. Usage is recorded by
+ * the main process like every other mode.
+ */
+export function draftComposeViaIpc(
+  generation: number,
+  req: DraftComposeIpcRequest
+): Promise<GeminiHostResult> {
+  const payload: Record<string, unknown> = {
+    generation,
+    query: req.request,
+    messages: [],
+    mode: 'offline-draft-compose',
+    draftText: req.draftText,
+    composeKind: req.composeKind,
+  };
+  if (typeof req.draftSubject === 'string') {
+    payload.draftSubject = req.draftSubject;
+  }
+  if (typeof req.composeContext === 'string') {
+    payload.composeContext = req.composeContext;
+  }
+  return ipcRenderer.invoke(GEMINI_IPC_QUERY, payload);
+}
+
 /** Local usage ledger (main process). Counts and estimates only. */
 export const geminiUsageIpc = {
   get(): Promise<GeminiUsageSummary | null> {

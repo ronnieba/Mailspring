@@ -105,7 +105,8 @@ function parseQuery(raw: unknown): GeminiDemoQueryInput {
     r.mode === 'offline-archive-selected' ||
     r.mode === 'offline-archive-scoped' ||
     r.mode === 'offline-draft-proofread' ||
-    r.mode === 'offline-draft-assist'
+    r.mode === 'offline-draft-assist' ||
+    r.mode === 'offline-draft-compose'
       ? r.mode
       : undefined;
   const allowedMessageId = typeof r.allowedMessageId === 'string' ? r.allowedMessageId : undefined;
@@ -115,7 +116,9 @@ function parseQuery(raw: unknown): GeminiDemoQueryInput {
       : undefined;
   // Proofreading carries draft text only; any mail passed along is dropped.
   // Open-draft assist likewise: only the draft text (+ subject if ticked).
-  const draftAssist = mode === 'offline-draft-assist';
+  // Write with AI: instruction + draft text (+ subject if ticked) + original as plain text only.
+  const compose = mode === 'offline-draft-compose';
+  const draftAssist = mode === 'offline-draft-assist' || compose;
   const messages =
     mode === 'offline-draft-proofread' ? [] : draftAssist ? [] : asMessages(r.messages);
   return {
@@ -134,6 +137,13 @@ function parseQuery(raw: unknown): GeminiDemoQueryInput {
       ? {
           draftText: typeof r.draftText === 'string' ? r.draftText : '',
           ...(typeof r.draftSubject === 'string' ? { draftSubject: r.draftSubject } : {}),
+        }
+      : {}),
+    ...(compose
+      ? {
+          composeKind:
+            r.composeKind === 'reply' || r.composeKind === 'forward' ? r.composeKind : 'new',
+          ...(typeof r.composeContext === 'string' ? { composeContext: r.composeContext } : {}),
         }
       : {}),
   };

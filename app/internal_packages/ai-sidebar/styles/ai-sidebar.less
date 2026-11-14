@@ -1277,3 +1277,71 @@ body.ofl-lang-en .ai-sidebar {
     opacity: 0.7;
   }
 }
+
+// Write with AI (t214): mode chip, disclosure, and the subject+body preview.
+.ai-sidebar .ai-draft-tools .ai-draft-chip.ai-draft-write-chip {
+  font-weight: 700;
+  &.active {
+    background: var(--color-primary, #1a73e8);
+    border-color: var(--color-primary, #1a73e8);
+    color: #fff;
+  }
+}
+.ai-sidebar .ai-write-tools {
+  .ai-write-hint {
+    font-size: 12px;
+    color: var(--text-color);
+    margin-bottom: 6px;
+    line-height: 1.45;
+  }
+  .ai-write-disclosure {
+    font-size: 12px;
+    font-weight: 600;
+    padding: 5px 8px;
+    margin-bottom: 6px;
+    border-radius: 6px;
+    border: 1px solid #e0a100;
+    background: rgba(224, 161, 0, 0.12);
+    color: var(--text-color);
+  }
+  .ai-draft-subject {
+    margin-bottom: 4px;
+  }
+}
+.ai-sidebar .ai-compose-preview {
+  margin: 2px 0 6px;
+  padding: 8px 10px;
+  border-radius: 8px;
+  border: 1px solid var(--border-color-divider);
+  border-inline-start: 3px solid var(--color-primary, #1a73e8);
+  background: var(--background-primary);
+  color: var(--text-color);
+  .ai-compose-subject {
+    font-weight: 700;
+    margin-bottom: 6px;
+    unicode-bidi: plaintext;
+  }
+  .ai-compose-label {
+    color: var(--text-color-subtle);
+    font-weight: 400;
+  }
+  .ai-compose-body {
+    white-space: pre-wrap;
+    unicode-bidi: plaintext;
+    line-height: 1.5;
+    max-height: 340px;
+    overflow-y: auto;
+  }
+  .ai-compose-subject-tick {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    font-size: 11px;
+    margin-top: 6px;
+    color: var(--text-color-subtle);
+  }
+}
+.ai-sidebar .message-content.ai-compose-note {
+  font-size: 11px;
+  opacity: 0.85;
+}

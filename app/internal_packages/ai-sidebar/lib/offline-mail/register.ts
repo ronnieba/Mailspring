@@ -142,6 +142,7 @@ export function registerOfflineMailBrowser(archivePath: string, sidebar: any) {
     drafts: offlineDraftsStore,
     addressBook: offlineAddressBook,
     search: offlineSearchStore,
+    ai: AISidebarStore,
   };
   void offlineMailStore.start(archivePath, cachePath);
   // Window size/position/maximized state is restored by the main process

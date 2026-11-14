@@ -558,6 +558,28 @@ class OfflineMailStore {
     return this._byId.get(id);
   }
 
+  /**
+   * Header lines + plain text of one archived message, read locally (no
+   * attachment bytes). Used by "write with AI" on an explicit click only.
+   */
+  async messageTextFor(
+    id: string
+  ): Promise<{ from: string; date: string; subject: string; text: string } | null> {
+    const entry = this._byId.get(id);
+    if (!entry || !this.root) {
+      return null;
+    }
+    let p = this._parsedCache.get(id) || null;
+    if (!p) {
+      try {
+        p = await loadOfflineMessage(this.root, entry.rel);
+      } catch (err) {
+        return null;
+      }
+    }
+    return { from: p.from || '', date: p.date || '', subject: p.subject || '', text: p.text || '' };
+  }
+
   /** Conversation key of a message (its own id in the flat view). */
   rowKeyFor(id: string): string {
     return this.threaded ? this._threadOf.get(id) || id : id;

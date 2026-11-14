@@ -38,7 +38,11 @@ import {
 
 /** A file carried over from an archive message (forward). */
 export type DraftFileBytes = { filename: string; contentType: string; data: Buffer };
-import { appendDraftHtml, replaceDraftHtml } from '../core/offline-draft-assist';
+import {
+  appendDraftHtml,
+  replaceDraftHtml,
+  splitDraftForAssist,
+} from '../core/offline-draft-assist';
 import {
   applyProofToHtml,
   htmlToPlain,
@@ -90,7 +94,8 @@ export class OfflineDraftsStore {
   proofNotice: string | null = null;
   /** After an AI rewrite was applied: what happened + undo available. */
   aiNotice: { draftId: string; text: string; warn: boolean } | null = null;
-  private _aiUndo: { draftId: string; html: string } | null = null;
+  /** One-step undo of the last AI apply: body HTML, plus the subject when it changed. */
+  private _aiUndo: { draftId: string; html: string; subject?: string } | null = null;
 
   private _dir: string | null = null;
   private _listeners = new Set<Listener>();
@@ -489,29 +494,48 @@ export class OfflineDraftsStore {
    * the change maps onto the existing paragraphs, otherwise falls back to
    * plain paragraphs and says so. One-step undo via undoAi().
    */
-  applyAiText(id: string, text: string, how: 'replace' | 'append'): boolean {
+  applyAiText(
+    id: string,
+    text: string,
+    how: 'replace' | 'append',
+    opts: { subject?: string | null } = {}
+  ): boolean {
     const d = this.drafts.find((x) => x.id === id);
     if (!d || !String(text || '').trim()) {
       return false;
     }
     const before = draftHtml(d);
+    const hadOwnText = !!splitDraftForAssist(d.body).own.trim();
     const res =
       how === 'replace'
         ? replaceDraftHtml(before, d.body, text)
         : appendDraftHtml(before, d.body, text);
-    this._aiUndo = { draftId: id, html: before };
-    this.update(id, { html: res.html });
+    const newSubject = typeof opts.subject === 'string' ? opts.subject : null;
+    this._aiUndo = {
+      draftId: id,
+      html: before,
+      ...(newSubject !== null ? { subject: d.subject } : {}),
+    };
+    this.update(
+      id,
+      newSubject !== null ? { html: res.html, subject: newSubject } : { html: res.html }
+    );
+    // An empty draft has no formatting to lose.
+    const kept = res.formattingKept || !hadOwnText;
+    const subjectNote =
+      newSubject !== null ? tr(' גם הנושא עודכן.', ' The subject was updated too.') : '';
     this.aiNotice = {
       draftId: id,
-      warn: !res.formattingKept,
-      text: res.formattingKept
-        ? how === 'replace'
-          ? tr('✨ הטקסט מה-AI הוחל על הטיוטה.', '✨ The AI text replaced the draft.')
-          : tr('✨ הטקסט מה-AI נוסף בסוף הטיוטה.', '✨ The AI text was added at the end.')
-        : tr(
-            '⚠️ הטקסט מה-AI הוחל, אבל העיצוב (מודגש, צבעים וכו׳) לא נשמר - הטקסט הוכנס כפסקאות רגילות.',
-            '⚠️ The AI text was applied, but formatting (bold, colours, etc.) was not kept - it was inserted as plain paragraphs.'
-          ),
+      warn: !kept,
+      text:
+        (kept
+          ? how === 'replace'
+            ? tr('✨ הטקסט מה-AI הוחל על הטיוטה.', '✨ The AI text replaced the draft.')
+            : tr('✨ הטקסט מה-AI נוסף בסוף הטיוטה.', '✨ The AI text was added at the end.')
+          : tr(
+              '⚠️ הטקסט מה-AI הוחל, אבל העיצוב (מודגש, צבעים וכו׳) לא נשמר - הטקסט הוכנס כפסקאות רגילות.',
+              '⚠️ The AI text was applied, but formatting (bold, colours, etc.) was not kept - it was inserted as plain paragraphs.'
+            )) + subjectNote,
     };
     this.contentRev++;
     this.flush();
@@ -529,7 +553,10 @@ export class OfflineDraftsStore {
       return false;
     }
     this._aiUndo = null;
-    this.update(u.draftId, { html: u.html });
+    this.update(
+      u.draftId,
+      typeof u.subject === 'string' ? { html: u.html, subject: u.subject } : { html: u.html }
+    );
     this.aiNotice = {
       draftId: u.draftId,
       warn: false,

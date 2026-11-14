@@ -25,6 +25,7 @@ import { showLanguageMenu, showThemeMenu, offlineThemeChoices } from './offline-
 import { OfflineDraftSource } from '../core/offline-drafts';
 import { ParsedOfflineMail } from '../core/offline-mail-mime';
 import AISidebarStore from '../ai-sidebar-store';
+import { startWriteWithAi } from './write-with-ai';
 import { ScopeMode } from '../core/types';
 import { offlineVersionLabel } from '../../../../src/offline-menu';
 import { OfflineSortKey, SORT_LABELS } from '../core/offline-list-view';
@@ -579,6 +580,28 @@ export class OfflineRibbon extends React.Component<Record<string, never>, State>
         });
         return [
           { id: 'ai-panel', label: tr('חלונית', 'Panel'), buttons: panes(['MessageListSidebar']) },
+          {
+            id: 'ai-write',
+            label: tr('כתיבה', 'Write'),
+            buttons: [
+              {
+                id: 'ai-write',
+                icon: '✍️',
+                label: tr('כתוב עם AI', 'Write with AI'),
+                pressed: ai.scopeMode === 'open-draft' && ai.draftWriteMode,
+                title: draft
+                  ? tr(
+                      'AI יכתוב את המייל או את התשובה לפי הוראה שלך (נשלח ל-Gemini רק בלחיצה על "כתוב")',
+                      'The AI writes the mail or the reply from your instruction (sent to Gemini only when you click "Write")'
+                    )
+                  : tr(
+                      'פותח טיוטה חדשה ו-AI יכתוב אותה לפי הוראה שלך (נשלח רק בלחיצה על "כתוב")',
+                      'Opens a new draft that the AI writes from your instruction (sent only when you click "Write")'
+                    ),
+                onClick: () => startWriteWithAi(),
+              },
+            ],
+          },
           {
             id: 'ai-scope',
             label: tr('על מה לשאול', 'Ask about'),
