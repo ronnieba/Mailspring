@@ -3481,3 +3481,67 @@ button.offline-brand-button {
     }
   }
 }
+
+// ---- PowerPoint: real slides in the viewer (t230) ----
+.offline-viewer-slides-real {
+  padding: 16px;
+  .ofl-pptx-deck {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 18px;
+  }
+  .ofl-pptx-slide-wrap {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 4px;
+    max-width: 100%;
+  }
+  .ofl-pptx-slide-num {
+    align-self: stretch;
+    color: #e5e7eb;
+    font-size: 12px;
+  }
+  .ofl-pptx-slide {
+    box-shadow: 0 4px 18px rgba(0, 0, 0, 0.45);
+    flex: none;
+    color: #000;
+    p {
+      margin: 0;
+    }
+    img {
+      user-select: none;
+    }
+  }
+  .ofl-pptx-missing,
+  .ofl-pptx-unsupported {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    text-align: center;
+    font-size: 12px;
+    color: #475569;
+    background: repeating-linear-gradient(45deg, #f1f5f9, #f1f5f9 8px, #e2e8f0 8px, #e2e8f0 16px);
+    border: 1px dashed #94a3b8;
+    box-sizing: border-box;
+  }
+  .ofl-pptx-missing {
+    position: absolute;
+    inset: 0;
+  }
+  .ofl-pptx-outline {
+    width: 880px;
+    max-width: 100%;
+    background: #fff;
+    color: #111;
+    padding: 14px 18px;
+    border-radius: 6px;
+  }
+  .offline-viewer-slide-notes {
+    width: 880px;
+    max-width: 100%;
+    color: #e5e7eb;
+    font-size: 12px;
+  }
+}

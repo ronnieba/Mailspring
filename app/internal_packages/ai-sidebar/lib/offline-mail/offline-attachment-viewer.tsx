@@ -36,6 +36,8 @@ import {
   zoomStep,
 } from '../core/offline-viewer';
 import type { AttachmentItem } from './offline-attachments-view';
+import { PptxDeck, renderPptx } from '../core/offline-pptx-render';
+import { PptxDeckView } from './offline-pptx-view';
 
 type Content =
   | { type: 'pdf'; doc: any; task: any; pages: number }
@@ -43,6 +45,7 @@ type Content =
   | { type: 'html'; html: string }
   | { type: 'sheets'; sheets: SheetView[] }
   | { type: 'slides'; slides: SlideView[] }
+  | { type: 'deck'; deck: PptxDeck }
   | { type: 'text'; text: string; truncated: boolean; mono: boolean }
   | { type: 'eml'; eml: EmlView };
 
@@ -65,6 +68,7 @@ type State = {
   guard: ViewerGuard | null;
   sheet: number;
   pdfRendered: number;
+  slideMode: 'slides' | 'outline';
 };
 
 /* eslint-disable @typescript-eslint/no-var-requires */
@@ -92,6 +96,7 @@ export class OfflineAttachmentViewer extends React.Component<Props, State> {
     guard: null,
     sheet: 0,
     pdfRendered: 0,
+    slideMode: 'slides',
   };
   private _gen = 0;
   private _pdfGen = 0;
@@ -253,8 +258,16 @@ export class OfflineAttachmentViewer extends React.Component<Props, State> {
           sheets: sheetsFromBytes(require('xlsx'), buf, decodeTextBytes(buf)),
         };
       case 'pptx':
-        // eslint-disable-next-line @typescript-eslint/no-var-requires
-        return { type: 'slides', slides: await pptxSlides(require('jszip'), buf) };
+        // Real slides (layout, text, pictures, shapes, tables); if the file
+        // cannot be laid out, fall back to the text-and-pictures outline.
+        try {
+          // eslint-disable-next-line @typescript-eslint/no-var-requires
+          return { type: 'deck', deck: await renderPptx(require('jszip'), buf) };
+        } catch (e) {
+          console.warn('[Offline viewer] slide layout failed, showing the outline');
+          // eslint-disable-next-line @typescript-eslint/no-var-requires
+          return { type: 'slides', slides: await pptxSlides(require('jszip'), buf) };
+        }
       case 'eml':
         return { type: 'eml', eml: emlView(buf) };
       case 'json': {
@@ -587,6 +600,12 @@ export class OfflineAttachmentViewer extends React.Component<Props, State> {
         return this._renderSheets(content.sheets);
       case 'slides':
         return this._renderSlides(content.slides);
+      case 'deck':
+        return (
+          <div className="offline-viewer-slides-real">
+            <PptxDeckView deck={content.deck} zoom={this.state.zoom} mode={this.state.slideMode} />
+          </div>
+        );
       case 'eml':
         return this._renderEml(content.eml);
       case 'text':
@@ -673,6 +692,15 @@ export class OfflineAttachmentViewer extends React.Component<Props, State> {
               <span className="offline-viewer-size" dir="ltr">
                 {formatBytes(it.size)}
               </span>
+              {content && content.type === 'deck' ? (
+                <span className="offline-viewer-pages">
+                  {' · '}
+                  {tr(
+                    `${content.deck.slides.length} שקופיות`,
+                    `${content.deck.slides.length} slides`
+                  )}
+                </span>
+              ) : null}
               {content && content.type === 'pdf' ? (
                 <span className="offline-viewer-pages">
                   {' · '}
@@ -682,6 +710,26 @@ export class OfflineAttachmentViewer extends React.Component<Props, State> {
               ) : null}
             </div>
             <div className="offline-viewer-tools">
+              {content && content.type === 'deck' ? (
+                <button
+                  type="button"
+                  className="offline-viewer-btn"
+                  data-offline-viewer-slide-mode={this.state.slideMode}
+                  title={tr(
+                    'החלף בין שקופיות מלאות לטקסט בלבד',
+                    'Switch between full slides and text only'
+                  )}
+                  onClick={() =>
+                    this.setState({
+                      slideMode: this.state.slideMode === 'slides' ? 'outline' : 'slides',
+                    })
+                  }
+                >
+                  {this.state.slideMode === 'slides'
+                    ? tr('📝 טקסט בלבד', '📝 Text only')
+                    : tr('🖼️ שקופיות', '🖼️ Slides')}
+                </button>
+              ) : null}
               <button
                 type="button"
                 className="offline-viewer-btn"

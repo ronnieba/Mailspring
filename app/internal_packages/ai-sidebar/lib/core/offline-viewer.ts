@@ -36,7 +36,7 @@ export const THIRD_PARTY_VIEWER_LIBS = [
     name: 'jszip',
     version: '3.10.1',
     license: 'MIT (dual MIT / GPL-3.0, used under MIT)',
-    use: 'PowerPoint .pptx outline',
+    use: 'PowerPoint .pptx (slides and outline)',
   },
   {
     name: 'dompurify',
