@@ -30,6 +30,13 @@ import { ScopeMode } from '../core/types';
 import { offlineVersionLabel } from '../../../../src/offline-menu';
 import { OfflineSortKey, SORT_LABELS } from '../core/offline-list-view';
 import { OfflineBrand } from './offline-brand';
+import {
+  installEditTargetTracker,
+  editTarget,
+  focusEditTarget,
+  selectAllInField,
+  draftSelectTarget,
+} from './offline-edit-target';
 
 type Btn = {
   id: string;
@@ -61,6 +68,44 @@ function remote() {
 
 function webContents() {
   return remote().getCurrentWebContents();
+}
+
+// Edit buttons act on the active / last used text field (focus restored
+// first, so keyboard users who Tab onto the ribbon get the same result).
+function inField(fn: () => void) {
+  focusEditTarget();
+  fn();
+}
+
+/** Edit group "Select all": all the text in the open draft's last used
+ * field (the body by default). */
+export function ribbonSelectAllDraftText(): boolean {
+  const field = draftSelectTarget();
+  if (!field) {
+    return false;
+  }
+  selectAllInField(field);
+  return true;
+}
+
+/** Home "Select all messages": every message in the list on screen (search
+ * results or the folder list), like the list's own "Select all". From the
+ * drafts screen it goes back to the mail list (the draft is saved) so the
+ * selection can be seen. */
+export function ribbonSelectAllMessages(): 'search-results' | 'messages' | 'none' {
+  if (offlineDraftsStore.showing) {
+    offlineDraftsStore.hide();
+  }
+  const searchAll = document.querySelector('[data-offline-search-select-all]') as HTMLElement;
+  if (searchAll && searchAll.getClientRects().length > 0) {
+    searchAll.click();
+    return 'search-results';
+  }
+  if (!offlineMailStore.visibleRows().length) {
+    return 'none';
+  }
+  offlineMailStore.selectAllVisible();
+  return 'messages';
 }
 
 function sendCommand(command: string) {
@@ -142,6 +187,7 @@ export class OfflineRibbon extends React.Component<Record<string, never>, State>
       this._syncBodyClass();
       this.forceUpdate();
     };
+    this._unsubs.push(installEditTargetTracker(document));
     this._unsubs.push(WorkspaceStore.listen(update));
     this._unsubs.push(offlineMailStore.listen(update));
     this._unsubs.push(offlineDraftsStore.listen(update));
@@ -259,28 +305,69 @@ export class OfflineRibbon extends React.Component<Record<string, never>, State>
     };
   }
 
+  // Contextual (Outlook-like): only while a draft is open for editing.
   _editGroup(): Group {
     const wc = () => webContents();
     return {
       id: 'edit',
-      label: tr('עריכה', 'Edit'),
+      label: tr('עריכת טיוטה', 'Edit draft'),
       buttons: [
-        { id: 'undo', icon: '↶', label: tr('ביטול', 'Undo'), onClick: () => wc().undo() },
-        { id: 'redo', icon: '↷', label: tr('ביצוע חוזר', 'Redo'), onClick: () => wc().redo() },
-        { id: 'cut', icon: '✂️', label: tr('גזירה', 'Cut'), onClick: () => wc().cut() },
-        { id: 'copy', icon: '📋', label: tr('העתקה', 'Copy'), onClick: () => wc().copy() },
-        { id: 'paste', icon: '📥', label: tr('הדבקה', 'Paste'), onClick: () => wc().paste() },
+        {
+          id: 'undo',
+          icon: '↶',
+          label: tr('ביטול', 'Undo'),
+          onClick: () => inField(() => wc().undo()),
+        },
+        {
+          id: 'redo',
+          icon: '↷',
+          label: tr('ביצוע חוזר', 'Redo'),
+          onClick: () => inField(() => wc().redo()),
+        },
+        {
+          id: 'cut',
+          icon: '✂️',
+          label: tr('גזירה', 'Cut'),
+          onClick: () => inField(() => wc().cut()),
+        },
+        {
+          id: 'copy',
+          icon: '📋',
+          label: tr('העתקה', 'Copy'),
+          // Copy also works on text marked in the message reader, so only
+          // move the focus back when no text is marked on the page.
+          onClick: () => {
+            const sel = document.getSelection();
+            const field = editTarget();
+            const markedElsewhere =
+              !!sel && !sel.isCollapsed && !!field && !field.contains(sel.anchorNode);
+            if (!markedElsewhere) {
+              focusEditTarget();
+            }
+            wc().copy();
+          },
+        },
+        {
+          id: 'paste',
+          icon: '📥',
+          label: tr('הדבקה', 'Paste'),
+          onClick: () => inField(() => wc().paste()),
+        },
         {
           id: 'paste-plain',
           icon: '🔤',
           label: tr('הדבקה כטקסט', 'Paste as text'),
-          onClick: () => wc().pasteAndMatchStyle(),
+          onClick: () => inField(() => wc().pasteAndMatchStyle()),
         },
         {
-          id: 'select-all',
+          id: 'select-all-text',
           icon: '⬚',
-          label: tr('בחירת הכול', 'Select all'),
-          onClick: () => wc().selectAll(),
+          label: tr('בחר הכל', 'Select all text'),
+          title: tr(
+            'בוחר את כל הטקסט בשדה הטיוטה שבו ערכת לאחרונה (ברירת מחדל: גוף ההודעה)',
+            'Selects all the text in the draft field you last edited (the message body by default)'
+          ),
+          onClick: () => void ribbonSelectAllDraftText(),
         },
       ],
     };
@@ -382,7 +469,23 @@ export class OfflineRibbon extends React.Component<Record<string, never>, State>
               },
             ],
           },
-          this._editGroup(),
+          {
+            id: 'select',
+            label: tr('בחירה', 'Select'),
+            buttons: [
+              {
+                id: 'select-messages',
+                icon: '☑️',
+                label: tr('בחר את כל ההודעות', 'Select all messages'),
+                title: tr(
+                  'בוחר את כל ההודעות ברשימה המוצגת (כמו "בחר הכל" מעל הרשימה)',
+                  'Selects all the messages in the list on screen (like "Select all" above the list)'
+                ),
+                onClick: () => void ribbonSelectAllMessages(),
+              },
+            ],
+          },
+          ...(draft ? [this._editGroup()] : []),
         ];
       case 'view':
         return [
@@ -595,6 +698,7 @@ export class OfflineRibbon extends React.Component<Record<string, never>, State>
               },
             ],
           },
+          ...(draft ? [this._editGroup()] : []),
         ];
       case 'ai': {
         const scope = (mode: ScopeMode, icon: string, he: string, en: string): Btn => ({
