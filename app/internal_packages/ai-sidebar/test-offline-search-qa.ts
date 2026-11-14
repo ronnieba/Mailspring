@@ -14,6 +14,9 @@ import {
   QA_MAX_MESSAGES,
   QA_MAX_TOTAL_CHARS,
   questionToSearchQuery,
+  looksLikeQuestion,
+  ASK_AI_TOOLTIP,
+  ASK_AI_QUESTION_HINT,
 } from './lib/core/offline-search-qa';
 import {
   buildOfflineQuestionContext,
@@ -215,6 +218,95 @@ async function main() {
         fs.readFileSync(path.join(__dirname, 'lib/core/offline-search-qa.ts'), 'utf8')
       ),
       'no network in helpers'
+    );
+  });
+
+  await test('looks like a question: question words or "?", never one word', () => {
+    for (const q of [
+      'מתי הפגישה עם דנה',
+      'מה כתבו על החשבונית',
+      'ומתי זה נקבע',
+      'איפה הקבלה?',
+      'כמה עלה הטיפול',
+      'האם שילמנו',
+      'למה זה בוטל',
+      'איך מגיעים',
+      'what did dana say',
+      'When is the meeting',
+      'who sent the invoice',
+      'Where is it',
+      'how much',
+      'did we pay',
+      'is it done',
+      'the meeting tomorrow?',
+    ]) {
+      assert(looksLikeQuestion(q), q);
+    }
+    for (const q of [
+      '',
+      '   ',
+      'חשבונית',
+      'מתי',
+      'מתי?',
+      'invoice?',
+      'what',
+      'from:dana has:attachment',
+      'חשבונית חשמל',
+      'meeting notes',
+      'משפחה OR כסף',
+    ]) {
+      assert(!looksLikeQuestion(q), `not: ${q}`);
+    }
+  });
+
+  await test('Ask AI tooltip and hint explain local typing vs. paid click (Hebrew + English)', () => {
+    const [he, en] = ASK_AI_TOOLTIP;
+    assert(
+      /מקומית/.test(he) &&
+        /Gemini/.test(he) &&
+        he.includes('12') &&
+        /טקסט בלבד/.test(he) &&
+        /חלונית ה-AI/.test(he) &&
+        /בתשלום/.test(he) &&
+        /רק בלחיצה/.test(he),
+      he
+    );
+    assert(
+      /locally/.test(en) &&
+        /Gemini/.test(en) &&
+        en.includes('12') &&
+        /text only/.test(en) &&
+        /AI panel/.test(en) &&
+        /click to open/.test(en) &&
+        /Paid/.test(en) &&
+        /only on click/.test(en),
+      en
+    );
+    assert(ASK_AI_QUESTION_HINT[0] === 'נראה כמו שאלה — לחץ שאל AI לתשובה', 'he hint');
+    const view = fs.readFileSync(
+      path.join(__dirname, 'lib/offline-mail/offline-search-view.tsx'),
+      'utf8'
+    );
+    assert(
+      view.includes("'חפש מילים, או כתוב שאלה ולחץ שאל AI'") &&
+        view.includes("'Search words, or type a question and click Ask AI'"),
+      'placeholder'
+    );
+    assert(
+      view.includes('title={tr(ASK_AI_TOOLTIP[0], ASK_AI_TOOLTIP[1])}') &&
+        view.includes('is-question') &&
+        view.includes('data-offline-search-question-hint'),
+      'button + hint'
+    );
+    assert(
+      /onClick=\{\(\) => askAiAboutMail\(s\.query\)\}/.test(view) &&
+        (view.match(/askAiAboutMail\(/g) || []).length === 1,
+      'sent only from the click'
+    );
+    const tour = fs.readFileSync(path.join(__dirname, 'lib/core/offline-tour.ts'), 'utf8');
+    assert(
+      tour.includes('מאת:') && tour.includes('has:attachment') && tour.includes('12 הודעות'),
+      'operators + limit in the ? tip'
     );
   });
 

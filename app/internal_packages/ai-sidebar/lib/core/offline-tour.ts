@@ -71,8 +71,8 @@ export const TOUR_STEPS: TourStep[] = [
     targets: ['[data-offline-search-bar]'],
     title: ['חיפוש', 'Search'],
     body: [
-      'חיפוש מקומי מהיר בנושא, שולח, תוכן ושמות קבצים (גם בעברית עם תחיליות). "🤖 שאל AI" עונה על שאלה בשפה חופשית מתוך התוצאות המתאימות — רק כשלוחצים.',
-      'Fast local search in subject, sender, text and file names (Hebrew prefixes too). "🤖 Ask AI" answers a plain question from the best matches — only when you click.',
+      'הקלידו מילים — חיפוש מקומי מהיר בנושא, שולח, תוכן ושמות קבצים, ושום דבר לא נשלח. כתבו שאלה — הכפתור "🤖 שאל AI" יידלק, ולחיצה עליו מביאה תשובה בחלונית ה-AI עם מקורות. נשלח רק בלחיצה.',
+      'Type words — a fast local search in subject, sender, text and file names; nothing is sent. Type a question — the "🤖 Ask AI" button lights up, and clicking it brings an answer in the AI panel with sources. Sent only on click.',
     ],
   },
   {
@@ -161,8 +161,8 @@ export const TOUR_STEPS: TourStep[] = [
 
 export const TOUR_TIPS: { [id: string]: [string, string] } = {
   search: [
-    'כתבו מילים או שאלה. מסננים: מאת:, אל:, נושא:, יש:צרופות, אחרי:2024, תיקייה:. "🤖 שאל AI" עונה מתוך ההודעות המתאימות ביותר — רק בלחיצה.',
-    'Type words or a question. Filters: from:, to:, subject:, has:attachment, after:2024, folder:. "🤖 Ask AI" answers from the best matches — only on click.',
+    'מילים = חיפוש מקומי בלבד. שאלה (למשל "מתי הפגישה עם דנה?") + לחיצה על "🤖 שאל AI" = התשובה מגיעה בחלונית ה-AI עם מקורות; נשלחים רק השאלה ועד 12 הודעות מתאימות (טקסט), ורק בלחיצה. מסננים: מאת:, אל:, נושא:, קובץ:, יש:צרופות, אחרי:2024-01-01, לפני:, תיקייה:, "ביטוי מדויק", -מילה.',
+    'Words = local search only. A question (e.g. "When is the meeting with Dana?") + clicking "🤖 Ask AI" = the answer appears in the AI panel with sources; only the question and up to 12 matching messages (text) are sent, and only on click. Filters: from:, to:, subject:, file:, has:attachment, after:2024-01-01, before:, folder:, "exact phrase", -word.',
   ],
   ai: [
     'בחרו על מה לשאול (נבחרות / תיקייה / כל העותק / טיוטה), כתבו שאלה ולחצו "שלח". "🔎 חפש ושאל" מחפש קודם בכל הדואר. רק טקסט נשלח, ורק בלחיצה.',

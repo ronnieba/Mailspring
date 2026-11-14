@@ -6,6 +6,7 @@ import { offlineMailStore } from './offline-mail-store';
 import { offlineSearchStore, OfflineSearchScope, OfflineSearchSort } from './offline-search-store';
 import { OfflineStoreComponent } from './use-offline-store';
 import { askAiAboutMail } from './write-with-ai';
+import { ASK_AI_QUESTION_HINT, ASK_AI_TOOLTIP, looksLikeQuestion } from '../core/offline-search-qa';
 import { OfflineHelpTip } from './offline-tour';
 
 const ROW = 78;
@@ -85,6 +86,7 @@ export class OfflineSearchBar extends OfflineStoreComponent {
     const s = offlineSearchStore;
     const b = s.build;
     const pct = b.total ? Math.floor((b.done / b.total) * 100) : 0;
+    const question = looksLikeQuestion(s.query);
     return (
       <div className="offline-search-bar" dir={offlineDir()} data-offline-search-bar="true">
         <div className="offline-search-row">
@@ -97,8 +99,8 @@ export class OfflineSearchBar extends OfflineStoreComponent {
             dir="auto"
             data-offline-search-input="true"
             placeholder={tr(
-              'חיפוש בדואר (נושא, שולח, תוכן, קבצים) – למשל: מאת:דנה יש:צרופות',
-              'Search mail (subject, sender, text, files) – e.g. from:dana has:attachment'
+              'חפש מילים, או כתוב שאלה ולחץ שאל AI',
+              'Search words, or type a question and click Ask AI'
             )}
             title={tr(OFFLINE_SEARCH_HELP[0], OFFLINE_SEARCH_HELP[1])}
             value={s.query}
@@ -118,19 +120,26 @@ export class OfflineSearchBar extends OfflineStoreComponent {
           ) : null}
           <button
             type="button"
-            className="offline-search-ask-ai"
+            className={`offline-search-ask-ai${question ? ' is-question' : ''}`}
             data-offline-search-ask-ai="true"
+            data-offline-search-question={question ? 'true' : undefined}
             disabled={!s.query.trim()}
-            title={tr(
-              'שאל את ה-AI: כתבו שאלה בשפה חופשית (למשל "מתי הפגישה עם דנה?"). קודם חיפוש מקומי, ואז ה-AI בענן עונה רק מטקסט ההודעות המתאימות ביותר, עם קישורים אליהן. נשלח רק בלחיצה הזו.',
-              'Ask the AI: type a question in plain words (e.g. "When is the meeting with Dana?"). Local search first, then the cloud AI answers only from the text of the best matches, with links to them. Sent only on this click.'
-            )}
+            title={tr(ASK_AI_TOOLTIP[0], ASK_AI_TOOLTIP[1])}
             onClick={() => askAiAboutMail(s.query)}
           >
             {tr('🤖 שאל AI', '🤖 Ask AI')}
           </button>
           <OfflineHelpTip tip="search" />
         </div>
+        {question ? (
+          <div
+            className="offline-search-question-hint"
+            data-offline-search-question-hint="true"
+            role="status"
+          >
+            ✨ {tr(ASK_AI_QUESTION_HINT[0], ASK_AI_QUESTION_HINT[1])}
+          </div>
+        ) : null}
         <div className="offline-search-options">
           <select
             data-offline-search-scope="true"

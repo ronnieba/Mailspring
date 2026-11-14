@@ -549,6 +549,21 @@
   }
 }
 
+@keyframes ofl-ask-pulse {
+  0%,
+  100% {
+    box-shadow: 0 0 0 0 color-mix(in srgb, @component-active-color 45%, transparent);
+  }
+  50% {
+    box-shadow: 0 0 0 4px color-mix(in srgb, @component-active-color 20%, transparent);
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .offline-search-ask-ai.is-question {
+    animation: none !important;
+  }
+}
+
 // Make the column dividers easier to find and grab.
 .sheet .flexbox-handle-horizontal:hover > div {
   background: color-mix(in srgb, @component-active-color 60%, transparent);
@@ -2934,6 +2949,23 @@ body[class*='less-is-more'] {
       opacity: 0.45;
       cursor: default;
     }
+    // Plain words: muted (it's still clickable).
+    &:not(.is-question):not(:disabled) {
+      opacity: 0.6;
+      background: transparent;
+      border-color: color-mix(in srgb, @component-active-color 45%, transparent);
+    }
+    // Looks like a question: gentle glow so the button is noticed (never auto-sends).
+    &.is-question:not(:disabled) {
+      background: color-mix(in srgb, @component-active-color 30%, transparent);
+      font-weight: 600;
+      animation: ofl-ask-pulse 1.8s ease-in-out infinite;
+    }
+  }
+  .offline-search-question-hint {
+    margin-top: 3px;
+    font-size: 11.5px;
+    color: @component-active-color;
   }
   .offline-search-options {
     display: flex;

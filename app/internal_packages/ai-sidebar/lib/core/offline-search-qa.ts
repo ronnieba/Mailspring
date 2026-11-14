@@ -95,3 +95,44 @@ export function capForQa<T extends { body: string }>(
   }
   return out;
 }
+
+const QUESTION_STARTS = new Set(
+  (
+    'מתי מה מי איפה היכן כמה האם למה מדוע איך כיצד איזה איזו אילו מהו מהי מיהו מיהי ' +
+    'what when who where how why which did does do is are was were can could will would should has have whose whom'
+  ).split(/\s+/)
+);
+
+/**
+ * Does the search box text look like a question for "Ask AI"? Needs two or
+ * more words, and either a trailing "?" or a question word first (ו before a
+ * Hebrew question word is fine: "ומתי"). One word never counts. Only used to
+ * highlight the button; nothing is ever sent automatically.
+ */
+export function looksLikeQuestion(text: string): boolean {
+  const t = (text || '').normalize('NFC').trim();
+  const ws = t.split(/\s+/).filter((w) => /[\p{L}\p{N}]/u.test(w));
+  if (ws.length < 2) return false;
+  if (/[?？؟]\s*$/.test(t)) return true;
+  const first = ws[0].toLowerCase().replace(/^[^\p{L}\p{N}]+|[^\p{L}\p{N}]+$/gu, '');
+  return (
+    QUESTION_STARTS.has(first) ||
+    (/^ו[\u05d0-\u05ea]{2,}$/.test(first) && QUESTION_STARTS.has(first.slice(1)))
+  );
+}
+
+/** Hover text on the search bar's "Ask AI" button. */
+export const ASK_AI_TOOLTIP: [string, string] = [
+  'הקלדה בתיבה רק מחפשת מקומית — שום דבר לא נשלח. ' +
+    `לחיצה על "שאל AI" שולחת ל-Gemini את השאלה ועד ${QA_MAX_MESSAGES} הודעות מתאימות (טקסט בלבד, בלי קבצים מצורפים). ` +
+    'התשובה מופיעה בחלונית ה-AI עם מקורות שאפשר ללחוץ עליהם כדי לפתוח את ההודעה. בתשלום, ורק בלחיצה.',
+  'Typing in the box only searches locally — nothing is sent. ' +
+    `Clicking "Ask AI" sends the question and up to ${QA_MAX_MESSAGES} matching messages (text only, no attachments) to Gemini. ` +
+    'The answer appears in the AI panel with sources you can click to open the message. Paid, and only on click.',
+];
+
+/** Small hint under the search box when the text looks like a question. */
+export const ASK_AI_QUESTION_HINT: [string, string] = [
+  'נראה כמו שאלה — לחץ שאל AI לתשובה',
+  'Looks like a question — click Ask AI for an answer',
+];
