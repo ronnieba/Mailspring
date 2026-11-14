@@ -16,6 +16,7 @@ import {
   buildSnippet,
   normalizeSearchText,
   parseSearchQuery,
+  SEARCH_RESULT_LIMIT,
 } from '../core/offline-search';
 import { readOfflineMessageHead, OfflineIndexEntry } from '../core/offline-mail-index';
 import { extractOfflineSearchText } from '../core/offline-mail-mime';
@@ -52,6 +53,8 @@ class OfflineSearchStore {
   /** Text in the search box. */
   query = '';
   scope: OfflineSearchScope = 'all';
+  /** Also find messages hidden locally (blocked senders, local trash/spam). */
+  includeHidden = false;
   sort: OfflineSearchSort = 'relevance';
   /** Results replace the folder list while true. */
   active = false;
@@ -251,6 +254,15 @@ class OfflineSearchStore {
     this._emit();
   }
 
+  setIncludeHidden(on: boolean) {
+    this.includeHidden = !!on;
+    if (this.active) {
+      this.run();
+    } else {
+      this._emit();
+    }
+  }
+
   setScope(scope: OfflineSearchScope) {
     this.scope = scope;
     if (this.active) {
@@ -301,7 +313,7 @@ class OfflineSearchStore {
     if (this.scope === 'all' || !cur) {
       return null;
     }
-    if (this.scope === 'folder') {
+    if (this.scope === 'folder' || offlineMailStore.isLocalFolder(cur)) {
       return [cur];
     }
     return all.filter((n) => n.path === cur || n.path.startsWith(`${cur}/`)).map((n) => n.path);
@@ -324,20 +336,34 @@ class OfflineSearchStore {
       }
       const p = parseSearchQuery(q);
       this.parsed = p;
+      const scope = this.scopeFolders(p);
+      // Local changes (moves, local trash/spam, blocked senders) live outside
+      // the search index: search everywhere, then keep what the views show.
+      const local = offlineMailStore.hasRelocations();
       const { hits, total } = this._ix.search(p, {
-        folders: this.scopeFolders(p),
+        folders: local ? null : scope,
         sort: this.sort,
+        limit: local ? SEARCH_RESULT_LIMIT * 10 : undefined,
       });
-      const results: OfflineSearchResult[] = [];
+      let results: OfflineSearchResult[] = [];
       for (const h of hits) {
         const entry = offlineMailStore.getEntry(h.id);
         // Duplicate copies in one folder are listed once (like the folder list).
-        if (entry && offlineMailStore.isListed(h.id)) {
-          results.push({ id: h.id, folder: h.folder, ts: h.ts, entry });
+        if (!entry || !offlineMailStore.isListed(h.id)) {
+          continue;
         }
+        if (local && !offlineMailStore.searchShows(h.id, this.includeHidden, scope)) {
+          continue;
+        }
+        results.push({ id: h.id, folder: entry.folder, ts: h.ts, entry });
+      }
+      let shownTotal = total;
+      if (local) {
+        shownTotal = results.length + Math.max(0, total - hits.length);
+        results = results.slice(0, SEARCH_RESULT_LIMIT);
       }
       this.results = results;
-      this.total = total;
+      this.total = shownTotal;
       this.error = null;
     } catch (err) {
       this.results = [];

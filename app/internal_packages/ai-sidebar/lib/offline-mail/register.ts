@@ -13,6 +13,8 @@ import { OfflineRibbon } from './offline-ribbon';
 import { offlineMailStore } from './offline-mail-store';
 import { offlineDraftsStore } from './offline-drafts-store';
 import { offlineAddressBook } from './offline-address-book-store';
+import * as offlineActions from './offline-message-actions';
+import { offlineActionsUi } from './offline-message-actions';
 import { offlineSearchStore } from './offline-search-store';
 import { proofreadDraftViaIpc } from '../gemini-ipc-transport';
 import AISidebarStore from '../ai-sidebar-store';
@@ -69,6 +71,7 @@ export function registerOfflineMailBrowser(archivePath: string, sidebar: any) {
   // Local address book from archive headers; saved only in the offline profile.
   try {
     offlineAddressBook.configure(AppEnv.getConfigDirPath());
+    offlineAddressBook.savedProvider = () => offlineMailStore.overlay.contacts;
   } catch (err) {
     console.error('[Offline address book] not available:', (err as Error).message);
   }
@@ -143,6 +146,8 @@ export function registerOfflineMailBrowser(archivePath: string, sidebar: any) {
     addressBook: offlineAddressBook,
     search: offlineSearchStore,
     ai: AISidebarStore,
+    actions: offlineActions,
+    actionsUi: offlineActionsUi,
   };
   void offlineMailStore.start(archivePath, cachePath);
   // Window size/position/maximized state is restored by the main process

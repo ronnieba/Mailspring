@@ -37,6 +37,24 @@ import {
   selectAllInField,
   draftSelectTarget,
 } from './offline-edit-target';
+import {
+  OfflineActionsHost,
+  actArchive,
+  actAddContacts,
+  actBlockSenders,
+  actDelete,
+  actPrint,
+  actResetLocalChanges,
+  actRestore,
+  actSetUnread,
+  actSpam,
+  actToggleStar,
+  openBlockedList,
+  openMovePicker,
+  selectionStarred,
+  selectionUnread,
+} from './offline-message-actions';
+import { localPlaceOf } from '../core/offline-local-overlay';
 
 type Btn = {
   id: string;
@@ -305,6 +323,127 @@ export class OfflineRibbon extends React.Component<Record<string, never>, State>
     };
   }
 
+  // Contextual (like Yahoo/Outlook): only while messages are selected.
+  // Everything is local to this computer and can be restored / undone.
+  _actionsGroup(): Group | null {
+    const s = offlineMailStore;
+    if (offlineDraftsStore.showing) {
+      return null;
+    }
+    const ids = s.actionIds();
+    if (!ids.length) {
+      return null;
+    }
+    const n = ids.length;
+    const many = n > 1 ? tr(` (${n})`, ` (${n})`) : '';
+    const place = localPlaceOf(s.currentFolder);
+    const relocated = ids.some((id) => s.isRelocated(id));
+    const starred = selectionStarred(ids);
+    const unread = selectionUnread(ids);
+    const local = tr('רק במחשב הזה — אפשר לשחזר', 'On this computer only — can be restored');
+    const buttons: Btn[] = [];
+    if (relocated) {
+      buttons.push({
+        id: 'act-restore',
+        icon: '♻️',
+        label: tr('שחזר', 'Restore') + many,
+        title: tr('החזר לתיקייה המקורית', 'Back to the original folder'),
+        onClick: () => actRestore(ids),
+      });
+    }
+    if (place !== 'trash') {
+      buttons.push({
+        id: 'act-delete',
+        icon: '🗑️',
+        label: tr('מחק', 'Delete') + many,
+        title: tr(`העבר לאשפה המקומית (${local})`, `Move to the local Trash (${local})`),
+        onClick: () => actDelete(ids),
+      });
+    }
+    if (place !== 'archive') {
+      buttons.push({
+        id: 'act-archive',
+        icon: '🗄️',
+        label: tr('ארכיון', 'Archive') + many,
+        title: tr(`העבר לארכיון המקומי (${local})`, `Move to the local Archive (${local})`),
+        onClick: () => actArchive(ids),
+      });
+    }
+    buttons.push({
+      id: 'act-move',
+      icon: '📁',
+      label: tr('העבר', 'Move') + many,
+      menu: true,
+      title: tr(`העבר לתיקייה אחרת (${local})`, `Move to another folder (${local})`),
+      onClick: () => openMovePicker(ids),
+    });
+    if (place !== 'spam') {
+      buttons.push({
+        id: 'act-spam',
+        icon: '🚫',
+        label: tr('ספאם', 'Spam') + many,
+        title: tr(
+          `סמן כספאם — לספאם המקומי (${local})`,
+          `Mark as spam — to the local Spam (${local})`
+        ),
+        onClick: () => actSpam(ids),
+      });
+    }
+    buttons.push(
+      {
+        id: 'act-star',
+        icon: starred ? '★' : '☆',
+        label: starred ? tr('הסר כוכב', 'Unstar') : tr('כוכב', 'Star'),
+        pressed: starred,
+        title: tr('סימון בכוכב (מקומי)', 'Star (local)'),
+        onClick: () => actToggleStar(ids),
+      },
+      {
+        id: 'act-unread',
+        icon: unread ? '📭' : '✉️',
+        label: unread ? tr('סמן כנקרא', 'Mark read') : tr('סמן כלא נקרא', 'Mark unread'),
+        title: tr('סימון נקרא / לא נקרא (מקומי)', 'Read / unread mark (local)'),
+        onClick: () => actSetUnread(!unread, ids),
+      },
+      {
+        id: 'act-block',
+        icon: '⛔',
+        label: tr('חסום שולח', 'Block sender'),
+        title: tr(
+          'הסתר את כל ההודעות מהשולח (רק במחשב הזה; ניהול ב"שולחים חסומים")',
+          'Hide all messages from the sender (this computer only; manage in "Blocked senders")'
+        ),
+        onClick: () => actBlockSenders(ids),
+      },
+      {
+        id: 'act-contact',
+        icon: '👤',
+        label: tr('הוסף לאנשי קשר', 'Add to contacts'),
+        title: tr(
+          'שמור את השולח בפנקס הכתובות המקומי',
+          'Save the sender in the local address book'
+        ),
+        onClick: () => actAddContacts(ids),
+      },
+      {
+        id: 'act-print',
+        icon: '🖨️',
+        label: tr('הדפס', 'Print'),
+        disabled: n !== 1,
+        title:
+          n === 1
+            ? tr('פותח את חלון ההדפסה של Windows', 'Opens the Windows print dialog')
+            : tr('בחר הודעה אחת להדפסה', 'Select one message to print'),
+        onClick: () => void actPrint(ids[0]),
+      }
+    );
+    return {
+      id: 'actions',
+      label: n > 1 ? tr(`פעולות (${n} נבחרו)`, `Actions (${n} selected)`) : tr('פעולות', 'Actions'),
+      buttons,
+    };
+  }
+
   // Contextual (Outlook-like): only while a draft is open for editing.
   _editGroup(): Group {
     const wc = () => webContents();
@@ -486,7 +625,7 @@ export class OfflineRibbon extends React.Component<Record<string, never>, State>
             ],
           },
           ...(draft ? [this._editGroup()] : []),
-        ];
+        ].concat(((g) => (g ? [g] : []))(this._actionsGroup()));
       case 'view':
         return [
           {
@@ -828,6 +967,33 @@ export class OfflineRibbon extends React.Component<Record<string, never>, State>
             ],
           },
           {
+            id: 'local-changes',
+            label: tr('שינויים מקומיים', 'Local changes'),
+            buttons: [
+              {
+                id: 'blocked-senders',
+                icon: '⛔',
+                label: tr(
+                  `שולחים חסומים (${s.overlay.blocked.length})`,
+                  `Blocked senders (${s.overlay.blocked.length})`
+                ),
+                title: tr('צפייה וביטול חסימה', 'View and unblock'),
+                onClick: () => openBlockedList(),
+              },
+              {
+                id: 'reset-local',
+                icon: '↺',
+                label: tr('אפס את כל השינויים המקומיים', 'Reset all local changes'),
+                disabled: !s.localChangeCounts().total,
+                title: tr(
+                  'מחזיר את כל ההודעות לתיקיות המקוריות, מוחק כוכבים/סימוני קריאה, חסימות ואנשי קשר שנשמרו (עם אישור)',
+                  'Puts every message back in its original folder and clears stars, read marks, blocks and saved contacts (asks first)'
+                ),
+                onClick: () => void actResetLocalChanges(),
+              },
+            ],
+          },
+          {
             id: 'about',
             label: tr('אודות', 'About'),
             buttons: [
@@ -996,6 +1162,7 @@ export class OfflineRibbon extends React.Component<Record<string, never>, State>
             ))}
           </div>
         </div>
+        <OfflineActionsHost />
       </div>
     );
   }

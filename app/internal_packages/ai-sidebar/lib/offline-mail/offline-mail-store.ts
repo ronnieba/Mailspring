@@ -51,6 +51,25 @@ import {
   setOfflineArchiveCurrentFolder,
   setOfflineArchiveSelection,
 } from '../offline-archive-catalog';
+import {
+  LocalPlace,
+  LOCAL_PLACE_LABELS,
+  OverlayData,
+  OverlayMessage,
+  applyOverlay,
+  emptyOverlay,
+  localFolderPath,
+  localPlaceOf,
+  overlayCounts,
+  patchMessage,
+  readOverlay,
+  senderEmail,
+  writeOverlay,
+} from '../core/offline-local-overlay';
+import { tr } from '../core/offline-i18n';
+
+/** Undo for one local change (restores the previous records). */
+export type OfflineUndo = () => void;
 
 export type OfflineBrowserStatus = 'idle' | 'indexing' | 'ready' | 'error';
 
@@ -153,6 +172,17 @@ class OfflineMailStore {
   expanded = new Set<string>();
   /** Offline profile folder (opened attachment copies live under it). */
   configDir: string | null = null;
+  /** Local changes (t227): flags, local folders, moves, blocked senders. */
+  overlay: OverlayData = emptyOverlay();
+  /** Bumped on every local change (list caches key on it). */
+  overlayVersion = 0;
+  /** Show messages of blocked senders anyway (this session). */
+  showBlocked = false;
+  /** Quick filters (this session). */
+  unreadOnly = false;
+  starredOnly = false;
+  private _hidden = new Set<string>();
+  private _rawById = new Map<string, OfflineIndexEntry>();
 
   private _listeners = new Set<Listener>();
   private _byId = new Map<string, OfflineIndexEntry>();
@@ -195,6 +225,7 @@ class OfflineMailStore {
     if (this.configDir) {
       cleanAttachmentTemp(this.configDir);
     }
+    this.overlay = readOverlay(this.configDir);
     this.threaded = readThreadedPref(this.configDir);
     const listPrefs = readListPrefs(this.configDir);
     this.density = listPrefs.density;
@@ -259,10 +290,28 @@ class OfflineMailStore {
   private _applyIndex(index: OfflineMailIndex) {
     this.index = index;
     this._previews.clear();
+    this._rawById = new Map(index.entries.map((e) => [e.id, e]));
+    this._rebuildView(true);
+  }
+
+  /**
+   * Lists, counts, conversations, folder tree and the AI catalog from the
+   * read-only index with the local changes applied on top.
+   */
+  private _rebuildView(initial: boolean) {
+    const index = this.index;
+    if (!index) {
+      return;
+    }
+    const view = applyOverlay(index.entries, this.overlay, { showBlocked: this.showBlocked });
+    this._hidden = view.hidden;
+    const shown = view.entries.filter((e) => !view.hidden.has(e.id));
     this._byId.clear();
     this._byFolder.clear();
-    for (const e of index.entries) {
+    for (const e of view.entries) {
       this._byId.set(e.id, e);
+    }
+    for (const e of shown) {
       const list = this._byFolder.get(e.folder) || [];
       list.push(e);
       this._byFolder.set(e.folder, list);
@@ -279,13 +328,17 @@ class OfflineMailStore {
       }
     }
     this._listed = listed;
-    const grouped = buildThreads(index.entries);
+    const grouped = buildThreads(shown);
     this._threads = grouped.threads;
     this._threadOf = grouped.threadOf;
     this._rowsCache = null;
-    this.folders = buildFolderTree(index);
+    this._visibleCache = null;
+    this.folders = buildFolderTree({
+      entries: shown.filter((e) => !localPlaceOf(e.folder)),
+      folderNames: index.folderNames,
+    });
     const root = this.root as string;
-    const messages: OfflineArchiveMessage[] = index.entries
+    const messages: OfflineArchiveMessage[] = shown
       .filter((e) => listed.has(e.id))
       .map((e) => ({
         id: e.id,
@@ -323,10 +376,325 @@ class OfflineMailStore {
       }
     );
     setOfflineArchiveNavigator((id) => this.reveal(id));
-    const first = this.folders.find((f) => f.count > 0) || this.folders[0];
-    if (first) {
-      this.setFolder(first.path, false);
+    if (initial) {
+      const first = this.folders.find((f) => f.count > 0) || this.folders[0];
+      if (first) {
+        this.setFolder(first.path, false);
+      }
+      return;
     }
+    // Keep the folder; drop rows that left it (moved, deleted, blocked).
+    const keep = this.selectedKeys.filter((k) => this.getRow(k));
+    if (keep.length !== this.selectedKeys.length) {
+      this.selectedKeys = keep;
+      this.anchorId = keep[0] || null;
+      this._applySelection();
+    } else {
+      this._emit();
+    }
+  }
+
+  // ---- Local changes (t227) -------------------------------------------
+
+  /** Folder name for display (local virtual folders included). */
+  folderLabel(p: string | null): string {
+    if (!p) {
+      return '';
+    }
+    const place = localPlaceOf(p);
+    if (place) {
+      const l = LOCAL_PLACE_LABELS[place];
+      return tr(l[0], l[1]);
+    }
+    return this.findFolder(p)?.displayPath || p;
+  }
+
+  /** Messages in each local virtual folder. */
+  localFolderCount(place: LocalPlace): number {
+    return (this._byFolder.get(localFolderPath(place)) || []).length;
+  }
+
+  localPlaceOfCurrent(): LocalPlace | null {
+    return localPlaceOf(this.currentFolder);
+  }
+
+  isLocalFolder(p: string | null = this.currentFolder): boolean {
+    return !!localPlaceOf(p);
+  }
+
+  /** The stored folder a message really lives in (read-only copy). */
+  originalFolder(id: string): string | null {
+    return this._rawById.get(id)?.folder || null;
+  }
+
+  /** Where the message shows now. */
+  effectiveFolderOf(id: string): string | null {
+    return this._byId.get(id)?.folder || null;
+  }
+
+  /** Any local move / delete / archive / spam or blocked sender? */
+  hasRelocations(): boolean {
+    return (
+      this.overlay.blocked.length > 0 ||
+      Object.values(this.overlay.messages).some((m) => !!(m.place || m.folder))
+    );
+  }
+
+  isHidden(id: string): boolean {
+    return this._hidden.has(id);
+  }
+
+  hiddenCount(): number {
+    return this._hidden.size;
+  }
+
+  /** Changed locally (moved / deleted / archived / spam): "Restore" applies. */
+  isRelocated(id: string): boolean {
+    const m = this.overlay.messages[id];
+    return !!(m && (m.place || m.folder));
+  }
+
+  isStarred(id: string): boolean {
+    return !!this.overlay.messages[id]?.star;
+  }
+
+  isUnread(id: string): boolean {
+    return !!this.overlay.messages[id]?.unread;
+  }
+
+  /** Row flags: a conversation counts its messages in this folder. */
+  rowFlags(row: OfflineListRow): { unread: boolean; starred: boolean } {
+    const ids = this.rowIdsInFolder(row);
+    return {
+      unread: ids.some((id) => this.isUnread(id)),
+      starred: ids.some((id) => this.isStarred(id)),
+    };
+  }
+
+  rowIdsInFolder(row: OfflineListRow): string[] {
+    const inFolder = row.ids.filter((id) => this._byId.get(id)?.folder === this.currentFolder);
+    return inFolder.length ? inFolder : [row.entry.id];
+  }
+
+  /**
+   * Messages the actions apply to: the selected rows' messages in the
+   * current folder (a conversation acts on its messages here, like Yahoo),
+   * or the selected search results.
+   */
+  actionIds(): string[] {
+    const inFolder = this.selectedIds.filter(
+      (id) => this._byId.get(id)?.folder === this.currentFolder
+    );
+    return inFolder.length ? inFolder : this.selectedIds.slice();
+  }
+
+  private _commit(ids: string[], before: [string, OverlayMessage | undefined][]): OfflineUndo {
+    this.overlayVersion++;
+    this._saveOverlay();
+    this._rebuildView(false);
+    return () => {
+      for (const [id, m] of before) {
+        if (m) {
+          this.overlay.messages[id] = m;
+        } else {
+          delete this.overlay.messages[id];
+        }
+      }
+      this.overlayVersion++;
+      this._saveOverlay();
+      this._rebuildView(false);
+    };
+  }
+
+  private _saveOverlay() {
+    try {
+      writeOverlay(this.configDir, this.overlay);
+    } catch (err) {
+      console.warn('[Offline mail] could not save local changes', (err as any)?.code);
+    }
+  }
+
+  private _snap(ids: string[]): [string, OverlayMessage | undefined][] {
+    return ids.map((id) => [
+      id,
+      this.overlay.messages[id] ? { ...this.overlay.messages[id] } : undefined,
+    ]);
+  }
+
+  private _patch(ids: string[], patch: (id: string) => Partial<OverlayMessage>): OfflineUndo {
+    const known = ids.filter((id) => this._rawById.has(id));
+    const before = this._snap(known);
+    const now = Date.now();
+    for (const id of known) {
+      patchMessage(this.overlay, id, patch(id), now);
+    }
+    return this._commit(known, before);
+  }
+
+  /** Delete / archive / spam: into the local virtual folder (restorable). */
+  moveToPlace(ids: string[], place: LocalPlace): OfflineUndo {
+    return this._patch(ids, () => ({ place }));
+  }
+
+  /** Move to another folder (its own folder = back where it was). */
+  moveToFolder(ids: string[], folder: string): OfflineUndo {
+    return this._patch(ids, (id) =>
+      folder === this.originalFolder(id)
+        ? { place: undefined, folder: undefined }
+        : { folder, place: undefined }
+    );
+  }
+
+  /** Back to the folder it really is in. */
+  restore(ids: string[]): OfflineUndo {
+    return this._patch(ids, () => ({ place: undefined, folder: undefined }));
+  }
+
+  setStarred(ids: string[], on: boolean): OfflineUndo {
+    return this._patch(ids, () => ({ star: on }));
+  }
+
+  setUnread(ids: string[], on: boolean): OfflineUndo {
+    return this._patch(ids, () => ({ unread: on }));
+  }
+
+  isBlocked(email: string): boolean {
+    const e = (email || '').toLowerCase();
+    return !!e && this.overlay.blocked.some((b) => b.email === e);
+  }
+
+  /** Hide every message from this sender (locally); undo = unblock. */
+  blockSender(email: string, name = ''): OfflineUndo | null {
+    const e = (email || '').trim().toLowerCase();
+    if (!e || this.isBlocked(e)) {
+      return null;
+    }
+    this.overlay.blocked = [...this.overlay.blocked, { email: e, name, at: Date.now() }];
+    this.overlayVersion++;
+    this._saveOverlay();
+    this._rebuildView(false);
+    return () => this.unblockSender(e);
+  }
+
+  unblockSender(email: string) {
+    const e = (email || '').toLowerCase();
+    const next = this.overlay.blocked.filter((b) => b.email !== e);
+    if (next.length === this.overlay.blocked.length) {
+      return;
+    }
+    this.overlay.blocked = next;
+    this.overlayVersion++;
+    this._saveOverlay();
+    this._rebuildView(false);
+  }
+
+  isSavedContact(email: string): boolean {
+    const e = (email || '').toLowerCase();
+    return !!e && this.overlay.contacts.some((c) => c.email === e);
+  }
+
+  addContact(email: string, name = ''): OfflineUndo | null {
+    const e = (email || '').trim().toLowerCase();
+    if (!e || this.isSavedContact(e)) {
+      return null;
+    }
+    this.overlay.contacts = [...this.overlay.contacts, { email: e, name, at: Date.now() }];
+    this.overlayVersion++;
+    this._saveOverlay();
+    this._emit();
+    return () => this.removeContact(e);
+  }
+
+  removeContact(email: string) {
+    const e = (email || '').toLowerCase();
+    this.overlay.contacts = this.overlay.contacts.filter((c) => c.email !== e);
+    this.overlayVersion++;
+    this._saveOverlay();
+    this._emit();
+  }
+
+  /** Senders of the given messages (unique, lower-case). */
+  sendersOf(ids: string[]): { email: string; name: string }[] {
+    const out: { email: string; name: string }[] = [];
+    const seen = new Set<string>();
+    for (const id of ids) {
+      const e = this._rawById.get(id);
+      const email = e ? senderEmail(e.from) : '';
+      if (email && !seen.has(email)) {
+        seen.add(email);
+        const m = /^\s*"?([^"<]+?)"?\s*</.exec(e?.from || '');
+        out.push({ email, name: m ? m[1].trim() : '' });
+      }
+    }
+    return out;
+  }
+
+  /** Forget every local change (flags, local folders, moves, blocks, contacts). */
+  resetLocalChanges(): number {
+    const n = overlayCounts(this.overlay).total;
+    this.overlay = emptyOverlay();
+    this.overlayVersion++;
+    this._saveOverlay();
+    this._rebuildView(false);
+    return n;
+  }
+
+  localChangeCounts() {
+    return overlayCounts(this.overlay);
+  }
+
+  setShowBlocked(on: boolean) {
+    if (this.showBlocked === !!on) {
+      return;
+    }
+    this.showBlocked = !!on;
+    this.overlayVersion++;
+    this._rebuildView(false);
+  }
+
+  setUnreadOnly(on: boolean) {
+    this.unreadOnly = !!on;
+    this._visibleCache = null;
+    this._rowsCache = null;
+    this._emit();
+  }
+
+  setStarredOnly(on: boolean) {
+    this.starredOnly = !!on;
+    this._visibleCache = null;
+    this._rowsCache = null;
+    this._emit();
+  }
+
+  /** Search filter: hidden = blocked senders and the local trash/spam. */
+  searchShows(id: string, includeHidden: boolean, scope: string[] | null): boolean {
+    const e = this._byId.get(id);
+    if (!e) {
+      return false;
+    }
+    if (scope) {
+      return !this._hidden.has(id) && scope.includes(e.folder);
+    }
+    if (includeHidden) {
+      return true;
+    }
+    const place = localPlaceOf(e.folder);
+    return !this._hidden.has(id) && place !== 'trash' && place !== 'spam';
+  }
+
+  /** Opening a message marks it read (local flag only). */
+  private _markOpenedRead(ids: string[]) {
+    const unread = ids.filter((id) => this.isUnread(id));
+    if (!unread.length) {
+      return;
+    }
+    for (const id of unread) {
+      patchMessage(this.overlay, id, { unread: undefined });
+    }
+    this.overlayVersion++;
+    this._saveOverlay();
+    this._visibleCache = null;
+    this._rowsCache = null;
   }
 
   private _allFolderPaths(): string[] {
@@ -415,7 +783,7 @@ class OfflineMailStore {
     }
     const node = this.findFolder(p);
     setOfflineArchiveCurrentFolder(
-      node ? { path: node.path, name: node.displayPath } : { path: p, name: p }
+      node ? { path: node.path, name: node.displayPath } : { path: p, name: this.folderLabel(p) }
     );
     setOfflineArchiveSelection([]);
     if (emit) {
@@ -542,12 +910,20 @@ class OfflineMailStore {
   }
 
   visibleMessages(): OfflineIndexEntry[] {
-    const key = `${this.currentFolder}\u0000${this.filter}\u0000${this.attachmentsOnly ? 1 : 0}`;
+    const key = `${this.currentFolder}\u0000${this.filter}\u0000${this.attachmentsOnly ? 1 : 0}\u0000${
+      this.unreadOnly ? 1 : 0
+    }${this.starredOnly ? 1 : 0}\u0000${this.overlayVersion}`;
     if (this._visibleCache && this._visibleCache.key === key) {
       return this._visibleCache.rows;
     }
     const all = (this.currentFolder && this._byFolder.get(this.currentFolder)) || [];
-    const list = this.attachmentsOnly ? all.filter((e) => e.hasAttachments) : all;
+    let list = this.attachmentsOnly ? all.filter((e) => e.hasAttachments) : all;
+    if (this.unreadOnly) {
+      list = list.filter((e) => this.isUnread(e.id));
+    }
+    if (this.starredOnly) {
+      list = list.filter((e) => this.isStarred(e.id));
+    }
     const q = this.filter.trim().toLowerCase();
     const rows = q ? list.filter((e) => `${e.subject} ${e.from}`.toLowerCase().includes(q)) : list;
     this._visibleCache = { key, rows };
@@ -610,7 +986,9 @@ class OfflineMailStore {
     const sort = this.sort;
     const key = `${this.currentFolder}\u0000${this.filter}\u0000${this.threaded ? 1 : 0}\u0000${
       this.attachmentsOnly ? 1 : 0
-    }\u0000${sort.key}:${sort.dir}`;
+    }${this.unreadOnly ? 1 : 0}${this.starredOnly ? 1 : 0}\u0000${sort.key}:${sort.dir}\u0000${
+      this.overlayVersion
+    }`;
     if (this._rowsCache && this._rowsCache.key === key) {
       return this._rowsCache;
     }
@@ -745,9 +1123,15 @@ class OfflineMailStore {
     setOfflineArchiveSelection(this.selectedIds);
     if (this.selectedKeys.length === 1 && ids.length === 1) {
       this.openThread = null;
+      if (this.openMessage?.id !== ids[0]) {
+        this._markOpenedRead(ids);
+      }
       void this._open(ids[0]);
     } else if (this.selectedKeys.length === 1 && ids.length > 1) {
       this.openMessage = null;
+      if (this.openThread?.key !== this.selectedKeys[0]) {
+        this._markOpenedRead(ids);
+      }
       void this._openThread(this.selectedKeys[0], ids, focusId);
     } else {
       this.openMessage = null;
@@ -980,6 +1364,9 @@ class OfflineMailStore {
       hebrewHeaderMessages: this.index ? this.index.entries.filter((e) => e.hebrew).length : 0,
       stats: this.index?.stats || null,
       rootBase: this.root ? path.basename(this.root) : null,
+      /** Local overlay (counts only): stars, read marks, local folders, blocks. */
+      localChanges: overlayCounts(this.overlay),
+      hiddenByBlock: this._hidden.size,
     };
   }
 }

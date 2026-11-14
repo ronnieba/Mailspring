@@ -135,6 +135,23 @@ export class OfflineSearchBar extends OfflineStoreComponent {
             <option value="relevance">{tr('הכי רלוונטי', 'Most relevant')}</option>
             <option value="date">{tr('הכי חדש', 'Newest')}</option>
           </select>
+          {offlineMailStore.hasRelocations() ? (
+            <label
+              className="offline-search-include-hidden"
+              data-offline-search-include-hidden={s.includeHidden ? 'true' : 'false'}
+              title={tr(
+                'חפש גם בהודעות שהוסתרו במחשב הזה: שולחים חסומים, אשפה (מקומי) וספאם (מקומי)',
+                'Also search messages hidden on this computer: blocked senders, Trash (local) and Spam (local)'
+              )}
+            >
+              <input
+                type="checkbox"
+                checked={s.includeHidden}
+                onChange={(e) => s.setIncludeHidden(e.target.checked)}
+              />
+              {tr('כולל מוסתרות', 'Include hidden')}
+            </label>
+          ) : null}
           {b.running ? (
             <span
               className="offline-search-progress"
@@ -261,8 +278,7 @@ export class OfflineSearchResults extends OfflineStoreComponent<Record<string, n
     for (let i = start; i < end; i++) {
       const r = rows[i];
       const e = r.entry;
-      const node = offlineMailStore.findFolder(r.folder);
-      const folderName = node ? node.displayPath : r.folder;
+      const folderName = offlineMailStore.folderLabel(r.folder);
       const snip = s.snippetFor(r.id);
       const isSel = selected.has(r.id);
       items.push(

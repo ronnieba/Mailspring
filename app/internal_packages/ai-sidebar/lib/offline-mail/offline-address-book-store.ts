@@ -79,8 +79,33 @@ export class OfflineAddressBookStore {
     this._emit();
   }
 
+  /** Contacts the user saved with "Add sender to contacts" (local overlay). */
+  savedProvider: (() => { email: string; name: string; at: number }[]) | null = null;
+
+  /** Saved contacts (ranked first) followed by contacts learned from headers. */
+  allContacts(): OfflineContact[] {
+    const saved = this.savedProvider ? this.savedProvider() : [];
+    if (!saved.length) {
+      return this.contacts;
+    }
+    const byEmail = new Map(this.contacts.map((c) => [c.email.toLowerCase(), c]));
+    const first: OfflineContact[] = saved.map((s) => {
+      const known = byEmail.get(s.email.toLowerCase());
+      return {
+        email: known ? known.email : s.email,
+        name: s.name || (known ? known.name : ''),
+        count: known ? known.count : 0,
+        sentTo: known ? known.sentTo : 0,
+        last: known ? known.last : s.at,
+        score: Number.MAX_SAFE_INTEGER,
+      };
+    });
+    const savedSet = new Set(saved.map((s) => s.email.toLowerCase()));
+    return [...first, ...this.contacts.filter((c) => !savedSet.has(c.email.toLowerCase()))];
+  }
+
   search(query: string, limit = 8, exclude: string[] = []): OfflineContact[] {
-    return searchAddressBook(this.contacts, query, limit, exclude);
+    return searchAddressBook(this.allContacts(), query, limit, exclude);
   }
 }
 

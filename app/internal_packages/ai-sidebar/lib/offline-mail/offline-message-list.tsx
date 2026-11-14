@@ -7,6 +7,7 @@ import { OfflineDraftsList } from './offline-drafts-view';
 import { OfflineStoreComponent } from './use-offline-store';
 import { offlineSearchStore } from './offline-search-store';
 import { OfflineSearchBar, OfflineSearchResults } from './offline-search-view';
+import { actDelete, actToggleStar, actRestore } from './offline-message-actions';
 import {
   OFFLINE_SORT_KEYS,
   OfflineSortKey,
@@ -123,6 +124,14 @@ export class OfflineMessageList extends OfflineStoreComponent<Record<string, nev
       e.preventDefault();
       offlineMailStore.moveSelection(-1);
       this._ensureVisible();
+    } else if (e.key === 'Delete' && offlineMailStore.actionIds().length) {
+      // Local delete (to the local Trash, with Undo).
+      e.preventDefault();
+      if (offlineMailStore.localPlaceOfCurrent() === 'trash') {
+        actRestore();
+      } else {
+        actDelete();
+      }
     }
   };
 
@@ -171,10 +180,18 @@ export class OfflineMessageList extends OfflineStoreComponent<Record<string, nev
     const ROW_HEIGHT = rowHeight();
     const compact = offlineMailStore.density === 'compact';
     const preview = compact ? null : offlineMailStore.previewFor(e.id);
+    const flags = offlineMailStore.rowFlags(row);
     return (
       <div
         key={row.key}
-        className={classNames('offline-message-row', { selected, 'is-thread': isThread })}
+        className={classNames('offline-message-row', {
+          selected,
+          'is-thread': isThread,
+          unread: flags.unread,
+          starred: flags.starred,
+        })}
+        data-offline-unread={flags.unread ? 'true' : undefined}
+        data-offline-starred={flags.starred ? 'true' : undefined}
         style={{ top: i * ROW_HEIGHT, height: ROW_HEIGHT }}
         data-offline-message-id={e.id}
         data-offline-row-key={row.key}
@@ -243,6 +260,24 @@ export class OfflineMessageList extends OfflineStoreComponent<Record<string, nev
               </span>
             ) : null}
             <span className="offline-row-date">{formatDate(e.ts)}</span>
+            <button
+              type="button"
+              className={classNames('offline-row-star', { on: flags.starred })}
+              data-offline-row-star={flags.starred ? 'on' : 'off'}
+              aria-pressed={flags.starred}
+              aria-label={flags.starred ? tr('הסר כוכב', 'Remove star') : tr('סמן בכוכב', 'Star')}
+              title={
+                flags.starred
+                  ? tr('הסר כוכב (מקומי)', 'Remove star (local)')
+                  : tr('סמן בכוכב (מקומי)', 'Star (local)')
+              }
+              onClick={(ev) => {
+                ev.stopPropagation();
+                actToggleStar(isThread ? offlineMailStore.rowIdsInFolder(row) : [e.id]);
+              }}
+            >
+              {flags.starred ? '★' : '☆'}
+            </button>
           </div>
           {compact ? null : (
             <div className="offline-row-subject" dir="auto" data-offline-subject="true">
@@ -319,6 +354,49 @@ export class OfflineMessageList extends OfflineStoreComponent<Record<string, nev
         >
           {tr('📎 רק עם צרופות', '📎 Attachments only')}
         </button>
+        <button
+          type="button"
+          className={classNames('offline-list-chip', { active: s.unreadOnly })}
+          data-offline-unread-only={s.unreadOnly ? 'true' : 'false'}
+          aria-pressed={s.unreadOnly}
+          title={tr(
+            'הצג רק הודעות שסומנו כלא נקראו (סימון מקומי)',
+            'Show only messages marked unread (local mark)'
+          )}
+          onClick={() => s.setUnreadOnly(!s.unreadOnly)}
+        >
+          {tr('✉️ לא נקראו', '✉️ Unread')}
+        </button>
+        <button
+          type="button"
+          className={classNames('offline-list-chip', { active: s.starredOnly })}
+          data-offline-starred-only={s.starredOnly ? 'true' : 'false'}
+          aria-pressed={s.starredOnly}
+          title={tr('הצג רק הודעות מסומנות בכוכב', 'Show only starred messages')}
+          onClick={() => s.setStarredOnly(!s.starredOnly)}
+        >
+          {tr('⭐ בכוכב', '⭐ Starred')}
+        </button>
+        {s.overlay.blocked.length ? (
+          <button
+            type="button"
+            className={classNames('offline-list-chip', { active: s.showBlocked })}
+            data-offline-show-blocked={s.showBlocked ? 'true' : 'false'}
+            aria-pressed={s.showBlocked}
+            title={tr(
+              'הודעות משולחים חסומים מוסתרות. לחץ כדי להציג אותן זמנית.',
+              'Messages from blocked senders are hidden. Click to show them for now.'
+            )}
+            onClick={() => s.setShowBlocked(!s.showBlocked)}
+          >
+            {s.showBlocked
+              ? tr('⛔ הסתר חסומים', '⛔ Hide blocked')
+              : tr(
+                  `⛔ הצג חסומים (${s.hiddenCount().toLocaleString()})`,
+                  `⛔ Show blocked (${s.hiddenCount().toLocaleString()})`
+                )}
+          </button>
+        ) : null}
         <span className="offline-list-density" role="group" aria-label={tr('צפיפות', 'Density')}>
           <button
             type="button"
@@ -393,11 +471,13 @@ export class OfflineMessageList extends OfflineStoreComponent<Record<string, nev
       >
         <div className="offline-list-header">
           <div className="offline-list-title" dir="auto">
-            {folder
-              ? folder.displayPath
-              : s.status === 'ready'
-                ? tr('בחר תיקייה', 'Choose a folder')
-                : ''}
+            {s.isLocalFolder()
+              ? s.folderLabel(s.currentFolder)
+              : folder
+                ? folder.displayPath
+                : s.status === 'ready'
+                  ? tr('בחר תיקייה', 'Choose a folder')
+                  : ''}
             <span
               className="offline-list-count"
               data-offline-list-messages={messageCount}
@@ -436,6 +516,18 @@ export class OfflineMessageList extends OfflineStoreComponent<Record<string, nev
             </label>
           </div>
           <OfflineSearchBar />
+          {s.isLocalFolder() ? (
+            <div
+              className="offline-local-folder-note"
+              dir={offlineDir()}
+              data-offline-local-note="true"
+            >
+              {tr(
+                'תיקייה מקומית: ההודעות כאן הוסרו רק במחשב הזה (העותק ו-Yahoo לא השתנו). בחר ולחץ "שחזר" כדי להחזיר.',
+                'Local folder: these messages were removed on this computer only (the copy and Yahoo did not change). Select and click "Restore" to bring them back.'
+              )}
+            </div>
+          ) : null}
           {this._renderTools()}
           <div className="offline-list-selectbar" dir={offlineDir()}>
             <label className="offline-list-selectall" data-offline-select-all="true">

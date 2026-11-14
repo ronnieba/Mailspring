@@ -14,6 +14,14 @@ import {
 } from '../core/offline-mail-mime';
 import { OfflineAttachmentList } from './offline-attachments-view';
 import {
+  actArchive,
+  actDelete,
+  actRestore,
+  actToggleStar,
+  selectionStarred,
+  showMessageMoreMenu,
+} from './offline-message-actions';
+import {
   OFFLINE_DRAFT_ATTACHMENT_MAX_BYTES,
   extractAttachmentToProfile,
 } from '../core/offline-attachments';
@@ -97,6 +105,103 @@ export function forwardFiles(id: string) {
     console.warn('[Offline mail] attachments not carried into the forward');
     return [];
   }
+}
+
+/** Yahoo-style quick actions + "⋯" menu. All changes are local (restorable). */
+function readerQuickActions(ids: string[], small = false): React.ReactNode {
+  const s = offlineMailStore;
+  if (!ids.length) {
+    return null;
+  }
+  const starred = selectionStarred(ids);
+  const relocated = ids.filter((id) => s.isRelocated(id));
+  const place = s.localPlaceOfCurrent();
+  const where = relocated.length === 1 && ids.length === 1 ? s.effectiveFolderOf(ids[0]) : null;
+  return (
+    <span className="offline-reader-quick" data-offline-reader-quick={ids.length}>
+      {small ? null : (
+        <span
+          className="offline-readonly-pill"
+          title={tr(
+            'מחיקה/ארכיון/העברה/כוכב/חסימה נשמרים רק במחשב הזה ותמיד אפשר לשחזר. העותק המקומי ו-Yahoo לא משתנים. אין שליחה.',
+            'Delete/archive/move/star/block are kept on this computer only and can always be restored. The local copy and Yahoo do not change. No sending.'
+          )}
+        >
+          {tr('שינויים מקומיים בלבד · אין שליחה', 'Local changes only · no sending')}
+        </span>
+      )}
+      {relocated.length ? (
+        <button
+          type="button"
+          className="btn btn-small offline-restore-btn"
+          data-offline-restore="true"
+          title={
+            where
+              ? tr(
+                  `נמצאת כעת ב: ${s.folderLabel(where)} (מקומי). החזר לתיקייה המקורית.`,
+                  `Now in: ${s.folderLabel(where)} (local). Back to the original folder.`
+                )
+              : tr('החזר לתיקייה המקורית', 'Back to the original folder')
+          }
+          onClick={() => actRestore(relocated)}
+        >
+          ♻️ {tr('שחזר', 'Restore')}
+        </button>
+      ) : null}
+      {place === 'trash' ? null : (
+        <button
+          type="button"
+          className="btn btn-small offline-quick-btn"
+          data-offline-quick="delete"
+          title={tr(
+            'מחק — לאשפה המקומית (אפשר לשחזר)',
+            'Delete — to the local Trash (can be restored)'
+          )}
+          aria-label={tr('מחק', 'Delete')}
+          onClick={() => actDelete(ids)}
+        >
+          🗑️
+        </button>
+      )}
+      {place === 'archive' ? null : (
+        <button
+          type="button"
+          className="btn btn-small offline-quick-btn"
+          data-offline-quick="archive"
+          title={tr('העבר לארכיון המקומי', 'Move to the local Archive')}
+          aria-label={tr('ארכיון', 'Archive')}
+          onClick={() => actArchive(ids)}
+        >
+          🗄️
+        </button>
+      )}
+      <button
+        type="button"
+        className={classNames('btn btn-small offline-quick-btn', { on: starred })}
+        data-offline-quick="star"
+        aria-pressed={starred}
+        title={starred ? tr('הסר כוכב', 'Remove star') : tr('סמן בכוכב', 'Star')}
+        aria-label={starred ? tr('הסר כוכב', 'Remove star') : tr('סמן בכוכב', 'Star')}
+        onClick={() => actToggleStar(ids)}
+      >
+        {starred ? '★' : '☆'}
+      </button>
+      <button
+        type="button"
+        className="btn btn-small offline-more-btn"
+        data-offline-more="true"
+        aria-haspopup="menu"
+        title={tr(
+          'עוד פעולות: העבר, ספאם, לא נקרא, חסום, אנשי קשר, הדפסה',
+          'More: move, spam, unread, block, contacts, print'
+        )}
+        aria-label={tr('עוד פעולות', 'More actions')}
+        onClick={(e) => showMessageMoreMenu(e.currentTarget, ids)}
+      >
+        ⋯
+      </button>
+    </span>
+  );
 }
 
 export class OfflineMessageReader extends OfflineStoreComponent<Record<string, never>, State> {
@@ -198,6 +303,7 @@ export class OfflineMessageReader extends OfflineStoreComponent<Record<string, n
             ) : (
               <>
                 <div className="offline-reader-actions offline-thread-msg-actions">
+                  {readerQuickActions([id], true)}
                   <button
                     className="btn btn-small offline-reply-btn"
                     data-offline-reply="true"
@@ -288,15 +394,7 @@ export class OfflineMessageReader extends OfflineStoreComponent<Record<string, n
         data-offline-thread-count={t.ids.length}
       >
         <div className="offline-reader-actions">
-          <span
-            className="offline-readonly-pill"
-            title={tr(
-              'שליחה, העברה למקום אחר ומחיקה כבויות בניסוי הלא מקוון',
-              'Sending, moving and deleting are disabled in the offline experiment'
-            )}
-          >
-            {tr('קריאה בלבד · אין שליחה/העברה/מחיקה', 'Read-only · no send/move/delete')}
-          </span>
+          {readerQuickActions(s.actionIds().length ? s.actionIds() : t.ids)}
           <button
             className="btn btn-small"
             data-offline-thread-expand-all={allExpanded ? 'collapse' : 'expand'}
@@ -383,15 +481,7 @@ export class OfflineMessageReader extends OfflineStoreComponent<Record<string, n
         data-body-hebrew={bodyHebrew ? 'true' : 'false'}
       >
         <div className="offline-reader-actions">
-          <span
-            className="offline-readonly-pill"
-            title={tr(
-              'שליחה, העברה למקום אחר ומחיקה כבויות בניסוי הלא מקוון',
-              'Sending, moving and deleting are disabled in the offline experiment'
-            )}
-          >
-            {tr('קריאה בלבד · אין שליחה/העברה/מחיקה', 'Read-only · no send/move/delete')}
-          </span>
+          {readerQuickActions([open.id])}
           <button
             className="btn btn-small offline-reply-btn"
             data-offline-reply="true"

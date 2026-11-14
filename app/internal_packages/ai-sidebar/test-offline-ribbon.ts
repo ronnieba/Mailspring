@@ -85,7 +85,7 @@ test('everything from the hamburger menu is in the ribbon', () => {
     'wc().copy()',
     'wc().paste()',
     'wc().pasteAndMatchStyle()',
-    'wc().selectAll()',
+    'selectAllInField(', // Edit → Select all text (t224: the draft field, not the window)
     'AppEnv.setFullScreen(',
     'AppEnv.minimize()',
     'setZoomLevel(',
