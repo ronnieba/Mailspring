@@ -28,6 +28,7 @@ import fs from 'fs';
 import { ProofSegment } from '../core/text-diff';
 import { offlineDateLocale, offlineDir, tr } from '../core/offline-i18n';
 import { startWriteWithAi, undoAiChange } from './write-with-ai';
+import { OfflineMic } from './offline-voice';
 
 class DraftsComponent<P = Record<string, never>, S = Record<string, never>> extends React.Component<
   P,
@@ -615,6 +616,7 @@ export class OfflineDraftEditor extends DraftsComponent<Record<string, never>, E
               value={d.subject}
               onChange={(e) => s.update(d.id, { subject: e.target.value })}
             />
+            <OfflineMic target='input[data-offline-draft-field="subject"]' size="small" />
           </label>
         </div>
         {this._renderAttachments(d)}

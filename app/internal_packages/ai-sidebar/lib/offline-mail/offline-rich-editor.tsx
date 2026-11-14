@@ -6,6 +6,7 @@ import React from 'react';
 import classNames from 'classnames';
 import { isSafeHref, sanitizeDraftHtml } from '../core/offline-rich-text';
 import { tr } from '../core/offline-i18n';
+import { OfflineMic } from './offline-voice';
 
 const MOD = typeof process !== 'undefined' && process.platform === 'darwin' ? '⌘' : 'Ctrl';
 
@@ -698,6 +699,12 @@ export class OfflineRichEditor extends React.Component<Props, State> {
             () => this.clearFormatting()
           )}
           {this._renderPalette()}
+          {this.props.readOnly ? null : (
+            <>
+              <span className="offline-fmt-sep" />
+              <OfflineMic target='[data-offline-draft-field="body"]' scope=".offline-rich" />
+            </>
+          )}
         </div>
         {this.state.linkOpen ? (
           <div className="offline-fmt-linkbar" data-offline-fmt-linkbar="true">

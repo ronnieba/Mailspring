@@ -15,6 +15,7 @@ import {
   splitRecipients,
 } from '../core/offline-address-book';
 import { tr } from '../core/offline-i18n';
+import { OfflineMic } from './offline-voice';
 
 export type RecipientField = 'to' | 'cc' | 'bcc';
 
@@ -200,6 +201,7 @@ export class OfflineRecipientsField extends React.Component<FieldProps, FieldSta
               this.setState({ focused: false });
             }}
           />
+          <OfflineMic target={`input[data-offline-draft-field="${field}"]`} size="small" />
           {sugg.length ? (
             <div className="offline-suggest" role="listbox" data-offline-suggest={field}>
               {sugg.map((c, i) => (

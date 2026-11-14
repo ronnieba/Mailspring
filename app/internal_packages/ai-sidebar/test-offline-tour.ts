@@ -47,6 +47,7 @@ const SRC = [
   'lib/offline-mail/offline-attachments-view.tsx',
   'lib/offline-mail/offline-message-reader.tsx',
   'lib/ai-sidebar.tsx',
+  'lib/offline-mail/offline-voice.tsx',
 ]
   .map(read)
   .join('\n');
@@ -69,6 +70,7 @@ async function main() {
       'viewer',
       'rules',
       'reset',
+      'voice',
     ]) {
       assert(ids.includes(want), `missing ${want}`);
     }

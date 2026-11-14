@@ -8,6 +8,7 @@ import { OfflineStoreComponent } from './use-offline-store';
 import { askAiAboutMail } from './write-with-ai';
 import { ASK_AI_QUESTION_HINT, ASK_AI_TOOLTIP, looksLikeQuestion } from '../core/offline-search-qa';
 import { OfflineHelpTip } from './offline-tour';
+import { OfflineMic } from './offline-voice';
 
 const ROW = 78;
 const OVERSCAN = 6;
@@ -106,6 +107,11 @@ export class OfflineSearchBar extends OfflineStoreComponent {
             value={s.query}
             onChange={(e) => s.setQuery(e.target.value)}
             onKeyDown={this._onKeyDown}
+          />
+          <OfflineMic
+            target="[data-offline-search-input]"
+            scope=".offline-search-row"
+            size="small"
           />
           {s.query ? (
             <button

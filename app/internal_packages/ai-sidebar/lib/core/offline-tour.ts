@@ -76,6 +76,21 @@ export const TOUR_STEPS: TourStep[] = [
     ],
   },
   {
+    id: 'voice',
+    targets: ['[data-offline-ribbon-btn="voice-command"]', '[data-offline-mic]'],
+    tab: 'home',
+    mood: 'happy',
+    title: ['דיבור במקום הקלדה', 'Talk instead of typing'],
+    body: [
+      'ליד כל תיבת טקסט יש מיקרופון ירוק 🎙️: לחצו, דברו בעברית או באנגלית, ולחצו שוב — המילים נכתבות במקום הסמן. "פקודה קולית" (Ctrl+Shift+Space) מבינה "פתח טיוטה חדשה", "חפש …", "עבור לתיקייה …", "מחק", "סמן בכוכב", "תענה ש…". הכול ב-Whisper מקומי — ההקלטה לא יוצאת מהמחשב.',
+      'Every text box has a green mic 🎙️: click, speak Hebrew or English, click again — the words go in at the cursor. "Voice command" (Ctrl+Shift+Space) understands "new draft", "search …", "go to folder …", "delete", "star", "reply that …". All with local Whisper — the audio never leaves the PC.',
+    ],
+    missing: [
+      '(צריך להתקין את Whisper המקומי כדי לראות את המיקרופון)',
+      '(install the local Whisper to see the mic)',
+    ],
+  },
+  {
     id: 'ai-panel',
     targets: ['.ai-sidebar', '[data-offline-ribbon-tab="ai"]'],
     tab: 'ai',
@@ -160,6 +175,10 @@ export const TOUR_STEPS: TourStep[] = [
 ];
 
 export const TOUR_TIPS: { [id: string]: [string, string] } = {
+  voice: [
+    'לחצו על המיקרופון הירוק, דברו, ולחצו שוב. "פסיק", "נקודה", "סימן שאלה", "שורה חדשה" הופכים לסימנים. פקודות (Ctrl+Shift+Space): "פתח טיוטה חדשה", "חפש …", "עבור לתיקייה …", "מחק", "ארכיון", "סמן בכוכב", "תענה ש…" (ממלא את תיבת ה-AI; שולחים רק בלחיצה). Esc מבטל. Whisper מקומי — שום הקלטה לא יוצאת מהמחשב.',
+    'Click the green mic, speak, click again. Say "comma", "period", "question mark", "new line" for punctuation. Commands (Ctrl+Shift+Space): "new draft", "search …", "go to folder …", "delete", "archive", "star", "reply that …" (fills the AI box; sent only on click). Esc cancels. Local Whisper — no audio leaves the PC.',
+  ],
   search: [
     'מילים = חיפוש מקומי בלבד. שאלה (למשל "מתי הפגישה עם דנה?") + לחיצה על "🤖 שאל AI" = התשובה מגיעה בחלונית ה-AI עם מקורות; נשלחים רק השאלה ועד 12 הודעות מתאימות (טקסט), ורק בלחיצה. מסננים: מאת:, אל:, נושא:, קובץ:, יש:צרופות, אחרי:2024-01-01, לפני:, תיקייה:, "ביטוי מדויק", -מילה.',
     'Words = local search only. A question (e.g. "When is the meeting with Dana?") + clicking "🤖 Ask AI" = the answer appears in the AI panel with sources; only the question and up to 12 matching messages (text) are sent, and only on click. Filters: from:, to:, subject:, file:, has:attachment, after:2024-01-01, before:, folder:, "exact phrase", -word.',

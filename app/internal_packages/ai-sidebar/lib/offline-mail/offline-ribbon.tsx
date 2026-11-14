@@ -30,6 +30,7 @@ import { ScopeMode } from '../core/types';
 import { offlineVersionLabel } from '../../../../src/offline-menu';
 import { OfflineSortKey, SORT_LABELS } from '../core/offline-list-view';
 import { OfflineBrand } from './offline-brand';
+import { OfflineVoiceHud, offlineVoice } from './offline-voice';
 import {
   installEditTargetTracker,
   editTarget,
@@ -220,6 +221,7 @@ export class OfflineRibbon extends React.Component<Record<string, never>, State>
     this._unsubs.push(offlineDraftsStore.listen(update));
     this._unsubs.push(AISidebarStore.listen(update));
     this._unsubs.push(offlineTour.listen(update));
+    this._unsubs.push(offlineVoice.listen(update));
     // The interactive guide shows the tab of each step.
     const onShowTab = (e: Event) => {
       const tab = (e as CustomEvent).detail;
@@ -689,6 +691,27 @@ export class OfflineRibbon extends React.Component<Record<string, never>, State>
               },
             ],
           },
+          ...(offlineVoice.available
+            ? [
+                {
+                  id: 'voice',
+                  label: tr('קול', 'Voice'),
+                  buttons: [
+                    {
+                      id: 'voice-command',
+                      icon: '🎙️',
+                      label: tr('פקודה קולית', 'Voice command'),
+                      pressed: offlineVoice.mode === 'command' && offlineVoice.state !== 'idle',
+                      title: tr(
+                        'פקודה קולית (Ctrl+Shift+Space): "פתח טיוטה חדשה", "חפש …", "עבור לתיקייה …", "מחק", "ארכיון", "סמן בכוכב", "תענה ש…". Whisper מקומי — ההקלטה לא יוצאת מהמחשב, ו-Gemini רק בלחיצה.',
+                        'Voice command (Ctrl+Shift+Space): "new draft", "search …", "go to folder …", "delete", "archive", "star", "reply that …". Local Whisper — no audio leaves the PC; Gemini only on click.'
+                      ),
+                      onClick: () => offlineVoice.toggle('command'),
+                    },
+                  ],
+                },
+              ]
+            : []),
           ...(draft ? [this._editGroup()] : []),
         ].concat(((g) => (g ? [g] : []))(this._actionsGroup()));
       case 'view':
@@ -1279,6 +1302,7 @@ export class OfflineRibbon extends React.Component<Record<string, never>, State>
         <OfflineRulesDialog />
         <OfflineExportDialog />
         <OfflineTourHost />
+        <OfflineVoiceHud />
       </div>
     );
   }

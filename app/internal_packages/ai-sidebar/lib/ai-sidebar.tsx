@@ -74,6 +74,7 @@ import {
 } from './offline-archive-catalog';
 import DemoComposer from './demo-composer';
 import { OfflineHelpTip } from './offline-mail/offline-tour';
+import { OfflineMic, offlineVoice } from './offline-mail/offline-voice';
 import classNames from 'classnames';
 import {
   estimateGeminiSendCount,
@@ -1775,6 +1776,9 @@ class AISidebarInner extends React.Component<Record<string, never>, AISidebarSta
             : tr('✍️ שאלה ל-AI', '✍️ Question for the AI')}
         </label>
         {isOfflineArchiveMode() ? <OfflineHelpTip tip="ai" /> : null}
+        {isOfflineArchiveMode() ? <OfflineMic target="#ai-sidebar-question" size="small" /> : null}
+        {isOfflineArchiveMode() ? <OfflineMic command size="small" /> : null}
+        {isOfflineArchiveMode() && offlineVoice.available ? <OfflineHelpTip tip="voice" /> : null}
         <textarea
           id="ai-sidebar-question"
           ref={this._inputRef}
