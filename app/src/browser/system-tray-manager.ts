@@ -1,6 +1,7 @@
 import path from 'path';
 import { app, Tray, Menu, nativeImage, NativeImage, nativeTheme } from 'electron';
 import { localized } from '../intl';
+import { offlineAppIconPath } from './offline-branding';
 import { waitForStatusNotifierHost } from './sni-host';
 import Application from './application';
 
@@ -23,7 +24,29 @@ function _createTray(platform: string, icon: NativeImage) {
   return new Tray(icon);
 }
 
+const OFFLINE_TOOLTIP = 'Mailspring – מצב ניסוי לא מקוון';
+
+function _isOffline(application: Application) {
+  return !!(application && (application as any).offlineArchive);
+}
+
 function _getMenuTemplate(platform: string, application: Application) {
+  if (_isOffline(application)) {
+    // Offline experiment: no composer or account preferences, just open/quit.
+    return [
+      {
+        label: 'הצג חלון (Show)',
+        click: () => application.emit('application:show-main-window'),
+      },
+      {
+        type: 'separator',
+      },
+      {
+        label: 'יציאה (Quit)',
+        click: () => application.emit('application:quit'),
+      },
+    ];
+  }
   const template = [
     {
       label: localized('New Message'),
@@ -52,7 +75,10 @@ function _getMenuTemplate(platform: string, application: Application) {
   return template;
 }
 
-function _getTooltip(unreadString: string) {
+function _getTooltip(unreadString: string, offline = false) {
+  if (offline) {
+    return OFFLINE_TOOLTIP;
+  }
   return unreadString ? `${unreadString} unread messages` : '';
 }
 
@@ -83,9 +109,48 @@ class SystemTrayManager {
         this.initTray();
       }
     });
+
+    // Keep the Windows fallback icon readable when the taskbar switches
+    // between light and dark (only while no renderer-supplied icon is set).
+    if (platform === 'win32') {
+      nativeTheme.on('updated', () => {
+        if (this._tray && !this._iconPath) {
+          this._tray.setImage(_getIcon(this._defaultIconPath()));
+        }
+      });
+    }
   }
 
   _defaultIconPath() {
+    // Offline experiment on Windows: the "Mail AI" app icon.
+    const brand = _isOffline(this._application)
+      ? offlineAppIconPath(this._application.resourcePath, {
+          platform: this._platform,
+          offline: true,
+        })
+      : null;
+    if (brand) {
+      return brand;
+    }
+    if (this._platform === 'win32') {
+      // The renderer's system-tray package normally supplies the icon. When it
+      // is not running (e.g. the offline experiment), Windows would show an
+      // empty slot, so start from the inbox icon. "-dark" is the white glyph
+      // for a dark taskbar; the taskbar theme can differ from the app theme.
+      const nt = nativeTheme as any;
+      const darkTaskbar =
+        typeof nt.shouldUseDarkColorsForSystemIntegratedUI === 'boolean'
+          ? nt.shouldUseDarkColorsForSystemIntegratedUI
+          : nativeTheme.shouldUseDarkColors;
+      return path.join(
+        this._application.resourcePath,
+        'internal_packages',
+        'system-tray',
+        'assets',
+        'win32',
+        `MenuItem-Inbox-Full${darkTaskbar ? '-dark' : ''}.ico`
+      );
+    }
     if (this._platform !== 'linux') return null;
 
     const traySystemTheme =
@@ -136,7 +201,7 @@ class SystemTrayManager {
     }
 
     this._tray = _createTray(this._platform, _getIcon(this._iconPath || this._defaultIconPath()));
-    this._tray.setToolTip(_getTooltip(this._unreadString));
+    this._tray.setToolTip(_getTooltip(this._unreadString, _isOffline(this._application)));
     this._tray.addListener('click', this._onClick);
     this._tray.setContextMenu(
       Menu.buildFromTemplate(_getMenuTemplate(this._platform, this._application) as any)
@@ -155,13 +220,24 @@ class SystemTrayManager {
   };
 
   updateTraySettings(iconPath: string, unreadString: string) {
+    // Offline experiment on Windows keeps its own app icon in the tray.
+    if (
+      _isOffline(this._application) &&
+      offlineAppIconPath(this._application.resourcePath, {
+        platform: this._platform,
+        offline: true,
+      })
+    ) {
+      iconPath = this._iconPath;
+    }
     if (this._iconPath !== iconPath) {
       this._iconPath = iconPath;
       if (this._tray) this._tray.setImage(_getIcon(this._iconPath));
     }
     if (this._unreadString !== unreadString) {
       this._unreadString = unreadString;
-      if (this._tray) this._tray.setToolTip(_getTooltip(unreadString));
+      if (this._tray)
+        this._tray.setToolTip(_getTooltip(unreadString, _isOffline(this._application)));
     }
   }
 

@@ -11,6 +11,7 @@ import { RovingTabIndexToolbar } from './components/roving-tab-index-toolbar';
 import * as Utils from './flux/models/utils';
 import { Disposable } from 'rx-core';
 import { isWaylandSession } from './browser/is-wayland';
+import { isOfflineArchiveMode } from './offline-archive';
 import { SheetDepthContext } from './sheet-context';
 
 let Category = null;
@@ -188,6 +189,10 @@ class ToolbarMenuControl extends React.Component {
   };
 
   render() {
+    // Offline experiment: the top ribbon holds every menu item instead.
+    if (isOfflineArchiveMode()) {
+      return <span />;
+    }
     // On Wayland, the native menu bar does not render (Electron's ozone-wayland
     // backend bypasses GTK, and KDE Plasma's Global Menu may not be configured).
     // Show the hamburger menu button as a fallback so menus are always accessible.

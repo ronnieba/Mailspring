@@ -1,6 +1,7 @@
 /* eslint global-require: "off" */
 
 import '../safe-shell';
+import { installOfflineNetworkGuard } from './offline-network-guard';
 import {
   BrowserWindow,
   ClipboardItem,
@@ -11,6 +12,8 @@ import {
   dialog,
   nativeImage,
   powerMonitor,
+  screen,
+  session,
   shell,
 } from 'electron';
 
@@ -37,6 +40,16 @@ import { MailsyncProcess } from '../mailsync-process';
 import Config from '../config';
 import { registerQuickpreviewIPCHandlers } from './quickpreview-ipc';
 import { registerLocalAIIPCHandlers } from './local-ai-service';
+import { resolveGeminiDemoStatus } from './gemini-demo-host';
+import { registerGeminiDemoIpcHandlers } from './gemini-demo-ipc';
+import { applyAndTrackOfflineWindowState } from './offline-window-state';
+import { configureOfflineSpellcheck, ensureOfflineSpellDictionaries } from './offline-spellcheck';
+import {
+  OFFLINE_RELAUNCH_CHANNEL,
+  offlineRelaunchPlan,
+  startHiddenRelaunch,
+} from './offline-relaunch';
+import { formatGeminiDemoStatusLog } from './gemini-demo-secret';
 import { registerViewSessionIPCHandlers } from './view-sessions';
 import { guardAuxiliaryWindowNavigation } from './auxiliary-window-guard';
 import { onFromMailspringWindows, handleFromMailspringWindows } from './trusted-ipc';
@@ -46,6 +59,15 @@ import {
 } from './notification-ipc';
 import WindowsTaskbarManager from './windows-taskbar-manager';
 import { resetThemeForRecovery } from './theme-recovery';
+import { mailCacheRecoveryAction } from '../mail-database-policy';
+import {
+  DEMO_SIDEBAR_SNAPSHOT_JS,
+  DEMO_SIDEBAR_RUN_QUERY_JS,
+  DEMO_SIDEBAR_REVEAL_CITATIONS_JS,
+  evaluateDemoSidebarReady,
+  evaluateDemoQueryComplete,
+  DemoSidebarSnapshot,
+} from '../demo-sidebar-readiness';
 
 // The options renderers may pass to `new-window`: what the popout composer (DraftStore) and
 // thread popout (MessageStore) send, plus window sizing for plugins. The main process sets
@@ -98,11 +120,32 @@ export default class Application extends EventEmitter {
   _initialized = false;
   _pendingLaunchOptions: any[] = [];
   _pendingUrls: string[] = [];
+  demoMode: boolean;
+  realSelectedSummary: boolean;
+  offlineArchive: boolean;
+  offlineArchivePath: string | null;
+  demoCapturePath: string | null;
 
   async start(options) {
-    const { resourcePath, configDirPath, version, devMode, specMode, safeMode } = options;
+    const {
+      resourcePath,
+      configDirPath,
+      version,
+      devMode,
+      specMode,
+      safeMode,
+      demoMode,
+      realSelectedSummary,
+      offlineArchive,
+      offlineArchivePath,
+      demoCapturePath,
+    } = options;
 
-    initializeLocalization({ configDirPath });
+    // Offline experiment: Hebrew unless its own profile chose another language.
+    initializeLocalization({
+      configDirPath,
+      defaultLocale: offlineArchive && !demoMode ? 'he' : undefined,
+    });
 
     // Normalize to make sure drive letter case is consistent on Windows
     this.resourcePath = resourcePath;
@@ -111,6 +154,13 @@ export default class Application extends EventEmitter {
     this.devMode = devMode;
     this.specMode = specMode;
     this.safeMode = safeMode;
+    // Demo is developer-build only (parsed in main.js). Never on packaged production.
+    this.demoMode = !!demoMode;
+    this.offlineArchive = !this.demoMode && !!offlineArchive;
+    this.offlineArchivePath =
+      this.offlineArchive && offlineArchivePath ? String(offlineArchivePath) : null;
+    this.realSelectedSummary = !this.demoMode && !this.offlineArchive && !!realSelectedSummary;
+    this.demoCapturePath = demoCapturePath || null;
 
     this.fileListCache = new FileListCache();
     this.mailspringProtocolHandler = new MailspringProtocolHandler({
@@ -120,8 +170,70 @@ export default class Application extends EventEmitter {
     });
 
     try {
-      const mailsync = new MailsyncProcess(options);
-      await mailsync.migrate();
+      if (this.demoMode) {
+        console.log('[Demo Mode] Skipping mailsync migrate — no real mailbox database');
+        console.log(formatGeminiDemoStatusLog(resolveGeminiDemoStatus({ demoMode: true })));
+        if (process.env.MAILSPRING_DEMO_DELAY_MS) {
+          console.log(
+            `[Demo Mode] Mock query delay ${process.env.MAILSPRING_DEMO_DELAY_MS}ms (Cancel testing only)`
+          );
+        }
+      } else if (this.offlineArchive) {
+        installOfflineNetworkGuard();
+        // Language switch restarts the app: hidden on Windows, like the shortcut.
+        handleFromMailspringWindows(ipcMain, OFFLINE_RELAUNCH_CHANNEL, () => {
+          const plan = offlineRelaunchPlan({
+            platform: process.platform,
+            execPath: process.execPath,
+            argv: process.argv,
+            cwd: process.cwd(),
+            configDir: this.configDirPath,
+            pid: process.pid,
+          });
+          if (plan.mode === 'hidden' && startHiddenRelaunch(plan)) {
+            console.log('[Offline archive] Restarting hidden (no console window)');
+          } else {
+            app.relaunch();
+          }
+          setTimeout(() => app.quit(), 50);
+          return true;
+        });
+        // Local Hebrew + English spell check for drafts: no dictionary downloads.
+        try {
+          const dict = ensureOfflineSpellDictionaries(this.configDirPath);
+          const langs = configureOfflineSpellcheck(session.defaultSession);
+          console.log(
+            `[Offline spellcheck] languages=${langs.join(',')} dictionaries=${dict.present.length} copied=${dict.copied.length} (no network)`
+          );
+        } catch (spellErr) {
+          console.warn('[Offline spellcheck] not configured:', (spellErr as Error).message);
+        }
+        console.log(
+          '[Offline archive] Skipping mailsync — disconnected experiment. Official /Applications/Mailspring.app is unused. Yahoo IMAP is not opened. Gemini is not bulk-upload; only explicit Summarize of one selected local message.'
+        );
+        console.log(
+          formatGeminiDemoStatusLog(
+            resolveGeminiDemoStatus({
+              demoMode: false,
+              realSelectedSummary: false,
+              offlineArchive: true,
+            })
+          )
+        );
+      } else {
+        if (this.realSelectedSummary) {
+          console.log(
+            '[Real selected summary] Isolated Mailspring-dev. Official /Applications/Mailspring.app is unused. Do not copy production profile/Keychain. Yahoo in this profile is a separate login. One selected message is sent only after explicit Summarize.'
+          );
+          console.log(
+            formatGeminiDemoStatusLog(
+              resolveGeminiDemoStatus({ demoMode: false, realSelectedSummary: true })
+            )
+          );
+        }
+        const mailsync = new MailsyncProcess(options);
+        await mailsync.migrate();
+      }
     } catch (err) {
       let message = null;
       let buttons = [localized('Quit')];
@@ -176,11 +288,17 @@ export default class Application extends EventEmitter {
       initializeInBackground = false;
     }
 
-    await this.oneTimeMoveToApplications();
-    await this.oneTimeAddToDock();
+    if (!this.demoMode && !this.offlineArchive) {
+      await this.oneTimeMoveToApplications();
+      await this.oneTimeAddToDock();
+    }
 
     guardAuxiliaryWindowNavigation();
-    this.autoUpdateManager = new AutoUpdateManager(version, config, specMode);
+    this.autoUpdateManager = new AutoUpdateManager(
+      version,
+      config,
+      specMode || this.demoMode || this.offlineArchive
+    );
     this.applicationMenu = new ApplicationMenu(version);
     this.windowManager = new WindowManager({
       resourcePath: this.resourcePath,
@@ -217,11 +335,16 @@ export default class Application extends EventEmitter {
       this.openUrl(pendingUrl);
     }
 
-    if (process.platform === 'linux') {
-      const helper = new DefaultClientHelper();
-      helper.registerForURLScheme('mailspring');
-    } else {
-      app.setAsDefaultProtocolClient('mailspring');
+    // Skip URL scheme registration in dev/spec mode to avoid taking over links
+    // from the production app. Dev instances can still open mailspring:// URLs
+    // passed on the command line, but won't become the system handler.
+    if (!this.devMode && !this.specMode) {
+      if (process.platform === 'linux') {
+        const helper = new DefaultClientHelper();
+        helper.registerForURLScheme('mailspring');
+      } else {
+        app.setAsDefaultProtocolClient('mailspring');
+      }
     }
   }
 
@@ -306,6 +429,9 @@ export default class Application extends EventEmitter {
     if (process.platform !== 'darwin') {
       return;
     }
+    if (this.devMode || this.specMode || this.demoMode) {
+      return;
+    }
     const addedToDock = this.config.get('addedToDock');
     const appPath = process.argv[0];
     if (!addedToDock && appPath.includes('/Applications/') && appPath.includes('.app/')) {
@@ -353,15 +479,229 @@ export default class Application extends EventEmitter {
     const accounts = this.config.get('accounts');
     const hasAccount = accounts && accounts.length > 0;
 
-    if (hasAccount) {
-      this.windowManager.ensureWindow(WindowManager.MAIN_WINDOW, {}, behavior);
+    // Demo mode (dev only): Skip onboarding and open main window with synthetic data.
+    // Does not create or impersonate a real account. Production onboarding is unchanged.
+    if (this.demoMode) {
+      console.log('[Demo Mode] Opening main window with synthetic data');
+      this.config.set('core.workspace.mode', 'split');
+      this.config.set('core.messageListSidebar.panel', 'ai-sidebar');
+      this.windowManager.ensureWindow(
+        WindowManager.MAIN_WINDOW,
+        {
+          windowProps: { demoMode: true },
+          title: 'Mailspring Demo (synthetic — no account)',
+        },
+        behavior
+      );
+      this._scheduleDemoWindowCapture();
+    } else if (this.offlineArchive) {
+      console.log('[Offline archive] Opening main window from local archive (no Yahoo)');
+      this.config.set('core.workspace.mode', 'split');
+      this.config.set('core.messageListSidebar.panel', 'ai-sidebar');
+      this.config.set('core.reading.autoloadImages', false);
+      this.windowManager.ensureWindow(
+        WindowManager.MAIN_WINDOW,
+        {
+          ...this._mainWindowOptions(),
+          title: 'Mailspring Offline Archive (disconnected — no Yahoo)',
+        },
+        behavior
+      );
+      // Offline experiment: restore the last size/position/maximized state
+      // from the offline profile; only the first launch opens maximized.
+      const offlineWin = this.windowManager.get(WindowManager.MAIN_WINDOW);
+      if (offlineWin) {
+        // Automated checks only (--dev plus MAILSPRING_OFFLINE_TEST_INVISIBLE=1):
+        // keep the test window transparent, out of the taskbar and unfocusable
+        // so it never appears on the user's screen.
+        if (
+          this.devMode &&
+          process.env.MAILSPRING_OFFLINE_TEST_INVISIBLE === '1' &&
+          offlineWin.browserWindow
+        ) {
+          offlineWin.browserWindow.setOpacity(0);
+          offlineWin.browserWindow.setSkipTaskbar(true);
+          offlineWin.browserWindow.setFocusable(false);
+        }
+        offlineWin.waitForLoad(() => {
+          const bw = offlineWin.browserWindow;
+          if (bw && !bw.isDestroyed()) {
+            applyAndTrackOfflineWindowState(bw as any, this.configDirPath, screen as any);
+          }
+        });
+      }
+    } else if (hasAccount) {
+      this.windowManager.ensureWindow(
+        WindowManager.MAIN_WINDOW,
+        this._mainWindowOptions(),
+        behavior
+      );
     } else {
       const title = localized('Welcome to Mailspring');
       this.windowManager.ensureWindow(WindowManager.ONBOARDING_WINDOW, { title }, behavior);
     }
   }
 
+  _mainWindowOptions() {
+    if (this.offlineArchive) {
+      return {
+        windowProps: {
+          offlineArchive: true,
+          offlineArchivePath: this.offlineArchivePath,
+        },
+      };
+    }
+    if (this.realSelectedSummary) {
+      return { windowProps: { realSelectedSummary: true } };
+    }
+    return {};
+  }
+
+  /**
+   * Demo-only: capture THIS BrowserWindow via Electron's capturePage.
+   * Does not use macOS screencapture, Screen Recording permission, or a
+   * persistent remote-debug endpoint. Writes only the path passed as --demo-capture.
+   */
+  _scheduleDemoWindowCapture() {
+    if (!this.demoMode || !this.demoCapturePath) {
+      return;
+    }
+    const dest = path.resolve(this.demoCapturePath);
+    const win = this.windowManager.get(WindowManager.MAIN_WINDOW);
+    if (!win) {
+      console.error('[Demo Mode] capture skipped: main window missing');
+      return;
+    }
+    win.waitForLoad(() => {
+      this._captureDemoWhenReady(win, dest).catch((err) => {
+        console.error('[Demo Mode] capture failed:', (err as Error).message);
+      });
+    });
+  }
+
+  async _pollDemoSidebarSnapshot(win, timeoutMs: number): Promise<DemoSidebarSnapshot | null> {
+    const deadline = Date.now() + timeoutMs;
+    let last: DemoSidebarSnapshot | null = null;
+    while (Date.now() < deadline) {
+      if (win.browserWindow.isDestroyed()) {
+        return last;
+      }
+      try {
+        last = (await win.browserWindow.webContents.executeJavaScript(
+          DEMO_SIDEBAR_SNAPSHOT_JS,
+          true
+        )) as DemoSidebarSnapshot;
+      } catch (err) {
+        last = {
+          readyAttr: false,
+          hasRoot: false,
+          hasDemoBanner: false,
+          hasMockWarning: false,
+          scopeCount: 0,
+          citationCount: 0,
+          conversationCount: 0,
+          tabs: [],
+          reason: (err as Error).message,
+        };
+      }
+      if (evaluateDemoSidebarReady(last).ready) {
+        return last;
+      }
+      await new Promise((resolve) => setTimeout(resolve, 250));
+    }
+    return last;
+  }
+
+  async _captureDemoWhenReady(win, dest: string) {
+    const started = Date.now();
+    const snap = await this._pollDemoSidebarSnapshot(win, 20000);
+    const ready = evaluateDemoSidebarReady(snap);
+    let queryComplete = false;
+    if (!ready.ready) {
+      console.error(
+        `[Demo Mode] capture FAILED after ${Date.now() - started}ms: ${ready.reason}`,
+        JSON.stringify(snap)
+      );
+    } else {
+      console.log(
+        `[Demo Mode] sidebar ready after ${Date.now() - started}ms tabs=${JSON.stringify(snap && snap.tabs)}`
+      );
+      try {
+        const ran = await win.browserWindow.webContents.executeJavaScript(
+          DEMO_SIDEBAR_RUN_QUERY_JS,
+          true
+        );
+        if (!ran || !ran.ok) {
+          console.error('[Demo Mode] mock query did not run:', ran && ran.reason);
+        } else {
+          const queryDeadline = Date.now() + 10000;
+          let querySnap = snap;
+          while (Date.now() < queryDeadline) {
+            querySnap = (await win.browserWindow.webContents.executeJavaScript(
+              DEMO_SIDEBAR_SNAPSHOT_JS,
+              true
+            )) as DemoSidebarSnapshot;
+            if (evaluateDemoQueryComplete(querySnap).complete) {
+              break;
+            }
+            await new Promise((resolve) => setTimeout(resolve, 200));
+          }
+          const q = evaluateDemoQueryComplete(querySnap);
+          queryComplete = q.complete;
+          if (!q.complete) {
+            console.error(
+              `[Demo Mode] mock query incomplete: ${q.reason}`,
+              JSON.stringify(querySnap)
+            );
+          } else {
+            console.log(
+              `[Demo Mode] mock query complete citations=${querySnap.citationCount} messages=${querySnap.conversationCount}`
+            );
+          }
+        }
+      } catch (err) {
+        console.error('[Demo Mode] mock query failed:', (err as Error).message);
+      }
+    }
+
+    if (win.browserWindow.isDestroyed()) {
+      console.error('[Demo Mode] capture skipped: window destroyed');
+      return;
+    }
+    if (queryComplete) {
+      try {
+        await win.browserWindow.webContents.executeJavaScript(
+          DEMO_SIDEBAR_REVEAL_CITATIONS_JS,
+          true
+        );
+        await new Promise((resolve) => setTimeout(resolve, 150));
+      } catch {
+        // still capture
+      }
+    }
+    const image = await win.browserWindow.capturePage();
+    const png = image.toPNG();
+    fs.mkdirSync(path.dirname(dest), { recursive: true });
+    fs.writeFileSync(dest, png);
+    if (ready.ready && queryComplete) {
+      console.log(`[Demo Mode] Wrote own-window capture (${png.length} bytes) to ${dest}`);
+    } else {
+      console.error(
+        `[Demo Mode] Wrote diagnostic capture (${png.length} bytes) to ${dest} (ready=${ready.ready} query=${queryComplete})`
+      );
+    }
+  }
+
   _resetDatabaseAndRelaunch = ({ errorMessage }: { errorMessage?: string } = {}) => {
+    // Demo has no mail cache. Rebuild+relaunch with the same --demo args is
+    // the endless Okay dialog (SqliteError readonly → delete → relaunch).
+    if (mailCacheRecoveryAction({ demoMode: this.demoMode }) !== 'rebuild-and-relaunch') {
+      console.error(
+        '[Demo Mode] Ignoring application:reset-database (no mail DB rebuild):',
+        errorMessage
+      );
+      return;
+    }
     if (this._resettingAndRelaunching) return;
     this._resettingAndRelaunching = true;
 
@@ -874,7 +1214,7 @@ export default class Application extends EventEmitter {
     });
 
     onFromMailspringWindows(ipcMain, 'account-setup-successful', () => {
-      this.windowManager.ensureWindow(WindowManager.MAIN_WINDOW);
+      this.windowManager.ensureWindow(WindowManager.MAIN_WINDOW, this._mainWindowOptions());
       const mainWindow = this.windowManager.get(WindowManager.MAIN_WINDOW);
       const onboarding = this.windowManager.get(WindowManager.ONBOARDING_WINDOW);
       if (onboarding) {
@@ -984,6 +1324,12 @@ export default class Application extends EventEmitter {
       configDirPath: this.configDirPath,
       config: this.config,
       devMode: this.devMode,
+    });
+    registerGeminiDemoIpcHandlers(ipcMain, {
+      isDemoMode: () => this.demoMode,
+      isRealSelectedSummary: () => this.realSelectedSummary,
+      isOfflineArchive: () => this.offlineArchive,
+      configDirPath: this.configDirPath,
     });
   }
 

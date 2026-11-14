@@ -1,5 +1,15 @@
 import fs from 'fs';
 import path from 'path';
+import { isDemoMode } from './demo-mode';
+import {
+  enableNativeSpellSession,
+  languagesToEnable,
+  pickSupportedLanguage,
+} from './spellcheck/native-availability';
+import {
+  ensurePersonalDictionary,
+  getActivePersonalDictionary,
+} from './spellcheck/personal-dictionary';
 
 const { app } = require('@electron/remote');
 const customDictFilePath = path.join(AppEnv.getConfigDirPath(), 'custom-dict.json');
@@ -12,10 +22,17 @@ class Spellchecker {
 
     // Nobody will notice if spellcheck isn't available for a few seconds and it
     // takes a considerable amount of time to startup (212ms in dev mode on my 2017 MBP)
+    try {
+      enableNativeSpellSession(this._session);
+    } catch {
+      // Session may not be ready; initHandler retries after the delay.
+    }
+
     const initHandler = () => {
       this._migrateFromCustomDict();
 
       const initialLanguage = AppEnv.config.get('core.composing.spellcheckDefaultLanguage');
+      enableNativeSpellSession(this._session, initialLanguage);
       this._switchToLanguage(initialLanguage);
 
       // Monitor language setting for changes. Note that as the user types in a draft we
@@ -37,14 +54,29 @@ class Spellchecker {
       lang = app.getLocale() || 'en-US';
     }
     const supported: string[] = this._session.availableSpellCheckerLanguages || [];
-    if (supported.includes(lang)) {
-      this._session.setSpellCheckerLanguages([lang]);
-    } else if (lang.includes('-') && supported.includes(lang.split('-')[0])) {
-      this._session.setSpellCheckerLanguages([lang.split('-')[0]]);
+    const list = languagesToEnable(supported, lang);
+    if (list.length === 0) {
+      return;
+    }
+    try {
+      this._session.setSpellCheckerLanguages(list);
+    } catch (err) {
+      const fallback = pickSupportedLanguage(supported, [lang, 'en-US', 'en']);
+      if (fallback) {
+        try {
+          this._session.setSpellCheckerLanguages([fallback]);
+        } catch {
+          // Unknown codes throw on some platforms; leave the session language unchanged.
+        }
+      }
     }
   };
 
   _migrateFromCustomDict = () => {
+    // macOS addWordToSpellCheckerDictionary writes ~/Library/Spelling. Demo must not.
+    if (isDemoMode()) {
+      return;
+    }
     fs.readFile(customDictFilePath, (err, data) => {
       let fileData: any = data;
       if (err) {
@@ -65,11 +97,22 @@ class Spellchecker {
   };
 
   learnWord = (word: string) => {
-    // TODO: Ensure that this work. Somehow on my Ubuntu 20.12., this does not add words to the custom dict.
+    if (isDemoMode()) {
+      const dict =
+        getActivePersonalDictionary() || ensurePersonalDictionary(AppEnv.getConfigDirPath());
+      dict.add(word);
+      return;
+    }
     this._session.addWordToSpellCheckerDictionary(word);
   };
 
   unlearnWord = (word: string) => {
+    if (isDemoMode()) {
+      const dict =
+        getActivePersonalDictionary() || ensurePersonalDictionary(AppEnv.getConfigDirPath());
+      dict.remove(word);
+      return;
+    }
     this._session.removeWordFromSpellCheckerDictionary(word);
   };
 }

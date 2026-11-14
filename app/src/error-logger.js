@@ -159,12 +159,20 @@ module.exports = ErrorLogger = (function () {
     if (process.type === 'renderer') {
       return;
     }
+    // Offline experiment / demo: crash dumps may hold local mail in memory, so
+    // they stay on disk and are never uploaded.
+    const localOnly =
+      process.env.MAILSPRING_OFFLINE_ARCHIVE === '1' ||
+      process.env.MAILSPRING_DEMO === '1' ||
+      (process.argv || []).some(
+        (a) => a === '--offline-archive' || a === '--demo' || String(a).startsWith('--offline-archive=')
+      );
     require('electron').crashReporter.start({
       productName: 'Mailspring',
       companyName: 'Mailspring',
       submitURL: `https://id.getmailspring.com/report-crash?ver=${appVersion}&platform=${process.platform}`,
-      uploadToServer: true,
-      autoSubmit: true,
+      uploadToServer: !localOnly,
+      autoSubmit: !localOnly,
       extra: {
         ver: appVersion,
         platform: process.platform,

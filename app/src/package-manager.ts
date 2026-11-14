@@ -3,6 +3,7 @@ import fs from 'fs';
 import { shell } from 'electron';
 import { localized } from './intl';
 import Package, { isValidPackageName } from './package';
+import { isOfflineArchiveMode, isPackageDisabledInOfflineArchive } from './offline-archive';
 
 export default class PackageManager {
   packageDirectories: string[] = [];
@@ -122,6 +123,12 @@ export default class PackageManager {
     }
 
     if (!pkg || pkg.isTheme()) {
+      return;
+    }
+
+    // Offline experiment: no account/sync/send packages, without touching the
+    // persisted core.disabledPackages setting.
+    if (isOfflineArchiveMode() && isPackageDisabledInOfflineArchive(pkg.name)) {
       return;
     }
 

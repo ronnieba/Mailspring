@@ -1,0 +1,8 @@
+From: Promo Fixture <promo@example.test>
+To: Archive Reader <archive-reader@example.test>
+Subject: Bulk Mail fixture
+Date: Fri, 01 Nov 2024 12:00:00 +0000
+Message-ID: <bulk@example.test>
+Content-Type: text/plain; charset=utf-8
+
+Yahoo Bulk Mail is inventoried, not silently skipped.

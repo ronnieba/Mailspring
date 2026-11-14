@@ -1,0 +1,1385 @@
+/**
+ * AI Sidebar styles - RTL Hebrew layout with mixed content support.
+ */
+
+@import 'ui-variables';
+
+// This panel lays itself out RTL explicitly (dir=rtl) on every UI language.
+// Mailspring runs rtlcss over all stylesheets when the OS UI is RTL (e.g.
+// Hebrew Windows), which flipped direction: rtl to ltr and mirrored paddings
+// here. Keep this file out of that flip so Hebrew and English UIs match.
+/*!rtl:begin:ignore*/
+
+// Native 7c17ae32: answer/source HEIGHT-clipped at ~299pt because the
+// MessageListSidebar column scrolled as a whole while .ai-sidebar overflow
+// hid the conversation. Keep the column/panel from eating the inner scrollport.
+.column-MessageListSidebar {
+  .sidebar-panels.panel-active,
+  .sidebar-panel {
+    min-height: 0;
+    min-width: 0;
+    overflow: hidden;
+  }
+}
+
+.ai-sidebar {
+  display: flex;
+  flex-direction: column;
+  flex: 1 1 auto;
+  height: 100%;
+  min-width: 0;
+  min-height: 0;
+  overflow: hidden;
+  // No Mailspring theme defines these CSS custom properties, so without this
+  // block the panel rendered black text on a transparent panel - unreadable on
+  // the dark theme. Map them from the active theme's less variables so the
+  // panel follows ui-light and ui-dark alike.
+  --background-primary: @background-primary;
+  --background-secondary: @background-secondary;
+  --background-tertiary: fade(@text-color, 10%);
+  --text-color: @text-color;
+  --text-color-subtle: @text-color-subtle;
+  --border-color-divider: @border-color-divider;
+  --color-primary: @component-active-color;
+  background: var(--background-primary);
+  color: var(--text-color);
+  font-family: system-ui, -apple-system, sans-serif;
+  direction: rtl;
+  text-align: right;
+  overflow-wrap: anywhere;
+  
+  // Header
+  .ai-sidebar-header {
+    flex: 0 0 auto;
+    display: flex;
+    justify-content: space-between;
+    align-items: flex-start;
+    gap: 8px;
+    padding: 12px 16px;
+    border-bottom: 1px solid var(--border-color-divider);
+    min-width: 0;
+    
+    h2 {
+      margin: 0;
+      font-size: 16px;
+      font-weight: 600;
+    }
+    
+    .provider-badge {
+      font-size: 10px;
+      padding: 2px 6px;
+      background: var(--background-secondary);
+      border-radius: 4px;
+      color: var(--text-color-subtle);
+      max-width: 100%;
+      white-space: normal;
+      overflow-wrap: anywhere;
+    }
+  }
+  
+  // Mock warning banner
+  .ai-sidebar-mock-warning {
+    flex: 0 0 auto;
+    display: flex;
+    align-items: flex-start;
+    gap: 8px;
+    padding: 8px 16px;
+    min-width: 0;
+    background: #fff3cd;
+    color: #856404;
+    font-size: 12px;
+    border-bottom: 1px solid #ffc107;
+    
+    .icon {
+      font-size: 16px;
+    }
+    
+    .text {
+      flex: 1;
+      min-width: 0;
+      overflow-wrap: anywhere;
+      
+      small {
+        opacity: 0.8;
+      }
+    }
+    
+    body.ai-dark-surface & {
+      background: #3d3200;
+      color: #ffc107;
+      border-color: #664d00;
+    }
+  }
+  
+  // Scope selector
+  .ai-sidebar-scope {
+    flex: 0 0 auto;
+    padding: 12px 16px;
+    border-bottom: 1px solid var(--border-color-divider);
+    min-width: 0;
+    
+    .scope-label {
+      display: block;
+      font-size: 12px;
+      font-weight: 600;
+      margin-bottom: 8px;
+      color: var(--text-color-subtle);
+    }
+    
+    .scope-buttons {
+      display: flex;
+      gap: 4px;
+      margin-bottom: 8px;
+      
+      .scope-btn {
+        flex: 1;
+        padding: 6px 8px;
+        font-size: 11px;
+        border: 1px solid var(--border-color-divider);
+        background: var(--background-primary);
+        color: var(--text-color);
+        border-radius: 4px;
+        cursor: pointer;
+        transition: all 0.15s;
+        
+        &:hover {
+          background: var(--background-secondary);
+        }
+        
+        &.active {
+          background: var(--color-primary);
+          color: white;
+          border-color: var(--color-primary);
+        }
+      }
+    }
+    
+    .scope-status {
+      font-size: 11px;
+      padding: 6px 8px;
+      background: var(--background-secondary);
+      border-radius: 4px;
+      margin-bottom: 8px;
+      
+      &.empty {
+        background: #ffebee;
+        color: #c62828;
+        
+        body.ai-dark-surface & {
+          background: #3d0000;
+          color: #ff5252;
+        }
+      }
+      
+      .scope-description {
+        font-weight: 500;
+      }
+      
+      .empty-scope {
+        display: block;
+      }
+    }
+    
+    .retrieval-mode {
+      display: flex;
+      gap: 12px;
+      font-size: 11px;
+      
+      label {
+        display: flex;
+        align-items: center;
+        gap: 4px;
+        cursor: pointer;
+        
+        input {
+          margin: 0;
+        }
+      }
+    }
+  }
+  
+  // Error display
+  .ai-sidebar-error {
+    flex: 0 0 auto;
+    padding: 8px 16px;
+    overflow-wrap: anywhere;
+    background: #ffebee;
+    color: #c62828;
+    font-size: 12px;
+    border-bottom: 1px solid #ef9a9a;
+    
+    body.ai-dark-surface & {
+      background: #3d0000;
+      color: #ff5252;
+      border-color: #660000;
+    }
+  }
+  
+  // Message body — inner scrollport at ~299pt (native 7c17ae32 clip).
+  .ai-sidebar-body {
+    flex: 1 1 auto;
+    min-height: 0;
+    min-width: 0;
+    overflow-x: hidden;
+    overflow-y: auto;
+    padding: 12px 16px;
+  }
+  
+  // Empty state
+  .ai-sidebar-empty {
+    text-align: center;
+    padding: 24px;
+    color: var(--text-color-subtle);
+    
+    .empty-icon {
+      font-size: 48px;
+      margin-bottom: 12px;
+      opacity: 0.5;
+    }
+    
+    .empty-text {
+      font-size: 14px;
+      margin-bottom: 16px;
+      
+      small {
+        display: block;
+        margin-top: 4px;
+        font-size: 12px;
+        opacity: 0.8;
+      }
+    }
+    
+    .empty-examples {
+      text-align: right;
+      font-size: 12px;
+      background: var(--background-secondary);
+      padding: 12px;
+      border-radius: 8px;
+      
+      strong {
+        display: block;
+        margin-bottom: 8px;
+      }
+      
+      ul {
+        margin: 0;
+        padding-right: 16px;
+        
+        li {
+          margin-bottom: 4px;
+        }
+      }
+    }
+  }
+  
+  // Messages
+  .ai-sidebar-messages {
+    display: flex;
+    flex-direction: column;
+    gap: 12px;
+    min-width: 0;
+  }
+  
+  .message {
+    padding: 10px 12px;
+    border-radius: 8px;
+    font-size: 13px;
+    line-height: 1.5;
+    min-width: 0;
+    overflow-wrap: anywhere;
+    
+    &.message-user {
+      background: var(--color-primary);
+      color: white;
+      margin-left: 24px;
+      
+      .message-text {
+        direction: auto;
+      }
+    }
+    
+    &.message-assistant {
+      background: var(--background-secondary);
+      margin-right: 24px;
+      
+      .message-text {
+        direction: auto;
+      }
+    }
+    
+    &.message-error {
+      background: #ffebee;
+      color: #c62828;
+      
+      body.ai-dark-surface & {
+        background: #3d0000;
+        color: #ff5252;
+      }
+    }
+    
+    &.message-mock {
+      border: 1px dashed #ffc107;
+    }
+    
+    .message-content {
+      min-width: 0;
+
+      .message-text {
+        overflow-wrap: anywhere;
+        word-break: break-word;
+        white-space: normal;
+
+        strong {
+          font-weight: 600;
+        }
+      }
+    }
+    
+    .message-citations {
+      margin-top: 10px;
+      padding-top: 10px;
+      border-top: 1px solid var(--border-color-divider);
+      
+      .citations-header {
+        font-size: 11px;
+        font-weight: 600;
+        margin-bottom: 6px;
+        color: var(--text-color-subtle);
+      }
+      
+      .citation-btn {
+        display: block;
+        width: 100%;
+        min-width: 0;
+        min-height: 32px;
+        text-align: right;
+        padding: 6px 8px;
+        margin-bottom: 4px;
+        background: var(--background-primary);
+        border: 1px solid var(--border-color-divider);
+        border-radius: 4px;
+        cursor: pointer;
+        font-size: 11px;
+        white-space: normal;
+        overflow-wrap: anywhere;
+        transition: background 0.15s;
+        
+        &:hover {
+          background: var(--background-tertiary, var(--background-secondary));
+        }
+        
+        .citation-index {
+          color: var(--color-primary);
+          font-weight: 600;
+          margin-left: 4px;
+        }
+        
+        .citation-subject {
+          color: var(--text-color);
+          white-space: normal;
+          overflow: visible;
+          overflow-wrap: anywhere;
+        }
+
+        .citation-id {
+          display: block;
+          font-size: 10px;
+          color: var(--text-color-subtle);
+          direction: ltr;
+          text-align: left;
+        }
+      }
+    }
+    
+    .mock-indicator {
+      margin-top: 8px;
+      font-size: 10px;
+      color: #ffc107;
+      text-align: left;
+      direction: ltr;
+    }
+
+    .live-indicator {
+      margin-top: 8px;
+      font-size: 10px;
+      color: #0d6efd;
+      text-align: left;
+      direction: ltr;
+    }
+  }
+  
+  .ai-sidebar-demo-preview,
+  .ai-sidebar-real-preview {
+    margin-bottom: 12px;
+    padding: 10px 12px;
+    min-width: 0;
+    overflow-wrap: anywhere;
+    border: 1px dashed #ffc107;
+    border-radius: 8px;
+    background: #fff8e1;
+
+    body.ai-dark-surface & {
+      background: #3d3200;
+      border-color: #ffc107;
+    }
+
+    .demo-preview-banner {
+      font-size: 12px;
+      font-weight: 600;
+      margin-bottom: 8px;
+      color: #856404;
+
+      body.ai-dark-surface & {
+        color: #ffc107;
+      }
+    }
+
+    .demo-preview-meta {
+      margin: 0 0 8px;
+      font-size: 12px;
+
+      dt {
+        font-weight: 600;
+        margin-top: 4px;
+      }
+
+      dd {
+        margin: 0;
+        direction: auto;
+      }
+    }
+
+    .demo-preview-body {
+      white-space: pre-wrap;
+      overflow-wrap: anywhere;
+      word-break: break-word;
+      font-size: 12px;
+      margin: 0 0 8px;
+      direction: auto;
+      min-width: 0;
+    }
+
+    .real-disclosure {
+      font-size: 12px;
+      margin: 0 0 8px;
+      overflow-wrap: anywhere;
+    }
+
+    .demo-preview-close {
+      padding: 4px 8px;
+      font-size: 11px;
+      background: transparent;
+      border: 1px solid var(--border-color-divider);
+      border-radius: 4px;
+      cursor: pointer;
+    }
+  }
+
+  // Progress indicator
+  .ai-sidebar-progress {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding: 8px 12px;
+    background: var(--background-secondary);
+    border-radius: 8px;
+    margin-top: 12px;
+    
+    .progress-text {
+      flex: 1;
+      font-size: 12px;
+    }
+    
+    .cancel-btn {
+      padding: 4px 8px;
+      font-size: 11px;
+      background: transparent;
+      border: 1px solid var(--border-color-divider);
+      border-radius: 4px;
+      cursor: pointer;
+      
+      &:hover {
+        background: var(--background-tertiary, var(--background-primary));
+      }
+    }
+  }
+  
+  // Input area
+  .ai-sidebar-input {
+    flex: 0 0 auto;
+    padding: 12px 16px;
+    border-top: 1px solid var(--border-color-divider);
+    min-width: 0;
+    
+    .input-textarea {
+      width: 100%;
+      min-height: 2.5em;
+      max-height: 5.5em;
+      padding: 10px;
+      border: 1px solid var(--border-color-divider);
+      border-radius: 8px;
+      background: var(--background-primary);
+      color: var(--text-color);
+      font-size: 13px;
+      font-family: inherit;
+      resize: vertical;
+      direction: auto;
+      
+      &::placeholder {
+        color: var(--text-color-subtle);
+      }
+      
+      &:focus {
+        outline: none;
+        border-color: var(--color-primary);
+      }
+      
+      &:disabled {
+        opacity: 0.6;
+        cursor: not-allowed;
+      }
+    }
+    
+    .input-actions {
+      display: flex;
+      justify-content: flex-start;
+      gap: 8px;
+      margin-top: 8px;
+      
+      button {
+        padding: 6px 16px;
+        font-size: 12px;
+        border-radius: 4px;
+        cursor: pointer;
+        transition: all 0.15s;
+      }
+      
+      .submit-btn {
+        background: var(--color-primary);
+        color: white;
+        border: none;
+        
+        &:hover:not(:disabled) {
+          filter: brightness(1.1);
+        }
+        
+        &:disabled {
+          opacity: 0.5;
+          cursor: not-allowed;
+        }
+      }
+      
+      .clear-btn {
+        background: transparent;
+        border: 1px solid var(--border-color-divider);
+        color: var(--text-color);
+        
+        &:hover {
+          background: var(--background-secondary);
+        }
+      }
+    }
+  }
+  
+  .demo-surface-tabs {
+    flex: 0 0 auto;
+    display: flex;
+    gap: 4px;
+    padding: 8px 16px 0;
+    border-bottom: 1px solid var(--border-color-divider);
+
+    button {
+      flex: 1;
+      padding: 6px 8px;
+      border: 1px solid var(--border-color-divider);
+      background: var(--background-secondary);
+      cursor: pointer;
+
+      &.active,
+      &[aria-selected='true'] {
+        background: var(--background-primary);
+        font-weight: 600;
+      }
+    }
+  }
+
+  .demo-composer {
+    // Grid so an open status disclosure cannot steal the editor/dictionary
+    // tracks (flex + uncapped auto basis collapsed both to ~1pt at ~299pt).
+    display: grid;
+    grid-template-columns: minmax(0, 1fr);
+    grid-template-areas:
+      'banner'
+      'status'
+      'actions'
+      'workspace'
+      'dict'
+      'html';
+    grid-template-rows: auto minmax(min-content, 14rem) auto minmax(8em, 1fr) auto auto;
+    flex: 1 1 auto;
+    min-height: 0;
+    min-width: 0;
+    overflow: hidden;
+    padding: 8px 10px 8px;
+    gap: 8px;
+    direction: ltr;
+    text-align: left;
+
+    .demo-composer-banner {
+      grid-area: banner;
+      font-size: 12px;
+      line-height: 1.35;
+      color: #5c4804;
+      background: #fff3cd;
+      padding: 8px 10px;
+      border: 1px solid #e0c36a;
+      border-radius: 4px;
+    }
+
+    .demo-composer-backend-slot {
+      grid-area: status;
+      min-width: 0;
+      min-height: 0;
+      max-height: 14rem;
+      overflow-x: hidden;
+      overflow-y: auto;
+    }
+
+    .demo-composer-backend {
+      font-size: 12px;
+      line-height: 1.35;
+      color: #5c4804;
+      background: #fff3cd;
+      padding: 8px 10px;
+      border: 1px solid #e0c36a;
+      border-radius: 4px;
+
+      summary {
+        cursor: pointer;
+        font-weight: 600;
+        color: #5c4804;
+      }
+
+      p {
+        margin: 8px 0 0;
+        white-space: pre-wrap;
+      }
+    }
+
+    .demo-composer-actions {
+      grid-area: actions;
+      display: flex;
+      flex-wrap: wrap;
+      gap: 8px;
+
+      button {
+        flex: 1 1 140px;
+        min-height: 32px;
+        font-size: 12px;
+        font-weight: 600;
+        padding: 6px 10px;
+        color: var(--text-color);
+        background: var(--background-secondary);
+        border: 1px solid var(--border-color-divider);
+        border-radius: 4px;
+        -webkit-appearance: none;
+        appearance: none;
+        cursor: pointer;
+      }
+    }
+
+    .demo-composer-workspace {
+      grid-area: workspace;
+      min-height: 8em;
+      min-width: 0;
+      overflow-x: hidden;
+      overflow-y: auto;
+      border: 1px solid var(--border-color-divider);
+      background: var(--background-primary);
+    }
+
+    // 103d29bf: in-flow popover sat under the sticky toolbar in a 113pt
+    // workspace, so suggestion buttons painted at h=2. Host is a sibling
+    // overlay (not inside the editor scrollport) aligned above the dictionary.
+    .demo-composer-spell-host {
+      grid-area: status / 1 / dict / 2;
+      align-self: end;
+      z-index: 8;
+      min-width: 0;
+      max-height: 0;
+      overflow: hidden;
+      pointer-events: none;
+    }
+
+    .demo-composer-spell-host:not(:empty) {
+      max-height: 12rem;
+      overflow-x: hidden;
+      overflow-y: auto;
+      pointer-events: auto;
+      background: var(--background-secondary);
+      border: 1px solid var(--border-color-divider);
+      border-radius: 4px;
+      box-shadow: 0 -2px 10px rgba(0, 0, 0, 0.18);
+    }
+
+    .demo-composer-editor {
+      flex: 0 0 auto;
+      min-height: 6em;
+      width: 100%;
+      padding: 0;
+      background: var(--background-primary);
+      overflow: visible;
+
+      &.RichEditor-root,
+      .RichEditor-root {
+        padding: 0 8px 12px;
+        min-height: 6em;
+      }
+
+      .RichEditor-toolbar {
+        position: sticky;
+        top: 0;
+        z-index: 3;
+        background: var(--background-primary);
+      }
+
+      .RichEditor-toolbar .inner {
+        flex-wrap: wrap;
+      }
+
+      .RichEditor-toolbar button {
+        color: var(--text-color);
+        max-width: none;
+      }
+
+      .paragraph-dir-controls button {
+        color: var(--text-color);
+        border: 1px solid var(--border-color-divider);
+        background: var(--background-secondary);
+        margin: 2px;
+      }
+
+      .spell-suggestion-popover {
+        flex: 0 0 auto;
+        margin: 8px 0;
+        padding: 8px;
+        border: 1px solid var(--border-color-divider);
+        background: var(--background-secondary);
+        color: var(--text-color);
+      }
+    }
+
+    .demo-composer-editor .spell-suggestion-popover,
+    .demo-composer-spell-host .spell-suggestion-popover {
+      .spell-suggestion,
+      .spell-dict-add,
+      .spell-dict-remove {
+        display: block;
+        flex-shrink: 0;
+        width: 100%;
+        min-height: 32px;
+        height: auto;
+        margin-top: 6px;
+        padding: 6px 10px;
+        text-align: start;
+        font-weight: 600;
+        color: var(--text-color);
+        background: var(--background-primary);
+        border: 1px solid var(--border-color-divider);
+        border-radius: 4px;
+        -webkit-appearance: none;
+        appearance: none;
+        cursor: pointer;
+      }
+    }
+
+    .demo-composer-dict {
+      grid-area: dict;
+      min-height: 2.5em;
+      position: relative;
+      z-index: 2;
+      margin-top: 0;
+      padding: 8px 4px 4px;
+      font-size: 12px;
+      color: var(--text-color);
+      background: var(--background-primary);
+      border-top: 1px solid var(--border-color-divider);
+
+      .demo-composer-dict-remove {
+        display: inline-block;
+        margin: 4px 4px 0 0;
+        min-height: 28px;
+        padding: 4px 8px;
+        color: var(--text-color);
+        background: var(--background-secondary);
+        border: 1px solid var(--border-color-divider);
+        border-radius: 4px;
+        -webkit-appearance: none;
+        appearance: none;
+        cursor: pointer;
+      }
+    }
+
+    .demo-composer-html {
+      grid-area: html;
+      margin-top: 0;
+      font-size: 11px;
+      white-space: pre-wrap;
+      max-height: 140px;
+      overflow: auto;
+      color: var(--text-color);
+      background: var(--background-secondary);
+      padding: 8px;
+    }
+
+    body.ai-dark-surface & {
+      .demo-composer-banner,
+      .demo-composer-backend {
+        color: #ffe08a;
+        background: #3d3200;
+        border-color: #664d00;
+
+        summary {
+          color: #ffe08a;
+        }
+      }
+    }
+  }
+
+  // Footer
+  .ai-sidebar-footer {
+    flex: 0 0 auto;
+    position: relative;
+    z-index: 2;
+    padding: 8px 16px;
+    background: var(--background-primary);
+    border-top: 1px solid var(--border-color-divider);
+    text-align: center;
+    
+    small {
+      font-size: 10px;
+      color: var(--text-color-subtle);
+      line-height: 1.4;
+    }
+  }
+}
+
+// Offline experiment: short Hebrew how-to shown in the empty state.
+.ai-sidebar .ai-sidebar-guide {
+  margin: 0 0 12px 0;
+  padding: 10px 12px;
+  border: 1px solid var(--border-color-divider);
+  border-radius: 6px;
+  background: var(--background-secondary);
+  color: var(--text-color);
+  font-size: 13px;
+  line-height: 1.55;
+  text-align: right;
+  direction: rtl;
+
+  .guide-title {
+    font-weight: 600;
+    margin-bottom: 4px;
+  }
+  ol {
+    margin: 6px 0;
+    padding-right: 20px;
+    padding-left: 0;
+  }
+  li {
+    margin: 3px 0;
+  }
+  .guide-note {
+    margin-top: 6px;
+    color: var(--text-color-subtle);
+    font-size: 12px;
+  }
+}
+
+// Clear selected state for scope buttons on any theme.
+.ai-sidebar .ai-sidebar-scope .scope-buttons .scope-btn {
+  font-weight: 500;
+  &.active {
+    font-weight: 700;
+    box-shadow: 0 0 0 1px var(--color-primary);
+  }
+}
+
+// Offline: an empty "selected" scope is the normal starting point, not an error.
+.ai-sidebar .ai-sidebar-scope .scope-status.empty.hint {
+  background: var(--background-secondary);
+  color: var(--text-color);
+  border: 1px solid var(--border-color-divider);
+}
+
+
+// Offline: Gemini on/off state (explicit colors; no less color functions on
+// theme values that are CSS variables).
+.ai-sidebar .ai-sidebar-mock-warning.gemini-on {
+  background: #e6f4ea;
+  color: #1e4620;
+  border-bottom-color: #34a853;
+  body.ai-dark-surface & {
+    background: #12321b;
+    color: #b7e1c1;
+    border-color: #2d6a3e;
+  }
+}
+.ai-sidebar .gemini-recheck-btn {
+  margin-inline-start: 8px;
+  padding: 1px 8px;
+  font-size: 11px;
+  border-radius: 3px;
+  border: 1px solid currentColor;
+  background: transparent;
+  color: inherit;
+  cursor: pointer;
+}
+.ai-sidebar .gemini-howto {
+  margin-top: 4px;
+  summary {
+    cursor: pointer;
+    text-decoration: underline;
+  }
+  .gemini-howto-cmd {
+    display: block;
+    margin-top: 4px;
+    padding: 4px 6px;
+    font-size: 11px;
+    direction: ltr;
+    text-align: left;
+    user-select: all;
+    white-space: pre-wrap;
+    overflow-wrap: anywhere;
+    background: rgba(0, 0, 0, 0.25);
+    border-radius: 3px;
+  }
+  .gemini-howto-text {
+    margin-top: 4px;
+    font-size: 11px;
+    user-select: text;
+    overflow-wrap: anywhere;
+  }
+}
+.ai-sidebar .provider-badge.gemini-on {
+  background: #34a853;
+  color: #fff;
+}
+
+
+.ai-sidebar .gemini-estimate {
+  margin: 6px 0 8px;
+  padding: 6px 8px;
+  font-size: 11px;
+  line-height: 1.45;
+  border-radius: 4px;
+  border: 1px solid #34a853;
+  color: var(--text-color);
+  background: var(--background-secondary);
+}
+.ai-sidebar .message-text {
+  unicode-bidi: plaintext;
+}
+
+
+.ai-sidebar .ai-sidebar-real-preview.collapsed,
+.ai-sidebar .ai-sidebar-demo-preview.collapsed {
+  padding: 4px 8px;
+  margin-bottom: 8px;
+}
+.ai-sidebar .preview-toggle {
+  display: flex;
+  width: 100%;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 2px 0;
+  border: 0;
+  background: transparent;
+  color: inherit;
+  font-size: 12px;
+  text-align: right;
+  direction: rtl;
+  cursor: pointer;
+}
+.ai-sidebar .preview-toggle-label {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.ai-sidebar .preview-toggle-action {
+  flex: 0 0 auto;
+  font-weight: 600;
+  text-decoration: underline;
+}
+
+
+.ai-sidebar .gemini-usage {
+  margin: 0 12px 6px;
+  padding: 4px 8px;
+  font-size: 11px;
+  border-radius: 6px;
+  border: 1px solid color-mix(in srgb, currentColor 25%, transparent);
+  color: var(--text-color);
+}
+.ai-sidebar .gemini-usage.warn {
+  border-color: #e0a800;
+}
+.ai-sidebar .gemini-usage-line {
+  display: flex;
+  width: 100%;
+  justify-content: space-between;
+  gap: 8px;
+  border: 0;
+  padding: 2px 0;
+  background: transparent;
+  color: inherit;
+  font-size: 11px;
+  text-align: right;
+  direction: rtl;
+  cursor: pointer;
+}
+.ai-sidebar .gemini-usage-more {
+  flex: 0 0 auto;
+  text-decoration: underline;
+}
+.ai-sidebar .gemini-usage-warning {
+  margin: 4px 0;
+  padding: 4px 6px;
+  border-radius: 4px;
+  background: color-mix(in srgb, #ffc107 22%, transparent);
+}
+.ai-sidebar .gemini-usage-details table {
+  width: 100%;
+  border-collapse: collapse;
+  margin: 4px 0;
+}
+.ai-sidebar .gemini-usage-details th,
+.ai-sidebar .gemini-usage-details td {
+  padding: 2px 4px;
+  text-align: right;
+  font-weight: normal;
+  border-bottom: 1px solid color-mix(in srgb, currentColor 12%, transparent);
+}
+.ai-sidebar .gemini-usage-details thead th {
+  font-weight: 600;
+}
+.ai-sidebar .gemini-usage-budget,
+.ai-sidebar .gemini-usage-actions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+  margin: 4px 0;
+}
+.ai-sidebar .gemini-usage-budget input {
+  width: 70px;
+  font-size: 11px;
+}
+.ai-sidebar .gemini-usage-reset.armed {
+  color: #fff;
+  background: #c0392b;
+}
+.ai-sidebar .gemini-usage-note {
+  margin: 4px 0 0;
+  opacity: 0.8;
+  line-height: 1.4;
+}
+.ai-sidebar .gemini-billing-btn {
+  margin-top: 4px;
+  font-size: 12px;
+}
+
+
+// Buttons/inputs in the usage box and error actions follow the active theme.
+.ai-sidebar .gemini-usage button:not(.gemini-usage-line),
+.ai-sidebar .gemini-usage input,
+.ai-sidebar .gemini-billing-btn {
+  padding: 1px 8px;
+  font-size: 11px;
+  color: @text-color;
+  background: @background-secondary;
+  border: 1px solid @border-color-primary;
+  border-radius: 4px;
+  cursor: pointer;
+}
+.ai-sidebar .gemini-usage input {
+  cursor: text;
+}
+.ai-sidebar .gemini-usage .gemini-usage-reset.armed {
+  color: #fff;
+  background: #c0392b;
+  border-color: #c0392b;
+}
+
+// Question box: clearly writable in every theme (lighter surface than the
+// panel, accent border, readable placeholder, focus glow) and a Send button
+// that is obviously enabled once there is text.
+.ai-sidebar .ai-sidebar-input .input-label {
+  display: block;
+  margin: 0 0 4px;
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--text-color);
+}
+.ai-sidebar .ai-sidebar-input .input-textarea {
+  box-sizing: border-box;
+  min-height: 3.2em;
+  border: 2px solid color-mix(in srgb, var(--color-primary) 70%, var(--border-color-divider));
+  background: color-mix(in srgb, var(--background-primary) 80%, #ffffff);
+  color: var(--text-color);
+  font-size: 13.5px;
+  transition: border-color 0.15s, box-shadow 0.15s;
+  &::placeholder {
+    color: var(--text-color);
+    opacity: 0.72;
+  }
+  &:hover:not(:disabled) {
+    border-color: var(--color-primary);
+  }
+  &:focus {
+    outline: none;
+    border-color: var(--color-primary);
+    box-shadow: 0 0 0 3px color-mix(in srgb, var(--color-primary) 35%, transparent);
+  }
+  &:disabled {
+    opacity: 1;
+    border-style: dashed;
+    border-color: var(--border-color-divider);
+    background: var(--background-secondary);
+    &::placeholder {
+      opacity: 0.6;
+    }
+  }
+}
+.ai-sidebar .ai-sidebar-input .input-actions .ai-ask-mail-btn.ready {
+  border-color: var(--color-primary);
+  color: var(--color-primary);
+  font-weight: 600;
+}
+
+.ai-sidebar .ai-sidebar-input .input-actions .submit-btn {
+  min-width: 64px;
+  font-weight: 600;
+  border: 1px solid var(--border-color-divider);
+  &:disabled {
+    opacity: 1;
+    background: var(--background-secondary);
+    color: var(--text-color-subtle);
+    border-style: dashed;
+    filter: none;
+    cursor: default;
+  }
+  &.ready {
+    opacity: 1;
+    background: var(--color-primary);
+    border-color: var(--color-primary);
+    color: #fff;
+    font-weight: 700;
+    box-shadow: 0 1px 4px color-mix(in srgb, var(--color-primary) 45%, transparent);
+    cursor: pointer;
+  }
+}
+
+
+// English UI (offline experiment language switch): the panel follows the
+// language. body.ofl-lang-en is set by the offline browser; Hebrew keeps the
+// right-to-left rules above unchanged.
+body.ofl-lang-en .ai-sidebar {
+  direction: ltr;
+  text-align: left;
+
+  .ai-sidebar-empty .empty-examples {
+    text-align: left;
+    ul {
+      padding-right: 0;
+      padding-left: 16px;
+    }
+  }
+  .message.message-user {
+    margin-left: 0;
+    margin-right: 24px;
+  }
+  .message.message-assistant {
+    margin-right: 0;
+    margin-left: 24px;
+  }
+  .message-citations .citation-btn {
+    text-align: left;
+    .citation-index {
+      margin-left: 0;
+      margin-right: 4px;
+    }
+  }
+  .ai-sidebar-guide,
+  .preview-toggle,
+  .gemini-usage-line,
+  .gemini-usage-more,
+  .gemini-usage-details th,
+  .gemini-usage-details td {
+    text-align: left;
+    direction: ltr;
+  }
+  .ai-sidebar-guide ol {
+    padding-right: 0;
+    padding-left: 20px;
+  }
+}
+/*!rtl:end:ignore*/
+
+// Offline: 4th scope ("open draft") wraps on narrow panels.
+.ai-sidebar .ai-sidebar-scope .scope-buttons {
+  flex-wrap: wrap;
+  .scope-btn {
+    min-width: 72px;
+  }
+}
+.ai-sidebar .ai-draft-tools {
+  margin-top: 4px;
+  .ai-draft-chips {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 4px;
+    margin-bottom: 6px;
+  }
+  .ai-draft-chip {
+    padding: 3px 10px;
+    font-size: 12px;
+    border-radius: 12px;
+    border: 1px solid var(--border-color-divider);
+    background: var(--background-secondary);
+    color: var(--text-color);
+    cursor: pointer;
+    &:hover:not(:disabled) {
+      border-color: #34a853;
+    }
+    &:disabled {
+      opacity: 0.5;
+      cursor: default;
+    }
+  }
+  .ai-draft-subject {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    font-size: 11px;
+    color: var(--text-color-subtle);
+  }
+}
+.ai-sidebar .ai-draft-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+  margin-top: 6px;
+  .btn {
+    font-size: 12px;
+  }
+  .ai-draft-apply {
+    font-weight: 700;
+  }
+  .ai-draft-gone {
+    font-size: 11px;
+    opacity: 0.7;
+  }
+}
+
+// Write with AI (t214): mode chip, disclosure, and the subject+body preview.
+.ai-sidebar .ai-draft-tools .ai-draft-chip.ai-draft-write-chip {
+  font-weight: 700;
+  &.active {
+    background: var(--color-primary, #1a73e8);
+    border-color: var(--color-primary, #1a73e8);
+    color: #fff;
+  }
+}
+.ai-sidebar .ai-write-tools {
+  .ai-write-hint {
+    font-size: 12px;
+    color: var(--text-color);
+    margin-bottom: 6px;
+    line-height: 1.45;
+  }
+  .ai-write-disclosure {
+    font-size: 12px;
+    font-weight: 600;
+    padding: 5px 8px;
+    margin-bottom: 6px;
+    border-radius: 6px;
+    border: 1px solid #e0a100;
+    background: rgba(224, 161, 0, 0.12);
+    color: var(--text-color);
+  }
+  .ai-draft-subject {
+    margin-bottom: 4px;
+  }
+}
+.ai-sidebar .ai-compose-preview {
+  margin: 2px 0 6px;
+  padding: 8px 10px;
+  border-radius: 8px;
+  border: 1px solid var(--border-color-divider);
+  border-inline-start: 3px solid var(--color-primary, #1a73e8);
+  background: var(--background-primary);
+  color: var(--text-color);
+  .ai-compose-subject {
+    font-weight: 700;
+    margin-bottom: 6px;
+    unicode-bidi: plaintext;
+  }
+  .ai-compose-label {
+    color: var(--text-color-subtle);
+    font-weight: 400;
+  }
+  .ai-compose-body {
+    white-space: pre-wrap;
+    unicode-bidi: plaintext;
+    line-height: 1.5;
+    max-height: 340px;
+    overflow-y: auto;
+  }
+  .ai-compose-subject-tick {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    font-size: 11px;
+    margin-top: 6px;
+    color: var(--text-color-subtle);
+  }
+}
+.ai-sidebar .ai-draft-conv {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin: 0 0 6px;
+  padding: 4px 8px;
+  border-radius: 6px;
+  font-size: 11px;
+  color: var(--text-color-subtle);
+  border: 1px dashed var(--border-color-divider);
+  .ai-draft-conv-text {
+    flex: 1;
+    line-height: 1.4;
+  }
+  .ai-draft-new-conv {
+    font-size: 11px;
+    white-space: nowrap;
+  }
+  &.active {
+    color: var(--text-color);
+    border-style: solid;
+    border-color: var(--color-primary, #1a73e8);
+    background: rgba(26, 115, 232, 0.08);
+  }
+}
+.ai-sidebar .message.message-notice {
+  background: transparent;
+  border: 1px dashed var(--border-color-divider);
+  color: var(--text-color-subtle);
+  font-size: 12px;
+  text-align: center;
+}
+.ai-sidebar .message-content.ai-compose-note {
+  font-size: 11px;
+  opacity: 0.85;
+}
