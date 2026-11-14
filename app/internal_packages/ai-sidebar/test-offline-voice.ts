@@ -19,6 +19,11 @@ import {
   encodeWav16,
   findWhisperIn,
   findWhisperSetups,
+  isWhisperHallucination,
+  keepDetectedLang,
+  parseDetectedLangs,
+  prepareSpeech,
+  resampleTo16k,
   whisperUsedGpu,
   matchFolder,
   parseVoiceCommand,
@@ -157,7 +162,7 @@ async function main() {
       'silent CPU run detected'
     );
     assert(
-      /catch \(err\) \{\s*gpuFailed = true;[\s\S]{0,400}const cpu = whisperSetup\(\);[\s\S]{0,300}await runCli\(cpu\.cli, args\(cpu\)\);/.test(
+      /catch \(err\) \{\s*gpuFailed = true;[\s\S]{0,400}const cpu = whisperSetup\(\);[\s\S]{0,300}await runCli\(cpu\.cli, args\(cpu\)\)/.test(
         v
       ),
       'retry on CPU'
@@ -216,15 +221,18 @@ async function main() {
       threads: 99,
       longestSec: 5,
     });
-    assert(
-      a.join(' ') === '-m m.bin -l auto -t 32 -nt -np -oj -ac 768 -f a.wav -f b.wav',
-      a.join(' ')
-    );
+    assert(a.join(' ') === '-m m.bin -l auto -t 32 -nt -oj -ac 768 -f a.wav -f b.wav', a.join(' '));
     assert(
       !whisperArgs({ model: 'm', files: ['a'], lang: 'he', threads: 4, longestSec: 20 }).includes(
         '-ac'
       ),
       'long audio: full context'
+    );
+    assert(
+      whisperArgs({ model: 'm', files: ['a'], lang: 'he', threads: 4, longestSec: 3 }).includes(
+        '-np'
+      ),
+      'forced language on CPU: quiet log'
     );
     assert(
       whisperJsonPathCandidates('x/part0.wav').join() === 'x/part0.wav.json,x/part0.json',
@@ -386,6 +394,158 @@ async function main() {
     assert(/id: 'voice',[\s\S]{0,200}data-offline-ribbon-btn="voice-command"/.test(t), 'step');
     assert(/ {2}voice: \[\s*'[^']*Whisper[^']*',\s*'[^']*Whisper/.test(t), 'tip');
     assert(/<OfflineHelpTip tip="voice" \/>/.test(read('lib/ai-sidebar.tsx')), 'tip placed');
+  });
+
+  await test('commands heard loosely (quiet mic / short clips) — but no false alarms', () => {
+    const want: Array<[string, string]> = [
+      ['פתח פיוטה חדשה', 'new-draft'],
+      ['פתח קוותה חדשה', 'new-draft'],
+      ['סמנה בו חב', 'star'],
+      ['סמל בו חב', 'star'],
+      ['מהחק', 'delete'],
+      ['מהק', 'delete'],
+      ['הרחיון', 'archive'],
+      ['על חיון', 'archive'],
+      ['אלחיון', 'archive'],
+      ['חפסט זום.', 'search'],
+      ['תנאי שאני מגיע מחר בשמונה', 'reply'],
+      ['הרבול התקיעה דואר נכנס.', 'folder'],
+    ];
+    for (const [t, k] of want)
+      assert(parseVoiceCommand(t).kind === k, `${t} → ${parseVoiceCommand(t).kind}`);
+    for (const t of [
+      'מחר',
+      'מחשב',
+      'Daniela minn.',
+      'תן לי רגע',
+      'תודה רבה',
+      'כוכבים בשמיים',
+      'ארוחה',
+      'פתח',
+      'סמן',
+    ])
+      assert(parseVoiceCommand(t).kind === 'unknown', `${t} → ${parseVoiceCommand(t).kind}`);
+  });
+
+  await test('language: Hebrew unless Whisper is clearly sure it is English (log confidence)', () => {
+    const log = [
+      "main: processing 'C:\\t\\part0.wav' (36480 samples, 2.3 sec), 4 threads, lang = auto",
+      'whisper_full_with_state: auto-detected language: en (p = 0.613)',
+      "main: processing 'C:\\t\\part1.wav' (113253 samples, 7.1 sec), 4 threads, lang = auto",
+      'whisper_full_with_state: auto-detected language: en (p = 0.997540)',
+    ].join('\r\n');
+    const d = parseDetectedLangs(log);
+    assert(
+      d['C:\\t\\part0.wav'].p === 0.613 && d['C:\\t\\part1.wav'].lang === 'en',
+      JSON.stringify(d)
+    );
+    // Ronnie's case: a short Hebrew command heard as English.
+    assert(
+      !keepDetectedLang({ lang: 'en', p: 0.613, text: 'Daniela minn.', sec: 2.3 }),
+      'unsure → he'
+    );
+    assert(
+      !keepDetectedLang({ lang: 'en', p: 0.9, text: 'Daniela minn.', sec: 2.0 }),
+      'short needs 0.92'
+    );
+    assert(
+      !keepDetectedLang({ lang: 'en', text: 'Hello there friend', sec: 4 }),
+      'no confidence → he'
+    );
+    assert(
+      keepDetectedLang({ lang: 'en', p: 0.99, text: 'Please send the quarterly report.', sec: 7 }),
+      'clear en'
+    );
+    assert(
+      !keepDetectedLang({ lang: 'en', p: 0.99, text: 'שלום Daniel', sec: 7 }),
+      'Hebrew letters → he'
+    );
+    assert(keepDetectedLang({ lang: 'he', p: 0.4, text: 'שלום', sec: 1 }), 'he kept');
+    assert(!keepDetectedLang({ lang: 'ar', p: 0.99, text: 'x', sec: 3 }), 'other → he');
+  });
+
+  await test('made-up lines on silence are dropped; real short words are kept', () => {
+    for (const t of [
+      'Thanks for watching!',
+      'תודה שצפיתם',
+      'כתוביות: עברית',
+      'Subtitles by the Amara.org community',
+      '♪♪',
+      '',
+    ])
+      assert(isWhisperHallucination(t), t);
+    for (const t of ['תודה רבה', 'Thank you', 'חפש חשבונית', 'כן'])
+      assert(!isWhisperHallucination(t), t);
+  });
+
+  await test('real-mic audio: resample, trim silence, level quiet speech, refuse near-silence', () => {
+    const sr = 16000;
+    const tone = (sec: number, amp: number, rate = sr) => {
+      const a = new Float32Array(Math.round(sec * rate));
+      for (let i = 0; i < a.length; i++)
+        a[i] = amp * Math.sin((2 * Math.PI * 220 * i) / rate) * (0.6 + 0.4 * Math.sin(i / 900));
+      return a;
+    };
+    const noise = (sec: number, amp: number) => {
+      let x = 12345;
+      const a = new Float32Array(Math.round(sec * sr));
+      for (let i = 0; i < a.length; i++) {
+        x = (x * 1103515245 + 12345) % 2147483648;
+        a[i] = amp * (x / 1073741824 - 1);
+      }
+      return a;
+    };
+    const cat = (...xs: Float32Array[]) => {
+      const out = new Float32Array(xs.reduce((n, x) => n + x.length, 0));
+      let o = 0;
+      for (const x of xs) {
+        out.set(x, o);
+        o += x.length;
+      }
+      return out;
+    };
+    const r48 = resampleTo16k(tone(1, 0.5, 48000), 48000);
+    assert(Math.abs(r48.length - 16000) <= 1, `48k → 16k: ${r48.length}`);
+    assert(resampleTo16k(tone(1, 0.5, 44100), 44100).length === 16000, '44.1k');
+    const quiet = cat(noise(1.5, 0.0004), tone(2, 0.02), noise(1.5, 0.0004));
+    const p = prepareSpeech(quiet);
+    assert(
+      !p.tooQuiet && p.gain > 5,
+      `quiet speech leveled: ${JSON.stringify({ g: p.gain, s: p.speechSec })}`
+    );
+    assert(p.samples.length < quiet.length - sr * 1.5, 'silence trimmed');
+    assert(p.speechSec > 1.5, 'speech seconds');
+    const loud = prepareSpeech(cat(noise(0.5, 0.001), tone(2, 0.6), noise(0.5, 0.001)));
+    assert(!loud.tooQuiet && loud.gain === 1, 'loud untouched');
+    assert(prepareSpeech(noise(3, 0.002)).tooQuiet, 'only background noise');
+    assert(prepareSpeech(new Float32Array(sr * 3)).tooQuiet, 'digital silence');
+    assert(
+      prepareSpeech(cat(noise(1, 0.0005), tone(0.1, 0.3), noise(1, 0.0005))).tooQuiet,
+      'a click, not speech'
+    );
+    assert(prepareSpeech(tone(0.05, 0.3)).tooQuiet, 'too short');
+  });
+
+  await test('commands: Hebrew only, "didn\'t hear" instead of guesses, Try again button', () => {
+    const v = read('lib/offline-mail/offline-voice.tsx');
+    assert(
+      /mode === 'command'\) \{[\s\S]{0,300}transcribeSamples\(samples, \{ lang: 'he', split: false \}\)/.test(
+        v
+      ),
+      'he'
+    );
+    assert(
+      !/lang: first === 'he' \? 'en'/.test(v) && !/uiLangCode/.test(v),
+      'no English / UI-language pass'
+    );
+    assert(/runWhisper\(redo, 'he', longest\)/.test(v), 'unsure dictation parts redone in Hebrew');
+    assert(/לא שמעתי, נסה שוב/.test(v) && /if \(prep\.tooQuiet\)/.test(v), 'quiet → no transcript');
+    assert(
+      /text: tr\('לא זיהיתי פקודה'[\s\S]{0,120}actions: \[retryAction\('command'\)\]/.test(v),
+      'retry on unknown'
+    );
+    assert(/data-offline-voice-hud-action=\{a\.id\}/.test(v), 'button rendered');
+    assert(/resampleTo16k\(raw, this\._rate\)/.test(v), 'mic resampled if needed');
   });
 
   console.log(`\n${passed} passed, ${failed} failed`);

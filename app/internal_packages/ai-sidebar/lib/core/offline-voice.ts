@@ -305,8 +305,9 @@ export function whisperArgs(o: {
     '-nt',
     '-oj',
   ];
-  // GPU runs keep the log on stderr: it is how a silent CPU run is detected (whisperUsedGpu).
-  if (!o.gpu) a.splice(a.indexOf('-nt') + 1, 0, '-np');
+  // GPU runs keep the log on stderr: it is how a silent CPU run is detected
+  // (whisperUsedGpu). Auto-language runs keep it for the detection confidence.
+  if (!o.gpu && o.lang !== 'auto') a.splice(a.indexOf('-nt') + 1, 0, '-np');
   // Short audio: a smaller audio context is much faster on CPU (the window is 30 s otherwise).
   // (The GPU is fast with the full context, which is a bit more accurate.)
   if (!o.gpu && o.longestSec > 0 && o.longestSec < 14) a.push('-ac', '768');
@@ -364,6 +365,145 @@ export function acceptDetectedLang(lang: string): boolean {
   return lang === 'he' || lang === 'iw' || lang === 'en';
 }
 
+/**
+ * Detected language + confidence per input file, from whisper-cli's log
+ * ("main: processing 'x.wav' …" then "auto-detected language: en (p = 0.98)").
+ */
+export function parseDetectedLangs(stderr: string): {
+  [file: string]: { lang: string; p: number };
+} {
+  const out: { [file: string]: { lang: string; p: number } } = {};
+  let cur = '';
+  for (const line of String(stderr || '').split(/\r?\n/)) {
+    const m = /processing '([^']+)'/.exec(line);
+    if (m) {
+      cur = m[1];
+      continue;
+    }
+    const d = /auto-detected language:\s*([a-z]{2,3})\s*\(p\s*=\s*([0-9.]+)\)/i.exec(line);
+    if (d && cur) out[cur] = { lang: d[1].toLowerCase(), p: Number(d[2]) || 0 };
+  }
+  return out;
+}
+
+/**
+ * Dictation language for one part: Hebrew unless Whisper is clearly sure it is
+ * English (and the words came out in Latin letters). Short or unsure parts —
+ * where auto-detection misfires (a Hebrew command heard as "Daniela minn.") —
+ * are redone in Hebrew. English words inside Hebrew speech still come out fine.
+ */
+export function keepDetectedLang(o: {
+  lang: string;
+  p?: number;
+  text: string;
+  sec: number;
+}): boolean {
+  if (o.lang === 'he' || o.lang === 'iw') return true;
+  if (o.lang !== 'en') return false;
+  const p = typeof o.p === 'number' ? o.p : 0;
+  const latin = (o.text.match(/[A-Za-z]/g) || []).length;
+  const hebrew = (o.text.match(/[\u0590-\u05FF]/g) || []).length;
+  if (latin < 4 || latin < hebrew * 2) return false;
+  return p >= (o.sec < 2.5 ? 0.92 : 0.8);
+}
+
+/** Whisper's typical made-up lines on silence / noise (subtitle credits etc.). */
+export function isWhisperHallucination(text: string): boolean {
+  const t = String(text || '')
+    .trim()
+    .replace(/[.!?,…\s]+$/g, '')
+    .toLowerCase();
+  if (!t) return true;
+  if (/^[♪♫\s.…-]+$/.test(t)) return true;
+  return /^(?:thanks? (?:you )?for watching|thank you for watching|please subscribe|subtitles? by.*|.*amara\.org.*|תודה (?:רבה )?(?:שצפיתם|על הצפייה)|כתוביות.*|תורגם (?:על ידי|ע"י).*|תרגום(?: וכתוביות)?:.*)$/i.test(
+    t
+  );
+}
+
+/** Linear resampling (with averaging when going down) to 16 kHz. */
+export function resampleTo16k(x: Float32Array, from: number): Float32Array {
+  const to = VOICE_SAMPLE_RATE;
+  if (!from || Math.abs(from - to) < 1 || !x.length) return x;
+  const r = from / to;
+  const n = Math.max(1, Math.floor(x.length / r));
+  const out = new Float32Array(n);
+  const half = Math.max(0.5, r / 2);
+  for (let i = 0; i < n; i++) {
+    const c = i * r;
+    if (r > 1) {
+      const a = Math.max(0, Math.floor(c - half + 0.5));
+      const b = Math.min(x.length, Math.floor(c + half + 0.5));
+      let s = 0;
+      for (let k = a; k < b; k++) s += x[k];
+      out[i] = b > a ? s / (b - a) : 0;
+    } else {
+      const k = Math.floor(c);
+      const fr = c - k;
+      out[i] = x[k] * (1 - fr) + (k + 1 < x.length ? x[k + 1] : x[k]) * fr;
+    }
+  }
+  return out;
+}
+
+export type SpeechPrep = {
+  samples: Float32Array;
+  /** Seconds that sound like speech (louder than the background). */
+  speechSec: number;
+  peak: number;
+  floor: number;
+  gain: number;
+  /** Too little / too quiet speech: say "didn't hear" instead of guessing. */
+  tooQuiet: boolean;
+};
+
+/**
+ * Real microphones: trim the silence around the speech and bring quiet speech
+ * up to a normal level (Whisper guesses wildly on very quiet or near-empty
+ * audio). Pure function so it can be tested with synthetic audio.
+ */
+export function prepareSpeech(x: Float32Array, sr: number = VOICE_SAMPLE_RATE): SpeechPrep {
+  const frame = Math.max(1, Math.round(sr * 0.02));
+  const nf = Math.floor(x.length / frame);
+  let peak = 0;
+  for (let i = 0; i < x.length; i++) peak = Math.max(peak, Math.abs(x[i]));
+  if (nf < 5) return { samples: x, speechSec: 0, peak, floor: 0, gain: 1, tooQuiet: true };
+  const rms = new Float32Array(nf);
+  for (let f = 0; f < nf; f++) {
+    let s = 0;
+    for (let i = f * frame; i < (f + 1) * frame; i++) s += x[i] * x[i];
+    rms[f] = Math.sqrt(s / frame);
+  }
+  const sorted = Array.from(rms).sort((a, b) => a - b);
+  const floor = sorted[Math.floor(nf * 0.15)];
+  const top = sorted[Math.min(nf - 1, Math.floor(nf * 0.98))];
+  const thr = Math.max(0.0006, floor * 2.5, top * 0.1);
+  let first = -1;
+  let last = -1;
+  let speech = 0;
+  for (let f = 0; f < nf; f++) {
+    if (rms[f] > thr) {
+      speech++;
+      if (first < 0) first = f;
+      last = f;
+    }
+  }
+  const speechSec = (speech * frame) / sr;
+  const tooQuiet = first < 0 || speechSec < 0.2 || peak < 0.003 || top < floor * 2;
+  if (tooQuiet) return { samples: x, speechSec, peak, floor, gain: 1, tooQuiet: true };
+  const a = Math.max(0, (first - Math.round(0.3 / 0.02)) * frame);
+  const b = Math.min(x.length, (last + 1 + Math.round(0.45 / 0.02)) * frame);
+  const cut = x.subarray(a, b);
+  // Level from a high percentile, not the single loudest click.
+  const abs: number[] = [];
+  for (let i = 0; i < cut.length; i += 4) abs.push(Math.abs(cut[i]));
+  abs.sort((p, q) => p - q);
+  const level = abs[Math.min(abs.length - 1, Math.floor(abs.length * 0.995))] || peak;
+  const gain = level > 0 && level < 0.3 ? Math.min(30, 0.5 / level) : 1;
+  const out = new Float32Array(cut.length);
+  for (let i = 0; i < cut.length; i++) out[i] = Math.max(-1, Math.min(1, cut[i] * gain));
+  return { samples: out, speechSec, peak, floor, gain, tooQuiet: false };
+}
+
 // ---- Voice commands ---------------------------------------------------
 
 export type VoiceCommand =
@@ -417,6 +557,7 @@ function isFolderWord(w: string): boolean {
   return (
     (x.length >= 4 &&
       /^ת/.test(x) &&
+      /[קכ]/.test(x) &&
       ['תיקיה', 'תיקייה', 'תיקית', 'תיקיית', 'תקיה', 'תקייה'].some((t) => near(x, t, 2))) ||
     w === 'folder' ||
     w === 'the folder'
@@ -424,6 +565,52 @@ function isFolderWord(w: string): boolean {
 }
 
 const STAR_WORD = /^(ב|ל)?(כו|קו)[כחק]ב(ים)?$/;
+
+/**
+ * Sound-alike key for Hebrew as Whisper mishears short commands: no
+ * guttural letters (א ה ע), כ/ח → ח, ט → ת, ס → ש, final letters regular,
+ * no spaces. "הרחיון" / "אלחיון" ≈ "ארכיון", "סמנה בו חב" ≈ "סמן בכוכב".
+ */
+export function soundKey(t: string): string {
+  return normalizeSpoken(t, true)
+    .replace(/[אהע\s]/g, '')
+    .replace(/כ/g, 'ח')
+    .replace(/ט/g, 'ת')
+    .replace(/ס/g, 'ש');
+}
+
+// Whole-utterance sound-alikes for the argument-less commands. Delete is not
+// here on purpose: it is only taken from a clear transcript.
+const FUZZY_COMMANDS: Array<[VoiceCommand['kind'], string[]]> = [
+  ['new-draft', ['פתח טיוטה חדשה', 'טיוטה חדשה', 'פתח מייל חדש']],
+  ['archive', ['ארכיון', 'לארכיון', 'העבר לארכיון']],
+  ['star', ['סמן בכוכב', 'כוכב']],
+  ['unread', ['סמן כלא נקרא']],
+];
+
+function fuzzyCommand(n: string): VoiceCommand | null {
+  const k = soundKey(n);
+  if (k.length < 3 || k.length > 16) return null;
+  let best: { kind: VoiceCommand['kind']; d: number } | null = null;
+  for (const [kind, phrases] of FUZZY_COMMANDS) {
+    for (const p of phrases) {
+      const pk = soundKey(p);
+      const d = editDistance(k, pk);
+      const max = pk.length <= 4 ? 1 : Math.floor(pk.length * 0.25);
+      if (d <= max && (!best || d < best.d)) best = { kind, d };
+    }
+  }
+  return best ? ({ kind: best.kind } as VoiceCommand) : null;
+}
+
+/** First word heard loosely as a verb ("חפסט" → חפש, "תנאי" → תענה). */
+const nearVerb = (w: string, verbs: string[]) => {
+  const k = soundKey(w);
+  return (
+    k.length >= 2 &&
+    verbs.some((v) => editDistance(k, soundKey(v)) <= (soundKey(v).length >= 3 ? 1 : 0))
+  );
+};
 
 /**
  * Rule-based voice command parser (Hebrew + English). Nothing is sent
@@ -465,7 +652,10 @@ export function parseVoiceCommand(raw: string): VoiceCommand {
   // Help / guide
   if (/^(עזרה|מדריך|הצג מדריך|help|show the guide|guide)$/.test(n)) return { kind: 'help' };
   // Search
-  if (/^(חפש|תחפש|חיפוש|תמצא|מצא)$/.test(w[0]) && w.length > 1) {
+  if (
+    (/^(חפש|תחפש|חיפוש|תמצא|מצא)$/.test(w[0]) || nearVerb(w[0], ['חפש', 'תחפש'])) &&
+    w.length > 1
+  ) {
     const k = w[1] === 'את' || w[1] === 'אחרי' ? 2 : 1;
     const q = rest(k);
     if (q) return { kind: 'search', query: q };
@@ -480,7 +670,11 @@ export function parseVoiceCommand(raw: string): VoiceCommand {
   if (/^(שאל|תשאל|שאלה)$/.test(w[0]) && w.length > 1) return { kind: 'ask', question: rest(1) };
   if (w[0] === 'ask' && w.length > 1) return { kind: 'ask', question: rest(1) };
   // Reply with AI ("תענה ש…": fills the AI write box; never sends)
-  if (/^(תענה|ענה|תנה|תנא|תענא|תעני|עני|תשיב|השב|תגיב|הגב)$/.test(w[0]) && w.length > 1) {
+  if (
+    (/^(תענה|ענה|תנה|תנא|תענא|תעני|עני|תשיב|השב|תגיב|הגב|תנאי)$/.test(w[0]) ||
+      (w[0] !== 'תן' && nearVerb(w[0], ['תענה', 'תשיב']) && w[0].length >= 3)) &&
+    w.length > 1
+  ) {
     let k = 1;
     if (w[k] === 'לו' || w[k] === 'לה' || w[k] === 'להם') k++;
     let ins = rest(k).replace(/^(ש|כי)\s+/, '');
@@ -511,6 +705,12 @@ export function parseVoiceCommand(raw: string): VoiceCommand {
       else if (w[0] === 'open' || w[0] === 'show') k = -1;
     } else if (isFolderWord(w[0]) && w.length > 1) {
       k = 1;
+    } else if (
+      w.length > 2 &&
+      (isFolderWord(w[1]) || (w[1] === 'ל' && w[2] && isFolderWord(w[2])))
+    ) {
+      // A mangled verb before "folder" ("הרבול התקיעה דואר נכנס").
+      k = isFolderWord(w[1]) ? 2 : 3;
     }
     if (k > 0 && k < w.length) {
       const name = rest(k)
@@ -521,7 +721,9 @@ export function parseVoiceCommand(raw: string): VoiceCommand {
   }
   // Actions on the selected message
   if (
-    /^(מחק|תמחק|מחקי|תמחקי|מחיקה|זרוק|לפח)( את)?( ההודעה| המייל| זה| זאת| אותו| אותה)?$/.test(n) ||
+    /^(מחק|תמחק|מחקי|תמחקי|מחיקה|מהחק|מהק|זרוק|לפח)( את)?( ההודעה| המייל| זה| זאת| אותו| אותה)?$/.test(
+      n
+    ) ||
     /^(delete|trash|remove)( it| this| this message| the message)?$/.test(n)
   ) {
     return { kind: 'delete' };
@@ -547,6 +749,8 @@ export function parseVoiceCommand(raw: string): VoiceCommand {
   ) {
     return { kind: 'unread' };
   }
+  const fz = /[\u05d0-\u05ea]/.test(n) ? fuzzyCommand(n) : null;
+  if (fz) return fz;
   return { kind: 'unknown', text };
 }
 

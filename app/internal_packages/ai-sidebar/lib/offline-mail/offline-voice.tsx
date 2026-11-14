@@ -14,14 +14,18 @@ import React from 'react';
 import * as fs from 'fs';
 import * as os from 'os';
 import * as path from 'path';
-import { tr, offlineLang } from '../core/offline-i18n';
+import { tr } from '../core/offline-i18n';
 import {
   VOICE_MAX_SECONDS,
   VOICE_SAMPLE_RATE,
   VoiceCommand,
   WhisperSetup,
-  acceptDetectedLang,
   applySpokenPunctuation,
+  isWhisperHallucination,
+  keepDetectedLang,
+  parseDetectedLangs,
+  prepareSpeech,
+  resampleTo16k,
   decodeWav,
   encodeWav16,
   findWhisperSetups,
@@ -43,6 +47,8 @@ export type VoiceHud = null | {
   text: string;
   detail?: string;
   action?: { label: string; run: () => void };
+  /** Extra buttons (e.g. "Try again"), shown before `action`. */
+  actions?: Array<{ id: string; label: string; run: () => void }>;
 };
 
 /** Tests can swap the microphone (fake stream) or watch runs. */
@@ -55,6 +61,12 @@ export const offlineVoiceHooks: {
     text: string;
     audioSec: number;
     engine?: string;
+    /** Mic diagnostics (numbers only): input rate, peak, gain used, speech seconds. */
+    inputRate?: number;
+    peak?: number;
+    gain?: number;
+    speechSec?: number;
+    quiet?: boolean;
   } | null;
   runs: number;
   /** Tests / benchmarks: force the CPU build. */
@@ -97,10 +109,6 @@ function threads(gpu = false): number {
   return Math.max(2, Math.min(16, Math.floor(n * 0.66)));
 }
 
-function uiLangCode(): string {
-  return offlineLang() === 'en' ? 'en' : 'he';
-}
-
 function runCli(cli: string, args: string[]): Promise<string> {
   // eslint-disable-next-line @typescript-eslint/no-var-requires
   const cp = require('child_process');
@@ -124,14 +132,13 @@ async function runWhisper(
   files: string[],
   lang: string,
   longestSec: number
-): Promise<WhisperSetup> {
+): Promise<{ setup: WhisperSetup; log: string }> {
   const setup = whisperSetup();
   if (!setup) throw new Error('whisper-missing');
   const args = (s: WhisperSetup) =>
     whisperArgs({ model: s.model, files, lang, threads: threads(s.gpu), longestSec, gpu: s.gpu });
   if (!setup.gpu) {
-    await runCli(setup.cli, args(setup));
-    return setup;
+    return { setup, log: await runCli(setup.cli, args(setup)) };
   }
   try {
     const log = await runCli(setup.cli, args(setup));
@@ -141,7 +148,7 @@ async function runWhisper(
         '[Offline voice] CUDA build ran without the GPU; using the CPU build from now on'
       );
     }
-    return setup;
+    return { setup, log };
   } catch (err) {
     gpuFailed = true;
     console.warn(
@@ -152,8 +159,7 @@ async function runWhisper(
     if (!cpu || cpu.gpu) throw err;
     for (const f of files)
       for (const p of whisperJsonPathCandidates(f)) fs.rmSync(p, { force: true });
-    await runCli(cpu.cli, args(cpu));
-    return cpu;
+    return { setup: cpu, log: await runCli(cpu.cli, args(cpu)) };
   }
 }
 
@@ -168,19 +174,45 @@ function readJsonFor(wav: string): { text: string; lang: string } {
   return { text: '', lang: '' };
 }
 
+export type VoiceResult = {
+  text: string;
+  langs: string[];
+  ms: number;
+  parts: number;
+  engine?: string;
+  /** Nothing usable heard (too quiet / too short / only made-up filler). */
+  quiet?: boolean;
+  gain?: number;
+  peak?: number;
+  speechSec?: number;
+};
+
+const r2 = (n: number) => Math.round(n * 1000) / 1000;
+
 /**
- * Transcribe locally: split at pauses, guess each part's language (Hebrew /
- * English), redo parts guessed as another language in the UI language.
+ * Transcribe locally: trim silence and level quiet speech, split at pauses,
+ * then per part keep English only when Whisper is clearly sure, otherwise
+ * Hebrew (auto-detection misfires on short clips).
  */
 export async function transcribeSamples(
-  samples: Float32Array,
-  opts: { lang?: string; split?: boolean } = {}
-): Promise<{ text: string; langs: string[]; ms: number; parts: number; engine?: string }> {
+  input: Float32Array,
+  opts: { lang?: string; split?: boolean; prep?: boolean } = {}
+): Promise<VoiceResult> {
   if (!whisperSetup()) throw new Error('whisper-missing');
   const t0 = Date.now();
+  let samples = input;
+  let diag: Pick<VoiceResult, 'gain' | 'peak' | 'speechSec'> = {};
+  if (opts.prep !== false) {
+    const prep = prepareSpeech(input);
+    diag = { gain: r2(prep.gain), peak: r2(prep.peak), speechSec: r2(prep.speechSec) };
+    if (prep.tooQuiet)
+      return { text: '', langs: [], ms: Date.now() - t0, parts: 0, quiet: true, ...diag };
+    samples = prep.samples;
+  }
   const ranges =
     opts.split === false ? [[0, samples.length] as [number, number]] : splitOnSilence(samples);
-  if (!ranges.length) return { text: '', langs: [], ms: Date.now() - t0, parts: 0 };
+  if (!ranges.length)
+    return { text: '', langs: [], ms: Date.now() - t0, parts: 0, quiet: true, ...diag };
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'mailai-voice-'));
   try {
     const files = ranges.map(([a, b], i) => {
@@ -190,23 +222,33 @@ export async function transcribeSamples(
     });
     const longest = Math.max(...ranges.map(([a, b]) => (b - a) / VOICE_SAMPLE_RATE));
     const lang = opts.lang || 'auto';
-    const used = await runWhisper(files, lang, longest);
+    const first = await runWhisper(files, lang, longest);
+    let used = first.setup;
     const out = files.map(readJsonFor);
     if (lang === 'auto') {
-      const redo = files.filter((_, i) => out[i].text && !acceptDetectedLang(out[i].lang));
+      const det = parseDetectedLangs(first.log);
+      const redo = files.filter(
+        (f, i) =>
+          out[i].text &&
+          !keepDetectedLang({
+            lang: out[i].lang,
+            p: det[f] ? det[f].p : undefined,
+            text: out[i].text,
+            sec: (ranges[i][1] - ranges[i][0]) / VOICE_SAMPLE_RATE,
+          })
+      );
       if (redo.length) {
         for (const f of redo)
           for (const p of whisperJsonPathCandidates(f)) fs.rmSync(p, { force: true });
-        const fb = uiLangCode();
-        await runWhisper(redo, fb, longest);
+        used = (await runWhisper(redo, 'he', longest)).setup;
         files.forEach((f, i) => {
-          if (redo.includes(f)) out[i] = { ...readJsonFor(f), lang: fb };
+          if (redo.includes(f)) out[i] = { ...readJsonFor(f), lang: 'he' };
         });
       }
     }
     const text = out
       .map((o) => o.text)
-      .filter(Boolean)
+      .filter((t) => t && !isWhisperHallucination(t))
       .join(' ')
       .trim();
     return {
@@ -215,6 +257,8 @@ export async function transcribeSamples(
       ms: Date.now() - t0,
       parts: files.length,
       engine: `${used.modelName} · ${used.gpu ? 'GPU' : 'CPU'}`,
+      quiet: !text,
+      ...diag,
     };
   } finally {
     fs.rmSync(dir, { recursive: true, force: true });
@@ -222,9 +266,12 @@ export async function transcribeSamples(
 }
 
 /** Tests / benchmarks: transcribe a WAV file the same way as a recording. */
-export async function transcribeWavFile(file: string) {
+export async function transcribeWavFile(
+  file: string,
+  opts: { lang?: string; split?: boolean } = {}
+) {
   const s = decodeWav(fs.readFileSync(file));
-  const r = await transcribeSamples(s);
+  const r = await transcribeSamples(s, opts);
   return { ...r, audioSec: Math.round((s.length / VOICE_SAMPLE_RATE) * 10) / 10 };
 }
 
@@ -321,6 +368,7 @@ class OfflineVoice {
   private _maxTimer: any = null;
   private _listeners = new Set<Listener>();
   private _cancelled = false;
+  private _rate = VOICE_SAMPLE_RATE;
 
   listen(cb: Listener) {
     this._listeners.add(cb);
@@ -399,6 +447,8 @@ class OfflineVoice {
       this._stream = stream;
       const ctx = new AudioContext({ sampleRate: VOICE_SAMPLE_RATE });
       this._ctx = ctx;
+      // Normally 16 kHz (Chromium resamples the mic); if not, we resample.
+      this._rate = ctx.sampleRate || VOICE_SAMPLE_RATE;
       const src = ctx.createMediaStreamSource(stream);
       const node = ctx.createScriptProcessor(4096, 1, 1);
       this._node = node;
@@ -454,12 +504,13 @@ class OfflineVoice {
   }
 
   private _samples(maxSec = 0): Float32Array {
-    const out = new Float32Array(this._len);
+    const raw = new Float32Array(this._len);
     let o = 0;
     for (const c of this._chunks) {
-      out.set(c, o);
+      raw.set(c, o);
       o += c.length;
     }
+    const out = resampleTo16k(raw, this._rate);
     if (maxSec > 0 && out.length > maxSec * VOICE_SAMPLE_RATE)
       return out.subarray(out.length - maxSec * VOICE_SAMPLE_RATE);
     return out;
@@ -472,7 +523,8 @@ class OfflineVoice {
     this._partialBusy = true;
     const t0 = Date.now();
     try {
-      const r = await transcribeSamples(this._samples(25), { lang: uiLangCode(), split: false });
+      // Live text is a preview: Hebrew (the final text detects English parts).
+      const r = await transcribeSamples(this._samples(25), { lang: 'he', split: false });
       if (this.state === 'recording') {
         this.partial = r.text;
         this._emit();
@@ -536,27 +588,13 @@ class OfflineVoice {
       // Wait for a live-text run to finish (one whisper at a time).
       for (let i = 0; i < 100 && this._partialBusy; i++)
         await new Promise((r) => setTimeout(r, 50));
-      let r: { text: string; langs: string[]; ms: number; parts: number; engine?: string };
+      let r: VoiceResult;
       let cmd: VoiceCommand | null = null;
       if (mode === 'command') {
-        // Commands are short and in Hebrew or English: the UI language first
-        // (no detection pass, ~2x faster), the other one if it isn't a command.
-        const first = uiLangCode();
-        r = await transcribeSamples(samples, { lang: first, split: false });
-        cmd = parseVoiceCommand(r.text);
-        if (cmd.kind === 'unknown') {
-          const r2 = await transcribeSamples(samples, {
-            lang: first === 'he' ? 'en' : 'he',
-            split: false,
-          });
-          const c2 = parseVoiceCommand(r2.text);
-          if (c2.kind !== 'unknown') {
-            r = { ...r2, ms: r.ms + r2.ms };
-            cmd = c2;
-          } else {
-            r = { ...r, ms: r.ms + r2.ms };
-          }
-        }
+        // Commands are always Hebrew (English names inside are fine): no
+        // auto-detection, which misfires on short clips.
+        r = await transcribeSamples(samples, { lang: 'he', split: false });
+        if (r.text) cmd = parseVoiceCommand(r.text);
       } else {
         r = await transcribeSamples(samples);
       }
@@ -568,6 +606,11 @@ class OfflineVoice {
         text: r.text,
         audioSec: Math.round(audioSec * 10) / 10,
         engine: r.engine,
+        inputRate: this._rate,
+        peak: r.peak,
+        gain: r.gain,
+        speechSec: r.speechSec,
+        quiet: !!r.quiet,
       };
       if (this._cancelled) return;
       this.state = 'idle';
@@ -575,7 +618,20 @@ class OfflineVoice {
       this.target = null;
       this.partial = '';
       if (!r.text) {
-        this.showHud({ kind: 'warn', text: tr('לא נשמע דיבור', 'No speech heard') }, 3500);
+        const again: Target | null =
+          mode === 'command' ? 'command' : target && document.contains(target) ? target : null;
+        this.showHud(
+          {
+            kind: 'warn',
+            text: tr('לא שמעתי, נסה שוב', "Didn't catch that, try again"),
+            detail: tr(
+              'דבר קרוב למיקרופון, ולחץ שוב כשסיימת.',
+              'Speak close to the mic and click again when done.'
+            ),
+            actions: again ? [retryAction(again)] : undefined,
+          },
+          7000
+        );
         return;
       }
       if (mode === 'command') {
@@ -608,6 +664,18 @@ class OfflineVoice {
 }
 
 export const offlineVoice = new OfflineVoice();
+
+function retryAction(t: Target) {
+  return {
+    id: 'retry',
+    label: tr('🎤 נסה שוב', '🎤 Try again'),
+    run: () => {
+      if (t !== 'command' && !document.contains(t)) return;
+      if (t !== 'command') t.focus();
+      void offlineVoice.start(t);
+    },
+  };
+}
 
 // ---- Voice commands ---------------------------------------------------------
 
@@ -797,6 +865,7 @@ export function runVoiceCommand(cmd: VoiceCommand, heard: string) {
           kind: 'warn',
           text: tr('לא זיהיתי פקודה', 'Not a command I know'),
           detail: said,
+          actions: [retryAction('command')],
           action: {
             label: tr('🔍 חפש את זה', '🔍 Search for it'),
             run: () =>
@@ -973,6 +1042,20 @@ export class OfflineVoiceHud extends React.Component<Record<string, never>, { ti
               {h.detail}
             </div>
           ) : null}
+          {(h.actions || []).map((a) => (
+            <button
+              key={a.id}
+              type="button"
+              className="btn btn-small"
+              data-offline-voice-hud-action={a.id}
+              onClick={() => {
+                v.showHud(null, 0);
+                a.run();
+              }}
+            >
+              {a.label}
+            </button>
+          ))}
           {h.action ? (
             <button
               type="button"
