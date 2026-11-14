@@ -4150,6 +4150,71 @@ body.theme-ui-dark {
   .offline-voice-hud-row .btn.btn-small {
     margin-top: 0;
   }
+  &.live {
+    border-color: #e53935;
+    min-width: 380px;
+  }
+  &.live.connecting,
+  &.live.stopping {
+    border-color: #f0a020;
+    .offline-voice-dot {
+      background: #f0a020;
+    }
+  }
+  .offline-voice-live-badge {
+    font-size: 10px;
+    font-weight: 700;
+    letter-spacing: 0.06em;
+    color: #fff;
+    background: #e53935;
+    border-radius: 4px;
+    padding: 1px 5px;
+  }
+  .offline-voice-cost {
+    font-size: 11.5px;
+    opacity: 0.8;
+    white-space: nowrap;
+  }
+  .offline-voice-stop {
+    font-weight: 700;
+  }
+  .offline-voice-confirm {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    margin-top: 8px;
+    padding: 6px 8px;
+    border-radius: 8px;
+    background: rgba(229, 57, 53, 0.1);
+    font-weight: 600;
+    > span {
+      flex: 1;
+    }
+    .btn.btn-small {
+      margin-top: 0;
+    }
+  }
+  .offline-voice-log {
+    margin-top: 6px;
+    max-height: 150px;
+    overflow: auto;
+    font-size: 12.5px;
+    line-height: 1.45;
+  }
+  .offline-voice-line {
+    padding: 1px 0;
+    &.gemini {
+      color: #1565c0;
+    }
+    &.app {
+      font-size: 11.5px;
+      opacity: 0.75;
+    }
+  }
+}
+.ai-sidebar .gemini-usage-live {
+  margin-top: 6px;
+  font-size: 11.5px;
 }
 body.theme-ui-dark {
   .offline-mic {

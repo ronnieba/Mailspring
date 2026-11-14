@@ -700,11 +700,14 @@ export class OfflineRibbon extends React.Component<Record<string, never>, State>
                     {
                       id: 'voice-command',
                       icon: '🎙️',
-                      label: tr('פקודה קולית', 'Voice command'),
-                      pressed: offlineVoice.mode === 'command' && offlineVoice.state !== 'idle',
+                      label:
+                        offlineVoice.mode === 'talk' && offlineVoice.state !== 'idle'
+                          ? tr('⏹ עצור שיחה', '⏹ Stop talking')
+                          : tr('שיחה עם Gemini', 'Talk with Gemini'),
+                      pressed: offlineVoice.mode === 'talk' && offlineVoice.state !== 'idle',
                       title: tr(
-                        'פקודה קולית (Ctrl+Shift+Space): "פתח טיוטה חדשה", "חפש …", "עבור לתיקייה …", "מחק", "ארכיון", "סמן בכוכב", "תענה ש…". Whisper מקומי — ההקלטה לא יוצאת מהמחשב, ו-Gemini רק בלחיצה.',
-                        'Voice command (Ctrl+Shift+Space): "new draft", "search …", "go to folder …", "delete", "archive", "star", "reply that …". Local Whisper — no audio leaves the PC; Gemini only on click.'
+                        'שיחה חיה עם Gemini (Ctrl+Shift+Space): מדברים, הוא עונה בקול ואפשר לקטוע. יכול לחפש, לעבור תיקייה, לפתוח טיוטה, לכתוב תשובה, לסכם, לסמן ולמחוק רק אחרי אישור. אין שליחת מייל. הקול נשלח ל-Google רק בזמן השיחה (בתשלום) ונעצר לבד אחרי שקט.',
+                        'Live conversation with Gemini (Ctrl+Shift+Space): speak, it answers aloud and can be interrupted. It can search, open folders and drafts, write a reply, summarize, star/archive, and delete only after a yes. No mail sending. Audio goes to Google only during the conversation (paid) and stops after silence.'
                       ),
                       onClick: () => offlineVoice.toggle('command'),
                     },

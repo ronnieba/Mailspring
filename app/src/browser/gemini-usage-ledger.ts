@@ -28,6 +28,8 @@ export interface GeminiUsageRecord {
   output: number;
   total: number;
   usd: number;
+  /** Gemini Live sessions only: length in seconds. */
+  seconds?: number;
 }
 
 export interface GeminiUsageLedgerData {
@@ -51,7 +53,17 @@ export function estimateUsd(model: string, input: number, output: number, total:
 }
 
 function emptyTotals(): GeminiUsageTotals {
-  return { calls: 0, inputTokens: 0, outputTokens: 0, totalTokens: 0, usd: 0, ils: 0 };
+  return {
+    calls: 0,
+    inputTokens: 0,
+    outputTokens: 0,
+    totalTokens: 0,
+    usd: 0,
+    ils: 0,
+    liveSessions: 0,
+    liveSeconds: 0,
+    liveUsd: 0,
+  };
 }
 
 function add(t: GeminiUsageTotals, r: GeminiUsageRecord) {
@@ -61,6 +73,11 @@ function add(t: GeminiUsageTotals, r: GeminiUsageRecord) {
   t.totalTokens += r.total;
   t.usd += r.usd;
   t.ils = t.usd * USD_TO_ILS_ESTIMATE;
+  if (typeof r.seconds === 'number') {
+    t.liveSessions = (t.liveSessions || 0) + 1;
+    t.liveSeconds = (t.liveSeconds || 0) + r.seconds;
+    t.liveUsd = (t.liveUsd || 0) + r.usd;
+  }
 }
 
 function sameLocalDay(a: Date, b: Date): boolean {
@@ -162,7 +179,16 @@ export class GeminiUsageLedger {
   }
 
   record(
-    entry: { model?: string; mode?: string; input: number; output: number; total: number },
+    entry: {
+      model?: string;
+      mode?: string;
+      input: number;
+      output: number;
+      total: number;
+      /** Already priced by modality (Gemini Live); otherwise estimated here. */
+      usd?: number;
+      seconds?: number;
+    },
     now: Date = new Date()
   ): GeminiUsageRecord {
     const data = this.load();
@@ -179,7 +205,13 @@ export class GeminiUsageLedger {
     if (!rec.total) {
       rec.total = rec.input + rec.output;
     }
-    rec.usd = estimateUsd(model, rec.input, rec.output, rec.total);
+    rec.usd =
+      typeof entry.usd === 'number' && Number.isFinite(entry.usd) && entry.usd >= 0
+        ? entry.usd
+        : estimateUsd(model, rec.input, rec.output, rec.total);
+    if (typeof entry.seconds === 'number' && Number.isFinite(entry.seconds)) {
+      rec.seconds = Math.max(0, Math.round(entry.seconds * 10) / 10);
+    }
     if (!data.since) {
       data.since = rec.ts;
     }

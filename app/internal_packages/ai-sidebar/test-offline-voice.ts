@@ -1,38 +1,42 @@
 #!/usr/bin/env npx ts-node
 /**
- * Offline experiment (t233): local voice with Whisper.
- * Finding whisper-cli + model, WAV in/out, splitting at pauses, CLI args,
- * whisper JSON, spoken punctuation, the voice-command rules (incl. the way
- * Whisper actually mishears short Hebrew commands), folder matching, and
- * where the mic buttons are. No network, no Gemini for parsing.
+ * Offline experiment (t239): voice with Gemini Live.
+ * Setup (models, Hebrew, barge-in), tools (no send, BLOCKING), cost math,
+ * the endpoint allowlist and session gate, the main-process session with a
+ * fake socket (setup, audio, tool calls, usage, timeouts, key redaction), the
+ * delete confirmation, PCM helpers, folder matching, where the mic buttons
+ * are, and that local Whisper is gone. No network.
  *
  *   npx ts-node --transpile-only --project app/tsconfig.json app/internal_packages/ai-sidebar/test-offline-voice.ts
  */
 import fs from 'fs';
-import os from 'os';
 import path from 'path';
 import {
-  WHISPER_DIR_NAME,
-  applySpokenPunctuation,
-  cleanTranscript,
-  decodeWav,
-  encodeWav16,
-  findWhisperIn,
-  findWhisperSetups,
-  isWhisperHallucination,
-  keepDetectedLang,
-  parseDetectedLangs,
-  prepareSpeech,
-  resampleTo16k,
-  whisperUsedGpu,
+  DeleteGate,
+  clipForGemini,
+  floatTo16BitPcm,
   matchFolder,
-  parseVoiceCommand,
-  parseWhisperJson,
-  splitOnSilence,
-  whisperArgs,
-  whisperDirCandidates,
-  whisperJsonPathCandidates,
+  pcm16Base64ToFloat,
+  resampleTo16k,
+  shouldAutoStop,
 } from './lib/core/offline-voice';
+import {
+  GEMINI_LIVE_HOST,
+  GEMINI_LIVE_MODEL,
+  GEMINI_LIVE_PATH,
+  GEMINI_LIVE_SYSTEM_INSTRUCTION,
+  GEMINI_LIVE_TOOL_NAMES,
+  GEMINI_TRANSCRIBE_MODEL,
+  addLiveUsage,
+  buildLiveSetup,
+  emptyLiveTotals,
+  geminiLiveToolDeclarations,
+  isAllowedLiveUrl,
+  liveUsageUsd,
+} from '../../src/browser/gemini-live-protocol';
+import { GeminiLiveSession, LiveSocket, redactKey } from '../../src/browser/gemini-live-host';
+import { isLiveGateOpen, resetLiveGateForTests } from '../../src/browser/gemini-live-gate';
+import { offlineRequestDecision } from '../../src/browser/offline-network-guard';
 
 let passed = 0;
 let failed = 0;
@@ -51,260 +55,331 @@ function assert(cond: unknown, msg: string) {
 }
 const read = (rel: string) =>
   fs.readFileSync(path.join(__dirname, rel), 'utf8').replace(/\r\n/g, '\n');
+const tick = () => new Promise((r) => setTimeout(r, 5));
 
-function tone(sec: number, amp = 0.3, rate = 16000): Float32Array {
-  const a = new Float32Array(Math.round(sec * rate));
-  for (let i = 0; i < a.length; i++) a[i] = amp * Math.sin((2 * Math.PI * 220 * i) / rate);
-  return a;
-}
-function cat(...parts: Float32Array[]): Float32Array {
-  const out = new Float32Array(parts.reduce((n, p) => n + p.length, 0));
-  let o = 0;
-  for (const p of parts) {
-    out.set(p, o);
-    o += p.length;
+const FAKE_KEY = 'AIzaFAKE-test-key-123';
+
+class FakeSocket implements LiveSocket {
+  sent: any[] = [];
+  closed = false;
+  binaryType = 'arraybuffer';
+  onopen: ((ev?: unknown) => void) | null = null;
+  onmessage: ((ev: { data: unknown }) => void) | null = null;
+  onerror: ((ev?: unknown) => void) | null = null;
+  onclose: ((ev: { code?: number; reason?: string }) => void) | null = null;
+  constructor(public url: string) {}
+  send(d: string) {
+    this.sent.push(JSON.parse(d));
   }
-  return out;
+  close() {
+    this.closed = true;
+  }
+  serve(obj: unknown, binary = false) {
+    const s = JSON.stringify(obj);
+    this.onmessage && this.onmessage({ data: binary ? new TextEncoder().encode(s).buffer : s });
+  }
+}
+
+function mkSession(mode: 'talk' | 'dictate' = 'talk', extra: Record<string, unknown> = {}) {
+  const events: any[] = [];
+  const ends: any[] = [];
+  let sock: FakeSocket | null = null;
+  let t = 1000;
+  const s = new GeminiLiveSession({
+    id: 'live-1',
+    mode,
+    key: FAKE_KEY,
+    socketFactory: (url) => (sock = new FakeSocket(url)),
+    emit: (e) => events.push(e),
+    onEnd: (e) => ends.push(e),
+    now: () => t,
+    ...extra,
+  } as any);
+  return {
+    s,
+    events,
+    ends,
+    sock: () => sock as unknown as FakeSocket,
+    advance: (ms: number) => (t += ms),
+  };
 }
 
 async function main() {
-  console.log('offline local voice (t233)');
+  console.log('offline voice with Gemini Live (t239)');
 
-  await test('Whisper folder: env override, %LOCALAPPDATA% on Windows, per-user elsewhere', () => {
-    const w = whisperDirCandidates({ LOCALAPPDATA: 'C:\\U\\AppData\\Local' }, 'win32', 'C:\\U');
-    assert(w[0] === path.join('C:\\U\\AppData\\Local', WHISPER_DIR_NAME), w.join(','));
-    const m = whisperDirCandidates({}, 'darwin', '/Users/x');
+  await test('talk setup: native-audio live model, Hebrew instructions, tools, barge-in, transcripts', () => {
+    const s = buildLiveSetup('talk').setup as any;
     assert(
-      m[0] === path.join('/Users/x', 'Library', 'Application Support', WHISPER_DIR_NAME),
-      m.join(',')
+      s.model === `models/${GEMINI_LIVE_MODEL}` && GEMINI_LIVE_MODEL === 'gemini-3.8-live',
+      s.model
     );
-    assert(
-      whisperDirCandidates({ MAILAI_WHISPER_DIR: '/t' }, 'linux', '/h')[0] === '/t',
-      'override'
-    );
+    assert(JSON.stringify(s.generationConfig.responseModalities) === '["AUDIO"]', 'audio out');
+    assert(s.realtimeInputConfig.activityHandling === 'START_OF_ACTIVITY_INTERRUPTS', 'barge-in');
+    assert(s.inputAudioTranscription && s.outputAudioTranscription, 'transcripts');
+    assert(/עברית|Hebrew/.test(s.systemInstruction.parts[0].text), 'Hebrew');
+    assert(!('thinkingConfig' in s.generationConfig), 'no thinking level (not allowed)');
   });
 
-  await test('finds whisper-cli and the model (preference order, voice.json override)', () => {
-    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'ofl-whisper-'));
-    assert(findWhisperIn(dir, 'win32') === null, 'empty');
-    fs.mkdirSync(path.join(dir, 'bin', 'Release'), { recursive: true });
-    fs.mkdirSync(path.join(dir, 'models'));
-    fs.writeFileSync(path.join(dir, 'bin', 'Release', 'whisper-cli.exe'), 'x');
-    assert(findWhisperIn(dir, 'win32') === null, 'no model');
-    fs.writeFileSync(path.join(dir, 'models', 'ggml-small.bin'), 'xx');
-    fs.writeFileSync(path.join(dir, 'models', 'ggml-medium-q5_0.bin'), 'xxx');
-    const s = findWhisperIn(dir, 'win32')!;
-    assert(
-      s && s.modelName === 'medium-q5_0' && s.modelBytes === 3 && s.cli.endsWith('whisper-cli.exe'),
-      JSON.stringify(s)
-    );
-    fs.writeFileSync(path.join(dir, 'voice.json'), JSON.stringify({ model: 'ggml-small.bin' }));
-    assert(findWhisperIn(dir, 'win32')!.modelName === 'small', 'voice.json');
-    fs.writeFileSync(path.join(dir, 'voice.json'), JSON.stringify({ model: '../../evil.bin' }));
-    assert(findWhisperIn(dir, 'win32')!.modelName === 'medium-q5_0', 'no path tricks');
-    fs.rmSync(dir, { recursive: true, force: true });
+  await test('dictation setup: transcription model, he-IL first, text only', () => {
+    const s = buildLiveSetup('dictate').setup as any;
+    assert(s.model === `models/${GEMINI_TRANSCRIBE_MODEL}`, s.model);
+    assert(s.inputAudioTranscription.languageCodes[0] === 'he-IL', 'he first');
+    assert(JSON.stringify(s.generationConfig.responseModalities) === '["TEXT"]', 'text');
+    assert(!s.tools, 'no tools while dictating');
   });
 
-  await test('GPU (CUDA) build preferred with the turbo model; CPU build keeps medium; GPU can be turned off', () => {
-    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'ofl-whisper-gpu-'));
-    fs.mkdirSync(path.join(dir, 'bin', 'Release'), { recursive: true });
-    fs.mkdirSync(path.join(dir, 'models'));
-    fs.writeFileSync(path.join(dir, 'bin', 'Release', 'whisper-cli.exe'), 'x');
-    fs.writeFileSync(path.join(dir, 'models', 'ggml-medium-q5_0.bin'), 'xxx');
-    fs.writeFileSync(path.join(dir, 'models', 'ggml-large-v3-turbo-q5_0.bin'), 'xxxx');
-    assert(findWhisperIn(dir, 'win32', { gpu: true }) === null, 'no CUDA build yet');
-    fs.mkdirSync(path.join(dir, 'bin-cuda', 'Release'), { recursive: true });
-    fs.writeFileSync(path.join(dir, 'bin-cuda', 'Release', 'whisper-cli.exe'), 'x');
-    const g = findWhisperIn(dir, 'win32', { gpu: true })!;
-    const c = findWhisperIn(dir, 'win32')!;
-    assert(
-      g.gpu && g.modelName === 'large-v3-turbo-q5_0' && g.cli.includes('bin-cuda'),
-      JSON.stringify(g)
-    );
-    assert(
-      !c.gpu && c.modelName === 'medium-q5_0' && !c.cli.includes('bin-cuda'),
-      JSON.stringify(c)
-    );
-    fs.writeFileSync(
-      path.join(dir, 'voice.json'),
-      JSON.stringify({ model: 'ggml-medium-q5_0.bin', gpuModel: 'ggml-medium-q5_0.bin' })
-    );
-    assert(findWhisperIn(dir, 'win32', { gpu: true })!.modelName === 'medium-q5_0', 'gpuModel');
-    fs.writeFileSync(path.join(dir, 'voice.json'), JSON.stringify({ gpu: false }));
-    assert(findWhisperIn(dir, 'win32', { gpu: true }) === null, 'gpu off');
-    if (process.platform === 'win32') {
-      fs.writeFileSync(path.join(dir, 'voice.json'), '{}');
-      const both = findWhisperSetups([dir]);
-      assert(both.gpu && both.cpu, 'both');
+  await test('tools: the app actions, all BLOCKING, and no way to send mail', () => {
+    const decl = geminiLiveToolDeclarations() as any[];
+    const names = decl.map((d) => d.name);
+    for (const want of [
+      'search_mail',
+      'go_to_folder',
+      'new_draft',
+      'open_draft',
+      'reply_to_selected',
+      'fill_draft',
+      'read_selected_message',
+      'message_action',
+      'delete_selected_message',
+      'end_conversation',
+    ]) {
+      assert(names.includes(want), want);
     }
+    assert(JSON.stringify(names) === JSON.stringify(GEMINI_LIVE_TOOL_NAMES), 'list in sync');
+    assert(!names.some((n) => /send|forward|smtp|mailto/i.test(n)), 'no send tool');
+    assert(!/\bsend_|"send"/i.test(JSON.stringify(decl)), 'no send in params');
     assert(
-      whisperUsedGpu('whisper_backend_init_gpu: using CUDA0 backend') &&
-        whisperUsedGpu('whisper_model_load: CUDA0 total size = 573 MB'),
-      'gpu log'
+      decl.every((d) => d.behavior === 'BLOCKING'),
+      'blocking'
     );
-    assert(!whisperUsedGpu('whisper_backend_init: using CPU backend'), 'cpu log');
-    const a = whisperArgs({
-      model: 'm',
-      files: ['a.wav'],
-      lang: 'he',
-      threads: 4,
-      longestSec: 3,
-      gpu: true,
+    const del = decl.find((d) => d.name === 'delete_selected_message');
+    assert(del.parameters.required.includes('confirmed'), 'delete needs confirmed');
+    assert(
+      /never|לא/i.test(GEMINI_LIVE_SYSTEM_INSTRUCTION) &&
+        /send/i.test(GEMINI_LIVE_SYSTEM_INSTRUCTION),
+      'told: no send'
+    );
+  });
+
+  await test('cost: per modality, unknown splits at the dearest rate', () => {
+    // 1 minute of speech in ≈ 1500 audio tokens; 30 s answer ≈ 750 audio tokens.
+    const usd = liveUsageUsd(GEMINI_LIVE_MODEL, {
+      promptTokenCount: 1600,
+      responseTokenCount: 750,
+      promptTokensDetails: [
+        { modality: 'AUDIO', tokenCount: 1500 },
+        { modality: 'TEXT', tokenCount: 100 },
+      ],
+      responseTokensDetails: [{ modality: 'AUDIO', tokenCount: 750 }],
     });
-    assert(!a.includes('-ac') && !a.includes('-np'), 'GPU keeps the full context and its log');
-    fs.rmSync(dir, { recursive: true, force: true });
-  });
-
-  await test('falls back to the CPU build when CUDA fails or quietly runs on the CPU', () => {
-    const v = read('lib/offline-mail/offline-voice.tsx');
-    assert(
-      /if \(!whisperUsedGpu\(log\)\) \{\s*gpuFailed = true;/.test(v),
-      'silent CPU run detected'
-    );
-    assert(
-      /catch \(err\) \{\s*gpuFailed = true;[\s\S]{0,400}const cpu = whisperSetup\(\);[\s\S]{0,300}await runCli\(cpu\.cli, args\(cpu\)\)/.test(
-        v
-      ),
-      'retry on CPU'
-    );
-    assert(/offlineVoiceHooks\.forceCpu \|\| gpuFailed/.test(v), 'GPU skipped after a failure');
-  });
-
-  await test('WAV: 16 kHz mono 16-bit out; stereo / 22 kHz in → 16 kHz mono', () => {
-    const s = tone(0.5);
-    const w = encodeWav16(s);
-    assert(
-      w.length === 44 + s.length * 2 &&
-        w.toString('ascii', 0, 4) === 'RIFF' &&
-        w.readUInt32LE(24) === 16000,
-      'header'
-    );
-    const back = decodeWav(w);
-    assert(back.length === s.length && Math.abs(back[100] - s[100]) < 0.001, 'roundtrip');
-    // stereo 22050 Hz
-    const n = 22050;
-    const b = Buffer.alloc(44 + n * 4);
-    b.write('RIFF', 0, 'ascii');
-    b.writeUInt32LE(36 + n * 4, 4);
-    b.write('WAVEfmt ', 8, 'ascii');
-    b.writeUInt32LE(16, 16);
-    b.writeUInt16LE(1, 20);
-    b.writeUInt16LE(2, 22);
-    b.writeUInt32LE(22050, 24);
-    b.writeUInt32LE(22050 * 4, 28);
-    b.writeUInt16LE(4, 32);
-    b.writeUInt16LE(16, 34);
-    b.write('data', 36, 'ascii');
-    b.writeUInt32LE(n * 4, 40);
-    const d = decodeWav(b);
-    assert(Math.abs(d.length - 16000) <= 1, `resampled ${d.length}`);
-  });
-
-  await test('split at pauses: two phrases → two parts; silence → none; short bits join', () => {
-    const sil = (s: number) => new Float32Array(Math.round(s * 16000));
-    const parts = splitOnSilence(cat(sil(0.5), tone(2), sil(1.0), tone(2.5), sil(0.4)));
-    assert(parts.length === 2, JSON.stringify(parts));
-    assert(parts[0][0] < 0.5 * 16000 && parts[1][1] >= 5.5 * 16000, 'padding kept');
-    assert(splitOnSilence(sil(3)).length === 0, 'silence');
-    assert(splitOnSilence(cat(tone(2), sil(0.3), tone(2))).length === 1, 'short pause = one part');
-    assert(splitOnSilence(cat(tone(2), sil(0.9), tone(0.5))).length === 1, 'short tail joins');
-    const many = [] as Float32Array[];
-    for (let i = 0; i < 12; i++) many.push(tone(1.5), sil(0.9));
-    assert(splitOnSilence(cat(...many)).length <= 8, 'max parts');
-  });
-
-  await test('whisper-cli args: model, language, threads, JSON out, short-audio speed-up, files', () => {
-    const a = whisperArgs({
-      model: 'm.bin',
-      files: ['a.wav', 'b.wav'],
-      lang: 'auto',
-      threads: 99,
-      longestSec: 5,
+    const want = (1500 * 3 + 100 * 0.75 + 750 * 12) / 1e6;
+    assert(Math.abs(usd - want) < 1e-9, `${usd} vs ${want}`);
+    const unknown = liveUsageUsd(GEMINI_LIVE_MODEL, {
+      promptTokenCount: 1000,
+      responseTokenCount: 1000,
     });
-    assert(a.join(' ') === '-m m.bin -l auto -t 32 -nt -oj -ac 768 -f a.wav -f b.wav', a.join(' '));
-    assert(
-      !whisperArgs({ model: 'm', files: ['a'], lang: 'he', threads: 4, longestSec: 20 }).includes(
-        '-ac'
-      ),
-      'long audio: full context'
-    );
-    assert(
-      whisperArgs({ model: 'm', files: ['a'], lang: 'he', threads: 4, longestSec: 3 }).includes(
-        '-np'
-      ),
-      'forced language on CPU: quiet log'
-    );
-    assert(
-      whisperJsonPathCandidates('x/part0.wav').join() === 'x/part0.wav.json,x/part0.json',
-      'json names'
-    );
-  });
-
-  await test('whisper JSON → text + language; tags removed', () => {
-    const j = JSON.stringify({
-      result: { language: 'he' },
-      transcription: [{ text: ' שלום,' }, { text: ' עולם [BLANK_AUDIO]' }],
+    assert(Math.abs(unknown - (1000 * 3 + 1000 * 12) / 1e6) < 1e-9, 'upper bound');
+    const tool = liveUsageUsd(GEMINI_LIVE_MODEL, { toolUsePromptTokenCount: 1000 });
+    assert(Math.abs(tool - (1000 * 0.75) / 1e6) < 1e-9, 'tool results are text');
+    let t = emptyLiveTotals();
+    t = addLiveUsage(t, GEMINI_LIVE_MODEL, {
+      promptTokenCount: 10,
+      responseTokenCount: 5,
+      totalTokenCount: 15,
     });
-    const r = parseWhisperJson('\uFEFF' + j);
-    assert(r.text === 'שלום, עולם' && r.lang === 'he', JSON.stringify(r));
-    assert(
-      cleanTranscript('(music) hello ,  world') === 'hello, world',
-      cleanTranscript('(music) hello ,  world')
-    );
-  });
-
-  await test('spoken punctuation (Hebrew + English)', () => {
-    assert(
-      applySpokenPunctuation('שלום פסיק מה שלומך סימן שאלה שורה חדשה תודה נקודה') ===
-        'שלום, מה שלומך?\nתודה.',
-      'he'
-    );
-    assert(
-      applySpokenPunctuation('hello comma how are you question mark') === 'hello, how are you?',
-      'en'
-    );
-    assert(
-      applySpokenPunctuation('בדיקה של נקודות') === 'בדיקה של נקודות',
-      'inside words untouched'
-    );
-  });
-
-  await test('voice commands: clear Hebrew + English, and how Whisper really hears them', () => {
-    const k = (t: string) => parseVoiceCommand(t);
-    const eq = (t: string, want: any) => {
-      const got = k(t);
-      assert(JSON.stringify(got) === JSON.stringify(want), `${t} → ${JSON.stringify(got)}`);
-    };
-    eq('פתח טיוטה חדשה', { kind: 'new-draft' });
-    eq('פתח טיוטה חדשה.', { kind: 'new-draft' });
-    eq('פתחתי אותה חדשה', { kind: 'new-draft' });
-    eq('new draft', { kind: 'new-draft' });
-    eq('חפש חשבונית חשמל', { kind: 'search', query: 'חשבונית חשמל' });
-    eq('search for invoices', { kind: 'search', query: 'invoices' });
-    eq('עבור לתיקייה דואר נכנס', { kind: 'folder', name: 'דואר נכנס' });
-    eq('עבור לתקיעה דואר נכנס.', { kind: 'folder', name: 'דואר נכנס' });
-    eq('go to the sent folder', { kind: 'folder', name: 'sent' });
-    eq('מחק', { kind: 'delete' });
-    eq('מחק את ההודעה', { kind: 'delete' });
-    eq('ארכיון', { kind: 'archive' });
-    eq('תעביר לארכיון', { kind: 'archive' });
-    eq('סמן בכוכב', { kind: 'star' });
-    eq('סמן בכוחב!', { kind: 'star' });
-    eq('star this', { kind: 'star' });
-    eq('סמן כלא נקרא', { kind: 'unread' });
-    eq('תענה שאני מגיע מחר בשמונה', { kind: 'reply', instruction: 'אני מגיע מחר בשמונה' });
-    eq('תנה שאני מגיע מחר בשמונה.', { kind: 'reply', instruction: 'אני מגיע מחר בשמונה' });
-    eq('תנא שאני מגיע מחר בשמונה', { kind: 'reply', instruction: 'אני מגיע מחר בשמונה' });
-    eq('עבו לתקיעה דואר נכנס.', { kind: 'folder', name: 'דואר נכנס' });
-    eq('עבול התקיעה דואר נכנס', { kind: 'folder', name: 'דואר נכנס' });
-    eq('reply that I will be there tomorrow', {
-      kind: 'reply',
-      instruction: 'I will be there tomorrow',
+    t = addLiveUsage(t, GEMINI_LIVE_MODEL, {
+      promptTokenCount: 20,
+      responseTokenCount: 5,
+      totalTokenCount: 25,
     });
-    eq('שאל מתי הפגישה', { kind: 'ask', question: 'מתי הפגישה' });
-    eq('עזרה', { kind: 'help' });
-    assert(k('מה שלומך היום').kind === 'unknown', 'unknown');
-    assert(k('').kind === 'unknown', 'empty');
+    assert(t.total === 40 && t.input === 30 && t.messages === 2, JSON.stringify(t));
+  });
+
+  await test('network: only the Live endpoint, wss, and only while a session runs', () => {
+    assert(isAllowedLiveUrl(`wss://${GEMINI_LIVE_HOST}${GEMINI_LIVE_PATH}?key=x`), 'ok');
+    assert(!isAllowedLiveUrl(`ws://${GEMINI_LIVE_HOST}${GEMINI_LIVE_PATH}`), 'ws');
+    assert(!isAllowedLiveUrl(`wss://evil.example${GEMINI_LIVE_PATH}`), 'host');
+    assert(!isAllowedLiveUrl(`wss://${GEMINI_LIVE_HOST}/other`), 'path');
+    resetLiveGateForTests();
+    const u = `wss://${GEMINI_LIVE_HOST}${GEMINI_LIVE_PATH}`;
+    assert(offlineRequestDecision(u) === 'block', 'closed without a session');
+    const { s } = mkSession();
+    void s.start();
+    assert(isLiveGateOpen() && offlineRequestDecision(u) === 'allow-remote', 'open during');
+    s.stop();
+    assert(!isLiveGateOpen() && offlineRequestDecision(u) === 'block', 'closed after');
+    assert(offlineRequestDecision('wss://imap.mail.yahoo.com/') === 'block', 'other wss');
+  });
+
+  await test('session: setup first, ready on setupComplete, audio relayed as 16 kHz PCM', async () => {
+    resetLiveGateForTests();
+    const h = mkSession();
+    const p = h.s.start();
+    const sock = h.sock();
+    assert(sock.url.includes(GEMINI_LIVE_PATH), 'url');
+    assert(!h.s.audio(new Uint8Array(3200)), 'no audio before ready');
+    sock.onopen && sock.onopen();
+    assert(sock.sent[0].setup.model === `models/${GEMINI_LIVE_MODEL}`, 'setup first');
+    sock.serve({ setupComplete: {} }, true);
+    await tick();
+    const r = await p;
+    assert(r.ok, 'ready');
+    assert(h.s.audio(new Uint8Array(3200)), 'audio sent');
+    const a = sock.sent[1].realtimeInput.audio;
+    assert(
+      a.mimeType === 'audio/pcm;rate=16000' && Buffer.from(a.data, 'base64').length === 3200,
+      'pcm'
+    );
+    assert(!h.s.audio(new Uint8Array(70000)), 'oversized chunk dropped');
+    h.s.stop();
+    assert(!h.s.audio(new Uint8Array(3200)), 'nothing after stop');
+    assert(sock.closed, 'socket closed');
+  });
+
+  await test('session: transcripts, audio, interruption, tool calls and results, usage, end', async () => {
+    resetLiveGateForTests();
+    const h = mkSession();
+    const p = h.s.start();
+    const sock = h.sock();
+    sock.onopen && sock.onopen();
+    sock.serve({ setupComplete: {} });
+    await tick();
+    await p;
+    sock.serve({ serverContent: { inputTranscription: { text: 'חפש מיילים' } } });
+    sock.serve({
+      toolCall: { functionCalls: [{ id: 'c1', name: 'search_mail', args: { query: 'דנה' } }] },
+    });
+    sock.serve({
+      serverContent: {
+        modelTurn: { parts: [{ inlineData: { mimeType: 'audio/pcm;rate=24000', data: 'AAAA' } }] },
+        outputTranscription: { text: 'מצאתי' },
+      },
+    });
+    sock.serve({ serverContent: { interrupted: true } });
+    sock.serve({ serverContent: { turnComplete: true } });
+    sock.serve({
+      usageMetadata: {
+        promptTokenCount: 100,
+        responseTokenCount: 50,
+        totalTokenCount: 150,
+        promptTokensDetails: [{ modality: 'AUDIO', tokenCount: 100 }],
+        responseTokensDetails: [{ modality: 'AUDIO', tokenCount: 50 }],
+      },
+    });
+    await tick();
+    const types = h.events.map((e) => e.type);
+    for (const t of [
+      'ready',
+      'input-text',
+      'tool-call',
+      'audio',
+      'output-text',
+      'interrupted',
+      'turn-complete',
+      'usage',
+    ]) {
+      assert(types.includes(t), t);
+    }
+    const tc = h.events.find((e) => e.type === 'tool-call');
+    assert(tc.calls[0].name === 'search_mail' && tc.calls[0].args.query === 'דנה', 'call');
+    assert(h.s.toolResult('c1', 'search_mail', { ok: true }), 'result sent');
+    const last = sock.sent[sock.sent.length - 1];
+    assert(last.toolResponse.functionResponses[0].id === 'c1', 'response id');
+    h.advance(60000);
+    const out = h.s.stop();
+    assert(out.seconds === 60 && out.totals.total === 150, JSON.stringify(out));
+    assert(
+      h.ends.length === 1 && h.ends[0].mode === 'talk' && h.ends[0].totals.usd > 0,
+      'recorded once'
+    );
+    h.s.stop();
+    assert(h.ends.length === 1, 'not twice');
+    assert(h.events[h.events.length - 1].type === 'closed', 'closed event');
+  });
+
+  await test('session: no key, setup timeout, server go-away, key never in messages', async () => {
+    resetLiveGateForTests();
+    const nokey = mkSession('talk', { key: '' });
+    const r0 = await nokey.s.start();
+    assert(!r0.ok && r0.reason === 'unconfigured' && !nokey.sock(), 'no socket without a key');
+    const slow = mkSession('talk', { setupTimeoutMs: 10 });
+    const r1 = await slow.s.start();
+    assert(!r1.ok && r1.reason === 'timeout' && !isLiveGateOpen(), 'timeout closes the gate');
+    const g = mkSession();
+    const p = g.s.start();
+    g.sock().onopen && g.sock().onopen!();
+    g.sock().serve({ setupComplete: {} });
+    await tick();
+    await p;
+    g.sock().serve({ goAway: { timeLeft: '10s' } });
+    await tick();
+    assert(g.ends[0].reason === 'server-go-away', 'stops on go-away');
+    const bad = mkSession();
+    const p2 = bad.s.start();
+    bad.sock().onclose && bad.sock().onclose!({ code: 1008, reason: `bad key=${FAKE_KEY}` });
+    const r2 = await p2;
+    for (const e of [...bad.events, r2])
+      assert(!JSON.stringify(e).includes(FAKE_KEY), 'key leaked');
+    assert(redactKey(`x?key=${FAKE_KEY}&a=1`, FAKE_KEY) === 'x?key=[redacted-key]&a=1', 'redact');
+  });
+
+  await test('time limit: the session ends by itself', async () => {
+    resetLiveGateForTests();
+    const h = mkSession('dictate', { maxSeconds: 0.02 });
+    const p = h.s.start();
+    h.sock().onopen && h.sock().onopen!();
+    h.sock().serve({ setupComplete: {} });
+    await p;
+    await new Promise((r) => setTimeout(r, 40));
+    assert(
+      h.ends.length === 1 && h.ends[0].reason === 'time-limit' && !isLiveGateOpen(),
+      'time limit'
+    );
+    assert(h.ends[0].model === GEMINI_TRANSCRIBE_MODEL, 'dictation model');
+  });
+
+  await test('dictation without a usage report: cost estimated from the audio sent', async () => {
+    resetLiveGateForTests();
+    const h = mkSession('dictate');
+    const p = h.s.start();
+    h.sock().onopen && h.sock().onopen!();
+    h.sock().serve({ setupComplete: {} });
+    await tick();
+    await p;
+    for (let i = 0; i < 10; i++) h.s.audio(new Uint8Array(3200)); // 1 s
+    h.sock().serve({ serverContent: { inputTranscription: { text: 'שלום עולם' } } });
+    await tick();
+    const out = h.s.stop();
+    assert(out.totals.estimated === true && out.totals.input === 25, JSON.stringify(out.totals));
+    assert(Math.abs(out.totals.usd - (25 * 3.5 + 3 * 21) / 1e6) < 1e-9, String(out.totals.usd));
+    assert(h.ends[0].totals.usd > 0, 'recorded');
+  });
+
+  await test('delete needs a yes for the same message, soon', () => {
+    const g = new DeleteGate(1000);
+    assert(!g.confirm('m1', 0), 'no request → no delete');
+    g.request('m1', 0);
+    assert(!g.confirm('m2', 10), 'other message');
+    assert(g.confirm('m1', 20), 'confirmed');
+    assert(!g.confirm('m1', 30), 'only once');
+    g.request('m1', 0);
+    assert(!g.confirm('m1', 5000), 'too late');
+  });
+
+  await test('PCM: mic → 16-bit, Gemini 24 kHz → float, resample, auto-stop', () => {
+    const b = floatTo16BitPcm(new Float32Array([0, 1, -1, 0.5]));
+    assert(b.length === 8, 'bytes');
+    const dv = new DataView(b.buffer);
+    assert(dv.getInt16(2, true) === 32767 && dv.getInt16(4, true) === -32768, 'scale');
+    const f = pcm16Base64ToFloat(Buffer.from(b).toString('base64'));
+    assert(f.length === 4 && Math.abs(f[1] - 1) < 0.001 && f[2] === -1, 'roundtrip');
+    assert(resampleTo16k(new Float32Array(48000), 48000).length === 16000, 'resample');
+    assert(shouldAutoStop({ now: 31000, lastActivity: 0, idleSec: 30, speaking: false }), 'idle');
+    assert(
+      !shouldAutoStop({ now: 31000, lastActivity: 0, idleSec: 30, speaking: true }),
+      'not while speaking'
+    );
+    assert(clipForGemini('a  b\n c', 3) === 'a b…', 'clip');
   });
 
   await test('folder by spoken name: exact, role names, loose spelling, none', () => {
@@ -353,199 +428,44 @@ async function main() {
     const v = read('lib/offline-mail/offline-voice.tsx');
     assert(/e\.ctrlKey && e\.shiftKey && \(e\.code === 'Space'/.test(v), 'Ctrl+Shift+Space');
     assert(
-      /if \(!offlineVoice\.available\) return null;/.test(v),
-      'hidden without Whisper (Mac unchanged)'
+      /if \(!v\.available\) return null;/.test(v) && /process\.platform === 'win32'/.test(v),
+      'Windows only (Mac unchanged)'
     );
     assert(v.includes("className={`offline-mic${rec ? ' recording' : ''}"), 'recording state');
   });
 
-  await test('audio stays local: temp WAV deleted, no network, no Gemini in voice code', () => {
+  await test('window side: key stays in main, live card + Stop, confirm buttons, limited mail text', () => {
     const v = read('lib/offline-mail/offline-voice.tsx');
     const core = read('lib/core/offline-voice.ts');
     assert(
-      /finally \{\s*fs\.rmSync\(dir, \{ recursive: true, force: true \}\);/.test(v),
-      'temp dir removed'
+      !/WebSocket|https?:\/\/|\bfetch\(|\?key=|apiKey|Credential/.test(v + core),
+      'no socket / key in the window'
     );
-    for (const src of [v, core]) {
-      assert(
-        !/https?:\/\/|\bfetch\(|XMLHttpRequest|WebSocket|require\(['"](https?|net|tls)['"]\)|processQuery|gemini-ipc|askAiAboutMail|askAboutMail/i.test(
-          src
-        ),
-        'no network / Gemini'
-      );
-    }
-    // "תענה ש…" only fills the AI box: no send call.
-    const reply = v.slice(v.indexOf("case 'reply'"), v.indexOf("case 'help'"));
+    assert(/data-offline-voice-stop/.test(v) && /חי — מקשיב/.test(v), 'live card + stop');
     assert(
-      /setFieldValue\(ta, cmd\.instruction\)/.test(reply) &&
-        !/send|submit|_onSend|processQuery/i.test(reply.replace(/"שלח"|"Send"/g, '')),
-      'reply never sends'
+      /data-offline-voice-confirm-yes/.test(v) && /deleteGate\.confirm/.test(v),
+      'on-screen confirm'
     );
-    assert(
-      !/setPermission|systemPreferences|privacy/i.test(
-        v.replace(/Privacy → Microphone|פרטיות ← מיקרופון/g, '')
-      ),
-      'no permission changes'
-    );
+    assert(/MAX_QA_MESSAGES = 6/.test(v) && /MAX_SELECTED_BODY = 4000/.test(v), 'caps');
+    assert(/buildOfflineQuestionContext/.test(v), 'local search first (as Ask AI)');
+    assert(!/actSend|sendDraft|smtp/i.test(v), 'no send path');
+    assert(/GEMINI_LIVE_IDLE_SECONDS/.test(v) && /shouldAutoStop/.test(v), 'auto-stop');
   });
 
-  await test('guide step + "?" tip for voice (Hebrew + English)', () => {
-    const t = read('lib/core/offline-tour.ts');
-    assert(/id: 'voice',[\s\S]{0,200}data-offline-ribbon-btn="voice-command"/.test(t), 'step');
-    assert(/ {2}voice: \[\s*'[^']*Whisper[^']*',\s*'[^']*Whisper/.test(t), 'tip');
-    assert(/<OfflineHelpTip tip="voice" \/>/.test(read('lib/ai-sidebar.tsx')), 'tip placed');
-  });
-
-  await test('commands heard loosely (quiet mic / short clips) — but no false alarms', () => {
-    const want: Array<[string, string]> = [
-      ['פתח פיוטה חדשה', 'new-draft'],
-      ['פתח קוותה חדשה', 'new-draft'],
-      ['סמנה בו חב', 'star'],
-      ['סמל בו חב', 'star'],
-      ['מהחק', 'delete'],
-      ['מהק', 'delete'],
-      ['הרחיון', 'archive'],
-      ['על חיון', 'archive'],
-      ['אלחיון', 'archive'],
-      ['חפסט זום.', 'search'],
-      ['תנאי שאני מגיע מחר בשמונה', 'reply'],
-      ['הרבול התקיעה דואר נכנס.', 'folder'],
+  await test('local Whisper is gone from the app', () => {
+    const files = [
+      'lib/offline-mail/offline-voice.tsx',
+      'lib/core/offline-voice.ts',
+      'lib/core/offline-tour.ts',
+      'lib/offline-mail/offline-ribbon.tsx',
+      'lib/offline-mail/register.ts',
+      'lib/ai-sidebar.tsx',
     ];
-    for (const [t, k] of want)
-      assert(parseVoiceCommand(t).kind === k, `${t} → ${parseVoiceCommand(t).kind}`);
-    for (const t of [
-      'מחר',
-      'מחשב',
-      'Daniela minn.',
-      'תן לי רגע',
-      'תודה רבה',
-      'כוכבים בשמיים',
-      'ארוחה',
-      'פתח',
-      'סמן',
-    ])
-      assert(parseVoiceCommand(t).kind === 'unknown', `${t} → ${parseVoiceCommand(t).kind}`);
-  });
-
-  await test('language: Hebrew unless Whisper is clearly sure it is English (log confidence)', () => {
-    const log = [
-      "main: processing 'C:\\t\\part0.wav' (36480 samples, 2.3 sec), 4 threads, lang = auto",
-      'whisper_full_with_state: auto-detected language: en (p = 0.613)',
-      "main: processing 'C:\\t\\part1.wav' (113253 samples, 7.1 sec), 4 threads, lang = auto",
-      'whisper_full_with_state: auto-detected language: en (p = 0.997540)',
-    ].join('\r\n');
-    const d = parseDetectedLangs(log);
+    for (const f of files) assert(!/whisper/i.test(read(f)), f);
     assert(
-      d['C:\\t\\part0.wav'].p === 0.613 && d['C:\\t\\part1.wav'].lang === 'en',
-      JSON.stringify(d)
+      !/child_process|execFile|spawn\(/.test(read('lib/offline-mail/offline-voice.tsx')),
+      'no local process'
     );
-    // Ronnie's case: a short Hebrew command heard as English.
-    assert(
-      !keepDetectedLang({ lang: 'en', p: 0.613, text: 'Daniela minn.', sec: 2.3 }),
-      'unsure → he'
-    );
-    assert(
-      !keepDetectedLang({ lang: 'en', p: 0.9, text: 'Daniela minn.', sec: 2.0 }),
-      'short needs 0.92'
-    );
-    assert(
-      !keepDetectedLang({ lang: 'en', text: 'Hello there friend', sec: 4 }),
-      'no confidence → he'
-    );
-    assert(
-      keepDetectedLang({ lang: 'en', p: 0.99, text: 'Please send the quarterly report.', sec: 7 }),
-      'clear en'
-    );
-    assert(
-      !keepDetectedLang({ lang: 'en', p: 0.99, text: 'שלום Daniel', sec: 7 }),
-      'Hebrew letters → he'
-    );
-    assert(keepDetectedLang({ lang: 'he', p: 0.4, text: 'שלום', sec: 1 }), 'he kept');
-    assert(!keepDetectedLang({ lang: 'ar', p: 0.99, text: 'x', sec: 3 }), 'other → he');
-  });
-
-  await test('made-up lines on silence are dropped; real short words are kept', () => {
-    for (const t of [
-      'Thanks for watching!',
-      'תודה שצפיתם',
-      'כתוביות: עברית',
-      'Subtitles by the Amara.org community',
-      '♪♪',
-      '',
-    ])
-      assert(isWhisperHallucination(t), t);
-    for (const t of ['תודה רבה', 'Thank you', 'חפש חשבונית', 'כן'])
-      assert(!isWhisperHallucination(t), t);
-  });
-
-  await test('real-mic audio: resample, trim silence, level quiet speech, refuse near-silence', () => {
-    const sr = 16000;
-    const tone = (sec: number, amp: number, rate = sr) => {
-      const a = new Float32Array(Math.round(sec * rate));
-      for (let i = 0; i < a.length; i++)
-        a[i] = amp * Math.sin((2 * Math.PI * 220 * i) / rate) * (0.6 + 0.4 * Math.sin(i / 900));
-      return a;
-    };
-    const noise = (sec: number, amp: number) => {
-      let x = 12345;
-      const a = new Float32Array(Math.round(sec * sr));
-      for (let i = 0; i < a.length; i++) {
-        x = (x * 1103515245 + 12345) % 2147483648;
-        a[i] = amp * (x / 1073741824 - 1);
-      }
-      return a;
-    };
-    const cat = (...xs: Float32Array[]) => {
-      const out = new Float32Array(xs.reduce((n, x) => n + x.length, 0));
-      let o = 0;
-      for (const x of xs) {
-        out.set(x, o);
-        o += x.length;
-      }
-      return out;
-    };
-    const r48 = resampleTo16k(tone(1, 0.5, 48000), 48000);
-    assert(Math.abs(r48.length - 16000) <= 1, `48k → 16k: ${r48.length}`);
-    assert(resampleTo16k(tone(1, 0.5, 44100), 44100).length === 16000, '44.1k');
-    const quiet = cat(noise(1.5, 0.0004), tone(2, 0.02), noise(1.5, 0.0004));
-    const p = prepareSpeech(quiet);
-    assert(
-      !p.tooQuiet && p.gain > 5,
-      `quiet speech leveled: ${JSON.stringify({ g: p.gain, s: p.speechSec })}`
-    );
-    assert(p.samples.length < quiet.length - sr * 1.5, 'silence trimmed');
-    assert(p.speechSec > 1.5, 'speech seconds');
-    const loud = prepareSpeech(cat(noise(0.5, 0.001), tone(2, 0.6), noise(0.5, 0.001)));
-    assert(!loud.tooQuiet && loud.gain === 1, 'loud untouched');
-    assert(prepareSpeech(noise(3, 0.002)).tooQuiet, 'only background noise');
-    assert(prepareSpeech(new Float32Array(sr * 3)).tooQuiet, 'digital silence');
-    assert(
-      prepareSpeech(cat(noise(1, 0.0005), tone(0.1, 0.3), noise(1, 0.0005))).tooQuiet,
-      'a click, not speech'
-    );
-    assert(prepareSpeech(tone(0.05, 0.3)).tooQuiet, 'too short');
-  });
-
-  await test('commands: Hebrew only, "didn\'t hear" instead of guesses, Try again button', () => {
-    const v = read('lib/offline-mail/offline-voice.tsx');
-    assert(
-      /mode === 'command'\) \{[\s\S]{0,300}transcribeSamples\(samples, \{ lang: 'he', split: false \}\)/.test(
-        v
-      ),
-      'he'
-    );
-    assert(
-      !/lang: first === 'he' \? 'en'/.test(v) && !/uiLangCode/.test(v),
-      'no English / UI-language pass'
-    );
-    assert(/runWhisper\(redo, 'he', longest\)/.test(v), 'unsure dictation parts redone in Hebrew');
-    assert(/לא שמעתי, נסה שוב/.test(v) && /if \(prep\.tooQuiet\)/.test(v), 'quiet → no transcript');
-    assert(
-      /text: tr\('לא זיהיתי פקודה'[\s\S]{0,120}actions: \[retryAction\('command'\)\]/.test(v),
-      'retry on unknown'
-    );
-    assert(/data-offline-voice-hud-action=\{a\.id\}/.test(v), 'button rendered');
-    assert(/resampleTo16k\(raw, this\._rate\)/.test(v), 'mic resampled if needed');
   });
 
   console.log(`\n${passed} passed, ${failed} failed`);

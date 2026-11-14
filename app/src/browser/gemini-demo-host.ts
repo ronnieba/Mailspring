@@ -106,7 +106,7 @@ function paidAck(env: NodeJS.ProcessEnv): boolean {
   return env[GEMINI_DEMO_PAID_ENV] === '1';
 }
 
-function credentialsOf(deps: {
+export function credentialsOf(deps: {
   env?: NodeJS.ProcessEnv;
   credentials?: { key: string; paidAcknowledged: boolean };
 }): { key: string; paidAcknowledged: boolean } {

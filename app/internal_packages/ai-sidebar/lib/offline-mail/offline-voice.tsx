@@ -1,278 +1,86 @@
 /**
- * Offline experiment (t233): local voice with Whisper.
- * - A green mic button next to text fields (draft body, subject, To/Cc/Bcc,
- *   search box, AI box): click to record, click again to stop; the words are
- *   typed in at the cursor.
- * - Voice commands (ribbon / AI panel mic, Ctrl+Shift+Space): "פתח טיוטה
- *   חדשה", "חפש …", "עבור לתיקייה …", "מחק", "ארכיון", "סמן בכוכב",
- *   "תענה ש…" (fills the AI box; Gemini still only on the user's click).
- * Audio stays on this PC: it is recorded with the normal Windows microphone
- * permission, written to a temp WAV, transcribed by the local whisper-cli and
- * deleted. Commands are parsed by local rules, never by Gemini.
+ * Offline experiment (t239): voice with Gemini Live.
+ * - "שיחה עם Gemini" (ribbon / AI panel / Ctrl+Shift+Space): a live spoken
+ *   conversation in Hebrew. Gemini answers aloud, can be interrupted, and
+ *   works the app through tools (search, folders, drafts, reply text,
+ *   summarize the selected message, star / archive / unread, delete only
+ *   after a yes). There is no send tool.
+ * - Green mic next to text fields: dictation with Gemini transcription.
+ * Audio goes to Google only while a session the user started is running
+ * (explicit click or shortcut), with a "live, listening" card and a Stop
+ * button; it stops by itself after silence or a time limit. The key stays in
+ * the main process. Mail text goes to Gemini only through the tools, a few
+ * messages at a time (like Ask AI). (Replaces the earlier local recognition.)
  */
 import React from 'react';
-import * as fs from 'fs';
-import * as os from 'os';
-import * as path from 'path';
-import { tr } from '../core/offline-i18n';
+import { ipcRenderer } from 'electron';
+import { tr, offlineLang } from '../core/offline-i18n';
 import {
-  VOICE_MAX_SECONDS,
+  DeleteGate,
+  VOICE_CHUNK_SAMPLES,
+  VOICE_OUTPUT_RATE,
   VOICE_SAMPLE_RATE,
-  VoiceCommand,
-  WhisperSetup,
-  applySpokenPunctuation,
-  isWhisperHallucination,
-  keepDetectedLang,
-  parseDetectedLangs,
-  prepareSpeech,
-  resampleTo16k,
-  decodeWav,
-  encodeWav16,
-  findWhisperSetups,
-  whisperUsedGpu,
+  clipForGemini,
+  floatTo16BitPcm,
   matchFolder,
-  parseVoiceCommand,
-  parseWhisperJson,
-  splitOnSilence,
-  whisperArgs,
-  whisperJsonPathCandidates,
+  pcm16Base64ToFloat,
+  peakOf,
+  resampleTo16k,
+  shouldAutoStop,
 } from '../core/offline-voice';
+import {
+  GEMINI_DICTATE_IDLE_SECONDS,
+  GEMINI_LIVE_IDLE_SECONDS,
+  GEMINI_LIVE_IPC_AUDIO,
+  GEMINI_LIVE_IPC_AUDIO_END,
+  GEMINI_LIVE_IPC_EVENT,
+  GEMINI_LIVE_IPC_START,
+  GEMINI_LIVE_IPC_STOP,
+  GEMINI_LIVE_IPC_TOOL_RESULT,
+  GeminiLiveEvent,
+  LiveUsageTotals,
+} from '../../../../src/browser/gemini-live-protocol';
 
 type Listener = () => void;
+/** 'command' = the spoken conversation; an element = dictation into it. */
 type Target = HTMLElement | 'command';
 type SavedSel = { start: number; end: number } | Range | null;
+
+const USD_TO_ILS = 3.19;
 
 export type VoiceHud = null | {
   kind: 'info' | 'ok' | 'warn';
   text: string;
   detail?: string;
   action?: { label: string; run: () => void };
-  /** Extra buttons (e.g. "Try again"), shown before `action`. */
   actions?: Array<{ id: string; label: string; run: () => void }>;
 };
 
-/** Tests can swap the microphone (fake stream) or watch runs. */
+export type VoiceLine = { who: 'user' | 'gemini' | 'app'; text: string };
+
+/** Tests can swap the microphone (fake stream) or watch sessions. */
 export const offlineVoiceHooks: {
   getStream: (() => Promise<MediaStream>) | null;
-  lastRun: {
-    ms: number;
-    parts: number;
-    langs: string[];
-    text: string;
-    audioSec: number;
-    engine?: string;
-    /** Mic diagnostics (numbers only): input rate, peak, gain used, speech seconds. */
-    inputRate?: number;
-    peak?: number;
-    gain?: number;
-    speechSec?: number;
-    quiet?: boolean;
+  /** Event types seen (no content), newest last; tests only. */
+  events: string[];
+  tools: Array<{ name: string; ok: boolean }>;
+  lastSession: {
+    mode: string;
+    model: string;
+    seconds: number;
+    totals: LiveUsageTotals | null;
+    reason: string;
+    audioChunks: number;
+    playedChunks: number;
+    interrupted: number;
   } | null;
-  runs: number;
-  /** Tests / benchmarks: force the CPU build. */
-  forceCpu: boolean;
-} = { getStream: null, lastRun: null, runs: 0, forceCpu: false };
+  /** Tests: do not play Gemini's voice (still counted). */
+  mute: boolean;
+} = { getStream: null, events: [], tools: [], lastSession: null, mute: false };
 
-let setupCache: { gpu: WhisperSetup | null; cpu: WhisperSetup | null } | undefined;
-/** Set when the CUDA build failed (or silently ran on the CPU) this session. */
-let gpuFailed = false;
-
-function setups(refresh = false) {
-  if (setupCache === undefined || refresh) {
-    try {
-      setupCache = findWhisperSetups();
-    } catch {
-      setupCache = { gpu: null, cpu: null };
-    }
-    if (refresh) gpuFailed = false;
-  }
-  return setupCache;
-}
-
-/** The setup used now: GPU (CUDA) build first, CPU build as the fallback. */
-export function whisperSetup(refresh = false): WhisperSetup | null {
-  const s = setups(refresh);
-  const noGpu =
-    offlineVoiceHooks.forceCpu || gpuFailed || process.env.MAILAI_WHISPER_NO_GPU === '1';
-  return (!noGpu && s.gpu) || s.cpu || (!noGpu ? null : s.gpu);
-}
-
-/** "medium-q5_0 · CPU" / "large-v3-turbo-q5_0 · GPU" */
-export function whisperEngineLabel(): string {
-  const s = whisperSetup();
-  return s ? `${s.modelName} · ${s.gpu ? 'GPU' : 'CPU'}` : '';
-}
-
-function threads(gpu = false): number {
-  if (gpu) return 4;
-  const n = (os.cpus() || []).length || 4;
-  return Math.max(2, Math.min(16, Math.floor(n * 0.66)));
-}
-
-function runCli(cli: string, args: string[]): Promise<string> {
+function lazy<T = any>(m: string): T {
   // eslint-disable-next-line @typescript-eslint/no-var-requires
-  const cp = require('child_process');
-  return new Promise((resolve, reject) => {
-    cp.execFile(
-      cli,
-      args,
-      { windowsHide: true, timeout: 120000, maxBuffer: 16 * 1024 * 1024 },
-      (err: any, _out: string, errOut: string) =>
-        err ? reject(err) : resolve(String(errOut || ''))
-    );
-  });
-}
-
-/**
- * One whisper-cli run with the preferred setup. If the CUDA build fails
- * (missing driver/DLLs, out of memory…) or quietly ran on the CPU, the GPU is
- * skipped for the rest of the session and the CPU build is used.
- */
-async function runWhisper(
-  files: string[],
-  lang: string,
-  longestSec: number
-): Promise<{ setup: WhisperSetup; log: string }> {
-  const setup = whisperSetup();
-  if (!setup) throw new Error('whisper-missing');
-  const args = (s: WhisperSetup) =>
-    whisperArgs({ model: s.model, files, lang, threads: threads(s.gpu), longestSec, gpu: s.gpu });
-  if (!setup.gpu) {
-    return { setup, log: await runCli(setup.cli, args(setup)) };
-  }
-  try {
-    const log = await runCli(setup.cli, args(setup));
-    if (!whisperUsedGpu(log)) {
-      gpuFailed = true;
-      console.warn(
-        '[Offline voice] CUDA build ran without the GPU; using the CPU build from now on'
-      );
-    }
-    return { setup, log };
-  } catch (err) {
-    gpuFailed = true;
-    console.warn(
-      '[Offline voice] CUDA build failed; falling back to the CPU build',
-      (err as any)?.code
-    );
-    const cpu = whisperSetup();
-    if (!cpu || cpu.gpu) throw err;
-    for (const f of files)
-      for (const p of whisperJsonPathCandidates(f)) fs.rmSync(p, { force: true });
-    return { setup: cpu, log: await runCli(cpu.cli, args(cpu)) };
-  }
-}
-
-function readJsonFor(wav: string): { text: string; lang: string } {
-  for (const p of whisperJsonPathCandidates(wav)) {
-    try {
-      return parseWhisperJson(fs.readFileSync(p, 'utf8'));
-    } catch {
-      // try the next name
-    }
-  }
-  return { text: '', lang: '' };
-}
-
-export type VoiceResult = {
-  text: string;
-  langs: string[];
-  ms: number;
-  parts: number;
-  engine?: string;
-  /** Nothing usable heard (too quiet / too short / only made-up filler). */
-  quiet?: boolean;
-  gain?: number;
-  peak?: number;
-  speechSec?: number;
-};
-
-const r2 = (n: number) => Math.round(n * 1000) / 1000;
-
-/**
- * Transcribe locally: trim silence and level quiet speech, split at pauses,
- * then per part keep English only when Whisper is clearly sure, otherwise
- * Hebrew (auto-detection misfires on short clips).
- */
-export async function transcribeSamples(
-  input: Float32Array,
-  opts: { lang?: string; split?: boolean; prep?: boolean } = {}
-): Promise<VoiceResult> {
-  if (!whisperSetup()) throw new Error('whisper-missing');
-  const t0 = Date.now();
-  let samples = input;
-  let diag: Pick<VoiceResult, 'gain' | 'peak' | 'speechSec'> = {};
-  if (opts.prep !== false) {
-    const prep = prepareSpeech(input);
-    diag = { gain: r2(prep.gain), peak: r2(prep.peak), speechSec: r2(prep.speechSec) };
-    if (prep.tooQuiet)
-      return { text: '', langs: [], ms: Date.now() - t0, parts: 0, quiet: true, ...diag };
-    samples = prep.samples;
-  }
-  const ranges =
-    opts.split === false ? [[0, samples.length] as [number, number]] : splitOnSilence(samples);
-  if (!ranges.length)
-    return { text: '', langs: [], ms: Date.now() - t0, parts: 0, quiet: true, ...diag };
-  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'mailai-voice-'));
-  try {
-    const files = ranges.map(([a, b], i) => {
-      const f = path.join(dir, `part${i}.wav`);
-      fs.writeFileSync(f, encodeWav16(samples.subarray(a, b)));
-      return f;
-    });
-    const longest = Math.max(...ranges.map(([a, b]) => (b - a) / VOICE_SAMPLE_RATE));
-    const lang = opts.lang || 'auto';
-    const first = await runWhisper(files, lang, longest);
-    let used = first.setup;
-    const out = files.map(readJsonFor);
-    if (lang === 'auto') {
-      const det = parseDetectedLangs(first.log);
-      const redo = files.filter(
-        (f, i) =>
-          out[i].text &&
-          !keepDetectedLang({
-            lang: out[i].lang,
-            p: det[f] ? det[f].p : undefined,
-            text: out[i].text,
-            sec: (ranges[i][1] - ranges[i][0]) / VOICE_SAMPLE_RATE,
-          })
-      );
-      if (redo.length) {
-        for (const f of redo)
-          for (const p of whisperJsonPathCandidates(f)) fs.rmSync(p, { force: true });
-        used = (await runWhisper(redo, 'he', longest)).setup;
-        files.forEach((f, i) => {
-          if (redo.includes(f)) out[i] = { ...readJsonFor(f), lang: 'he' };
-        });
-      }
-    }
-    const text = out
-      .map((o) => o.text)
-      .filter((t) => t && !isWhisperHallucination(t))
-      .join(' ')
-      .trim();
-    return {
-      text,
-      langs: out.map((o) => o.lang),
-      ms: Date.now() - t0,
-      parts: files.length,
-      engine: `${used.modelName} · ${used.gpu ? 'GPU' : 'CPU'}`,
-      quiet: !text,
-      ...diag,
-    };
-  } finally {
-    fs.rmSync(dir, { recursive: true, force: true });
-  }
-}
-
-/** Tests / benchmarks: transcribe a WAV file the same way as a recording. */
-export async function transcribeWavFile(
-  file: string,
-  opts: { lang?: string; split?: boolean } = {}
-) {
-  const s = decodeWav(fs.readFileSync(file));
-  const r = await transcribeSamples(s, opts);
-  return { ...r, audioSec: Math.round((s.length / VOICE_SAMPLE_RATE) * 10) / 10 };
+  return require(m);
 }
 
 // ---- Typing the words in ---------------------------------------------------
@@ -345,345 +153,6 @@ export function insertAtCaret(el: HTMLElement, text: string, saved: SavedSel) {
   });
 }
 
-// ---- Recorder store --------------------------------------------------------
-
-class OfflineVoice {
-  state: 'idle' | 'starting' | 'recording' | 'transcribing' = 'idle';
-  mode: 'dictate' | 'command' | null = null;
-  target: HTMLElement | null = null;
-  partial = '';
-  level = 0;
-  startedAt = 0;
-  hud: VoiceHud = null;
-  private _sel: SavedSel = null;
-  private _chunks: Float32Array[] = [];
-  private _len = 0;
-  private _stream: MediaStream | null = null;
-  private _ctx: AudioContext | null = null;
-  private _node: ScriptProcessorNode | null = null;
-  private _partialTimer: any = null;
-  private _partialBusy = false;
-  private _partialOff = false;
-  private _hudTimer: any = null;
-  private _maxTimer: any = null;
-  private _listeners = new Set<Listener>();
-  private _cancelled = false;
-  private _rate = VOICE_SAMPLE_RATE;
-
-  listen(cb: Listener) {
-    this._listeners.add(cb);
-    return () => this._listeners.delete(cb);
-  }
-
-  _emit() {
-    this._listeners.forEach((l) => l());
-  }
-
-  get available(): boolean {
-    return !!whisperSetup();
-  }
-
-  isActiveFor(t: Target): boolean {
-    if (this.state === 'idle') return false;
-    return t === 'command' ? this.mode === 'command' : this.target === t;
-  }
-
-  showHud(h: VoiceHud, ms = 4500) {
-    this.hud = h;
-    if (this._hudTimer) clearTimeout(this._hudTimer);
-    this._hudTimer = h && ms > 0 ? setTimeout(() => this.showHud(null, 0), ms) : null;
-    this._emit();
-  }
-
-  toggle(t: Target) {
-    if (this.state === 'recording') {
-      const same = this.isActiveFor(t);
-      void this.stop();
-      if (same) return;
-      return;
-    }
-    if (this.state !== 'idle') return;
-    void this.start(t);
-  }
-
-  async start(t: Target) {
-    if (this.state !== 'idle') return;
-    if (!this.available) {
-      this.showHud({
-        kind: 'warn',
-        text: tr('Whisper המקומי לא נמצא', 'Local Whisper not found'),
-        detail: tr(
-          'צריך את whisper-cli ומודל בתיקייה MailAI-Whisper.',
-          'whisper-cli and a model are needed in the MailAI-Whisper folder.'
-        ),
-      });
-      return;
-    }
-    this.mode = t === 'command' ? 'command' : 'dictate';
-    this.target = t === 'command' ? null : t;
-    this._sel = t === 'command' ? null : saveSelection(t);
-    this._chunks = [];
-    this._len = 0;
-    this.partial = '';
-    this._partialOff = false;
-    this._cancelled = false;
-    this.state = 'starting';
-    this.showHud(null, 0);
-    try {
-      const stream = offlineVoiceHooks.getStream
-        ? await offlineVoiceHooks.getStream()
-        : await navigator.mediaDevices.getUserMedia({
-            audio: {
-              channelCount: 1,
-              echoCancellation: true,
-              noiseSuppression: true,
-              autoGainControl: true,
-            },
-          });
-      if (this.state !== 'starting') {
-        stream.getTracks().forEach((x) => x.stop());
-        return;
-      }
-      this._stream = stream;
-      const ctx = new AudioContext({ sampleRate: VOICE_SAMPLE_RATE });
-      this._ctx = ctx;
-      // Normally 16 kHz (Chromium resamples the mic); if not, we resample.
-      this._rate = ctx.sampleRate || VOICE_SAMPLE_RATE;
-      const src = ctx.createMediaStreamSource(stream);
-      const node = ctx.createScriptProcessor(4096, 1, 1);
-      this._node = node;
-      node.onaudioprocess = (e) => {
-        if (this.state !== 'recording') return;
-        const d = e.inputBuffer.getChannelData(0);
-        this._chunks.push(new Float32Array(d));
-        this._len += d.length;
-        let peak = 0;
-        for (let i = 0; i < d.length; i += 16) peak = Math.max(peak, Math.abs(d[i]));
-        this.level = Math.min(1, peak * 1.6);
-      };
-      const mute = ctx.createGain();
-      mute.gain.value = 0;
-      src.connect(node);
-      node.connect(mute);
-      mute.connect(ctx.destination);
-      this.state = 'recording';
-      this.startedAt = Date.now();
-      this._partialTimer = setInterval(
-        () => {
-          this._emit();
-          void this._partialTick();
-        },
-        whisperSetup()?.gpu ? 1200 : 2500
-      );
-      this._maxTimer = setTimeout(() => void this.stop(), VOICE_MAX_SECONDS * 1000);
-      this._emit();
-    } catch (err) {
-      this._teardown();
-      this.state = 'idle';
-      const name = (err as any)?.name || '';
-      this.showHud(
-        {
-          kind: 'warn',
-          text:
-            name === 'NotAllowedError'
-              ? tr('אין גישה למיקרופון', 'No access to the microphone')
-              : tr('לא הצלחתי להתחיל להקליט', 'Could not start recording'),
-          detail:
-            name === 'NotAllowedError'
-              ? tr(
-                  'אפשר לאשר ב-Windows: הגדרות ← פרטיות ← מיקרופון ← "אפשר לאפליקציות שולחן עבודה".',
-                  'Allow it in Windows: Settings → Privacy → Microphone → "Let desktop apps access your microphone".'
-                )
-              : name === 'NotFoundError'
-                ? tr('לא נמצא מיקרופון.', 'No microphone found.')
-                : String((err as Error)?.message || name),
-        },
-        9000
-      );
-    }
-  }
-
-  private _samples(maxSec = 0): Float32Array {
-    const raw = new Float32Array(this._len);
-    let o = 0;
-    for (const c of this._chunks) {
-      raw.set(c, o);
-      o += c.length;
-    }
-    const out = resampleTo16k(raw, this._rate);
-    if (maxSec > 0 && out.length > maxSec * VOICE_SAMPLE_RATE)
-      return out.subarray(out.length - maxSec * VOICE_SAMPLE_RATE);
-    return out;
-  }
-
-  /** Live text while recording (whole recording so far, one language). */
-  private async _partialTick() {
-    if (this.state !== 'recording' || this._partialBusy || this._partialOff) return;
-    if (this._len < VOICE_SAMPLE_RATE * 1.2) return;
-    this._partialBusy = true;
-    const t0 = Date.now();
-    try {
-      // Live text is a preview: Hebrew (the final text detects English parts).
-      const r = await transcribeSamples(this._samples(25), { lang: 'he', split: false });
-      if (this.state === 'recording') {
-        this.partial = r.text;
-        this._emit();
-      }
-    } catch {
-      this._partialOff = true;
-    } finally {
-      this._partialBusy = false;
-      // Too slow on this PC for live text: show it only at the end.
-      if (Date.now() - t0 > 4500) this._partialOff = true;
-    }
-  }
-
-  private _teardown() {
-    if (this._partialTimer) clearInterval(this._partialTimer);
-    if (this._maxTimer) clearTimeout(this._maxTimer);
-    this._partialTimer = null;
-    this._maxTimer = null;
-    if (this._node) {
-      this._node.onaudioprocess = null;
-      try {
-        this._node.disconnect();
-      } catch {
-        // already gone
-      }
-    }
-    if (this._stream) this._stream.getTracks().forEach((x) => x.stop());
-    if (this._ctx) void this._ctx.close().catch(() => undefined);
-    this._node = null;
-    this._stream = null;
-    this._ctx = null;
-    this.level = 0;
-  }
-
-  cancel() {
-    if (this.state === 'idle') return;
-    this._cancelled = true;
-    this._teardown();
-    this.state = 'idle';
-    this.mode = null;
-    this.target = null;
-    this.partial = '';
-    this.showHud({ kind: 'info', text: tr('ההקלטה בוטלה', 'Recording cancelled') }, 2500);
-  }
-
-  async stop() {
-    if (this.state === 'starting') {
-      this.cancel();
-      return;
-    }
-    if (this.state !== 'recording') return;
-    const samples = this._samples();
-    const mode = this.mode;
-    const target = this.target;
-    const sel = this._sel;
-    this._teardown();
-    this.state = 'transcribing';
-    this._emit();
-    const audioSec = samples.length / VOICE_SAMPLE_RATE;
-    try {
-      // Wait for a live-text run to finish (one whisper at a time).
-      for (let i = 0; i < 100 && this._partialBusy; i++)
-        await new Promise((r) => setTimeout(r, 50));
-      let r: VoiceResult;
-      let cmd: VoiceCommand | null = null;
-      if (mode === 'command') {
-        // Commands are always Hebrew (English names inside are fine): no
-        // auto-detection, which misfires on short clips.
-        r = await transcribeSamples(samples, { lang: 'he', split: false });
-        if (r.text) cmd = parseVoiceCommand(r.text);
-      } else {
-        r = await transcribeSamples(samples);
-      }
-      offlineVoiceHooks.runs++;
-      offlineVoiceHooks.lastRun = {
-        ms: r.ms,
-        parts: r.parts,
-        langs: r.langs,
-        text: r.text,
-        audioSec: Math.round(audioSec * 10) / 10,
-        engine: r.engine,
-        inputRate: this._rate,
-        peak: r.peak,
-        gain: r.gain,
-        speechSec: r.speechSec,
-        quiet: !!r.quiet,
-      };
-      if (this._cancelled) return;
-      this.state = 'idle';
-      this.mode = null;
-      this.target = null;
-      this.partial = '';
-      if (!r.text) {
-        const again: Target | null =
-          mode === 'command' ? 'command' : target && document.contains(target) ? target : null;
-        this.showHud(
-          {
-            kind: 'warn',
-            text: tr('לא שמעתי, נסה שוב', "Didn't catch that, try again"),
-            detail: tr(
-              'דבר קרוב למיקרופון, ולחץ שוב כשסיימת.',
-              'Speak close to the mic and click again when done.'
-            ),
-            actions: again ? [retryAction(again)] : undefined,
-          },
-          7000
-        );
-        return;
-      }
-      if (mode === 'command') {
-        runVoiceCommand(cmd || parseVoiceCommand(r.text), r.text);
-      } else if (target && document.contains(target)) {
-        insertAtCaret(target, applySpokenPunctuation(r.text), sel);
-        this.showHud(
-          {
-            kind: 'ok',
-            text: tr('✓ נוסף', '✓ Added'),
-            detail: `${(r.ms / 1000).toFixed(1)}s · ${r.engine || whisperEngineLabel()}`,
-          },
-          2200
-        );
-      }
-    } catch (err) {
-      this.state = 'idle';
-      this.mode = null;
-      this.target = null;
-      this.showHud(
-        {
-          kind: 'warn',
-          text: tr('התמלול המקומי נכשל', 'Local transcription failed'),
-          detail: String((err as Error)?.message || err).slice(0, 160),
-        },
-        8000
-      );
-    }
-  }
-}
-
-export const offlineVoice = new OfflineVoice();
-
-function retryAction(t: Target) {
-  return {
-    id: 'retry',
-    label: tr('🎤 נסה שוב', '🎤 Try again'),
-    run: () => {
-      if (t !== 'command' && !document.contains(t)) return;
-      if (t !== 'command') t.focus();
-      void offlineVoice.start(t);
-    },
-  };
-}
-
-// ---- Voice commands ---------------------------------------------------------
-
-function lazy<T = any>(m: string): T {
-  // eslint-disable-next-line @typescript-eslint/no-var-requires
-  return require(m);
-}
-
 function currentMessage(): { id: string; parsed: any } | null {
   const s = lazy('./offline-mail-store').offlineMailStore;
   if (s.openMessage && s.openMessage.parsed)
@@ -695,15 +164,6 @@ function currentMessage(): { id: string; parsed: any } | null {
     }
   }
   return null;
-}
-
-function setFieldValue(el: HTMLInputElement | HTMLTextAreaElement, v: string) {
-  const proto =
-    el.tagName.toLowerCase() === 'input'
-      ? HTMLInputElement.prototype
-      : HTMLTextAreaElement.prototype;
-  Object.getOwnPropertyDescriptor(proto, 'value')?.set?.call(el, v);
-  el.dispatchEvent(new Event('input', { bubbles: true }));
 }
 
 function folderChoices() {
@@ -726,101 +186,672 @@ function folderChoices() {
   });
 }
 
-/** Do what a voice command says, locally. Nothing is sent to Gemini. */
-export function runVoiceCommand(cmd: VoiceCommand, heard: string) {
-  const v = offlineVoice;
-  const said = `«${heard}»`;
-  const needMsg = () =>
-    v.showHud(
-      { kind: 'warn', text: tr('בחרו הודעה קודם', 'Select a message first'), detail: said },
-      5000
-    );
-  const drafts = () => lazy('./offline-drafts-store').offlineDraftsStore;
-  switch (cmd.kind) {
-    case 'new-draft':
-      drafts().createNew();
-      v.showHud({
-        kind: 'ok',
-        text: tr('📝 נפתחה טיוטה חדשה', '📝 New draft opened'),
-        detail: said,
-      });
-      return;
-    case 'search':
-    case 'ask': {
-      const q = cmd.kind === 'search' ? cmd.query : cmd.question;
-      if (drafts().showing) drafts().hide();
-      lazy('./offline-search-store').offlineSearchStore.setQuery(q);
-      setTimeout(() => {
-        const i = document.querySelector('[data-offline-search-input]') as HTMLInputElement | null;
-        if (i) i.focus();
-      }, 50);
-      v.showHud(
-        {
-          kind: 'ok',
-          text:
-            cmd.kind === 'search'
-              ? tr(`🔍 חיפוש: ${q}`, `🔍 Search: ${q}`)
-              : tr(`❓ השאלה בתיבת החיפוש`, `❓ The question is in the search box`),
-          detail:
-            cmd.kind === 'ask'
-              ? tr(
-                  'לחצו "שאל AI" כדי לקבל תשובה (בתשלום, רק בלחיצה).',
-                  'Click "Ask AI" for an answer (paid, only on click).'
-                )
-              : said,
-        },
-        6000
-      );
+// ---- Live session store ------------------------------------------------------
+
+class OfflineVoice {
+  state: 'idle' | 'connecting' | 'live' | 'stopping' = 'idle';
+  mode: 'talk' | 'dictate' | null = null;
+  target: HTMLElement | null = null;
+  level = 0;
+  startedAt = 0;
+  /** Gemini's voice is playing. */
+  speaking = false;
+  /** Dictation: words heard so far but not final yet. */
+  partial = '';
+  lines: VoiceLine[] = [];
+  totals: LiveUsageTotals | null = null;
+  model = '';
+  hud: VoiceHud = null;
+  readonly deleteGate = new DeleteGate();
+  confirmDelete: { messageId: string; subject: string } | null = null;
+  private _id: string | null = null;
+  private _sel: SavedSel = null;
+  private _stream: MediaStream | null = null;
+  private _ctx: AudioContext | null = null;
+  private _node: ScriptProcessorNode | null = null;
+  private _rate = VOICE_SAMPLE_RATE;
+  private _pending: Float32Array[] = [];
+  private _pendingLen = 0;
+  private _out: AudioContext | null = null;
+  private _outNext = 0;
+  private _sources = new Set<AudioBufferSourceNode>();
+  private _lastActivity = 0;
+  private _idleTimer: any = null;
+  private _hudTimer: any = null;
+  private _listeners = new Set<Listener>();
+  private _ipcOn = false;
+  private _dictFinals = 0;
+  private _dictOutput = '';
+  private _finalWaiters: Array<() => void> = [];
+  private _endAfterSpeech = false;
+  private _stats = { audioChunks: 0, playedChunks: 0, interrupted: 0 };
+
+  listen(cb: Listener) {
+    this._listeners.add(cb);
+    return () => this._listeners.delete(cb);
+  }
+
+  _emit() {
+    this._listeners.forEach((l) => l());
+  }
+
+  /** Windows offline app only (Mac unchanged). Gemini is checked on start. */
+  get available(): boolean {
+    return process.platform === 'win32';
+  }
+
+  get active(): boolean {
+    return this.state !== 'idle';
+  }
+
+  isActiveFor(t: Target): boolean {
+    if (this.state === 'idle') return false;
+    return t === 'command' ? this.mode === 'talk' : this.target === t;
+  }
+
+  showHud(h: VoiceHud, ms = 4500) {
+    this.hud = h;
+    if (this._hudTimer) clearTimeout(this._hudTimer);
+    this._hudTimer = h && ms > 0 ? setTimeout(() => this.showHud(null, 0), ms) : null;
+    this._emit();
+  }
+
+  addLine(who: VoiceLine['who'], text: string, append = false) {
+    const t = String(text || '');
+    if (!t.trim()) return;
+    const last = this.lines[this.lines.length - 1];
+    if (append && last && last.who === who) {
+      // Gemini's spoken-text pieces sometimes come without the space between words.
+      const glue =
+        who === 'gemini' && /[\p{L}\p{N}]$/u.test(last.text) && /^[\p{L}\p{N}]/u.test(t) ? ' ' : '';
+      last.text = (last.text + glue + t).replace(/\s+/g, ' ');
+    } else this.lines.push({ who, text: t.trim() });
+    if (this.lines.length > 30) this.lines.splice(0, this.lines.length - 30);
+    this._emit();
+  }
+
+  toggle(t: Target) {
+    if (this.state === 'connecting' || this.state === 'stopping') return;
+    if (this.state === 'live') {
+      const same = this.isActiveFor(t);
+      void this.stop();
+      if (same) return;
       return;
     }
-    case 'folder': {
-      const p = matchFolder(cmd.name, folderChoices());
-      if (!p) {
-        v.showHud(
+    void this.start(t);
+  }
+
+  private _bindIpc() {
+    if (this._ipcOn) return;
+    this._ipcOn = true;
+    ipcRenderer.on(GEMINI_LIVE_IPC_EVENT, (_e: unknown, id: string, ev: GeminiLiveEvent) => {
+      if (id !== this._id) return;
+      this._onEvent(ev);
+    });
+  }
+
+  async start(t: Target) {
+    if (this.state !== 'idle') return;
+    this._bindIpc();
+    this.mode = t === 'command' ? 'talk' : 'dictate';
+    this.target = t === 'command' ? null : t;
+    this._sel = t === 'command' ? null : saveSelection(t);
+    this.lines = [];
+    this.partial = '';
+    this.totals = null;
+    this.model = '';
+    this.speaking = false;
+    this._dictFinals = 0;
+    this._dictOutput = '';
+    this._endAfterSpeech = false;
+    this._stats = { audioChunks: 0, playedChunks: 0, interrupted: 0 };
+    this.confirmDelete = null;
+    this.deleteGate.clear();
+    this.state = 'connecting';
+    this.showHud(null, 0);
+    try {
+      // Microphone first (normal Windows permission), then the paid session.
+      const stream = offlineVoiceHooks.getStream
+        ? await offlineVoiceHooks.getStream()
+        : await navigator.mediaDevices.getUserMedia({
+            audio: {
+              channelCount: 1,
+              echoCancellation: true,
+              noiseSuppression: true,
+              autoGainControl: true,
+            },
+          });
+      if (this.state !== 'connecting') {
+        stream.getTracks().forEach((x) => x.stop());
+        return;
+      }
+      this._stream = stream;
+      const res = await ipcRenderer.invoke(GEMINI_LIVE_IPC_START, {
+        mode: this.mode,
+        uiLang: offlineLang() === 'en' ? 'en' : 'he',
+      });
+      if (!res || !res.ok) {
+        this._teardown();
+        this._reset();
+        this.showHud(
           {
             kind: 'warn',
-            text: tr('לא מצאתי תיקייה בשם הזה', 'No folder with that name'),
-            detail: said,
+            text: tr('לא הצלחתי להתחבר ל-Gemini', 'Could not connect to Gemini'),
+            detail: String((res && res.message) || '').slice(0, 400),
           },
-          5000
+          12000
         );
         return;
       }
+      if (this.state !== 'connecting') {
+        void ipcRenderer.invoke(GEMINI_LIVE_IPC_STOP, res.id);
+        return;
+      }
+      this._id = res.id;
+      this.model = res.model || '';
+      this._startMic(stream);
+      this.state = 'live';
+      this.startedAt = Date.now();
+      this._lastActivity = Date.now();
+      this._idleTimer = setInterval(() => this._tick(), 1000);
+      if (this.mode === 'talk')
+        this.addLine('app', tr('🔴 מחובר — אפשר לדבר', '🔴 Connected — go ahead and talk'));
+      this._emit();
+    } catch (err) {
+      this._teardown();
+      this._reset();
+      const name = (err as any)?.name || '';
+      this.showHud(
+        {
+          kind: 'warn',
+          text:
+            name === 'NotAllowedError'
+              ? tr('אין גישה למיקרופון', 'No access to the microphone')
+              : tr('לא הצלחתי להתחיל', 'Could not start'),
+          detail:
+            name === 'NotAllowedError'
+              ? tr(
+                  'אפשר לאשר ב-Windows: הגדרות ← פרטיות ← מיקרופון ← "אפשר לאפליקציות שולחן עבודה".',
+                  'Allow it in Windows: Settings → Privacy → Microphone → "Let desktop apps access your microphone".'
+                )
+              : String((err as Error)?.message || name).slice(0, 200),
+        },
+        9000
+      );
+    }
+  }
+
+  private _startMic(stream: MediaStream) {
+    const ctx = new AudioContext({ sampleRate: VOICE_SAMPLE_RATE });
+    this._ctx = ctx;
+    this._rate = ctx.sampleRate || VOICE_SAMPLE_RATE;
+    const src = ctx.createMediaStreamSource(stream);
+    const node = ctx.createScriptProcessor(2048, 1, 1);
+    this._node = node;
+    this._pending = [];
+    this._pendingLen = 0;
+    node.onaudioprocess = (e) => {
+      if (this.state !== 'live' || !this._id) return;
+      const raw = e.inputBuffer.getChannelData(0);
+      const d = resampleTo16k(new Float32Array(raw), this._rate);
+      const p = peakOf(d);
+      this.level = Math.min(1, p * 1.6);
+      if (p > 0.12) this._lastActivity = Date.now();
+      this._pending.push(d);
+      this._pendingLen += d.length;
+      if (this._pendingLen >= VOICE_CHUNK_SAMPLES) {
+        const all = new Float32Array(this._pendingLen);
+        let o = 0;
+        for (const c of this._pending) {
+          all.set(c, o);
+          o += c.length;
+        }
+        this._pending = [];
+        this._pendingLen = 0;
+        ipcRenderer.send(GEMINI_LIVE_IPC_AUDIO, this._id, floatTo16BitPcm(all));
+        this._stats.audioChunks++;
+      }
+    };
+    const mute = ctx.createGain();
+    mute.gain.value = 0;
+    src.connect(node);
+    node.connect(mute);
+    mute.connect(ctx.destination);
+  }
+
+  private _play(b64: string) {
+    this._stats.playedChunks++;
+    if (offlineVoiceHooks.mute) return;
+    if (!this._out) {
+      this._out = new AudioContext({ sampleRate: VOICE_OUTPUT_RATE });
+      this._outNext = 0;
+    }
+    const ctx = this._out;
+    const f = pcm16Base64ToFloat(b64);
+    if (!f.length) return;
+    const buf = ctx.createBuffer(1, f.length, VOICE_OUTPUT_RATE);
+    buf.copyToChannel(f, 0);
+    const s = ctx.createBufferSource();
+    s.buffer = buf;
+    s.connect(ctx.destination);
+    const at = Math.max(ctx.currentTime + 0.02, this._outNext);
+    s.start(at);
+    this._outNext = at + buf.duration;
+    this._sources.add(s);
+    this.speaking = true;
+    s.onended = () => {
+      this._sources.delete(s);
+      if (!this._sources.size) {
+        this.speaking = false;
+        this._lastActivity = Date.now();
+        this._emit();
+        if (this._endAfterSpeech) void this.stop('gemini-ended');
+      }
+    };
+  }
+
+  /** Barge-in: the user started talking — drop what Gemini was saying. */
+  private _stopPlayback() {
+    for (const s of Array.from(this._sources)) {
+      try {
+        s.onended = null;
+        s.stop();
+      } catch {
+        // already stopped
+      }
+    }
+    this._sources.clear();
+    this._outNext = 0;
+    this.speaking = false;
+  }
+
+  private _onEvent(ev: GeminiLiveEvent) {
+    offlineVoiceHooks.events.push(ev.type);
+    if (offlineVoiceHooks.events.length > 400) offlineVoiceHooks.events.splice(0, 100);
+    switch (ev.type) {
+      case 'audio':
+        this._lastActivity = Date.now();
+        this._play(ev.data);
+        break;
+      case 'input-text':
+        this._lastActivity = Date.now();
+        if (this.mode === 'dictate') {
+          if (ev.final) {
+            this._insertDictation(ev.text);
+            this.partial = '';
+          } else {
+            this.partial = ev.text;
+          }
+          this._emit();
+        } else {
+          this.addLine('user', ev.text, true);
+        }
+        break;
+      case 'output-text':
+        this._lastActivity = Date.now();
+        if (this.mode === 'dictate') this._dictOutput += ev.text;
+        else this.addLine('gemini', ev.text, true);
+        break;
+      case 'interrupted':
+        this._stats.interrupted++;
+        this._stopPlayback();
+        this.addLine('app', tr('⏸ נקטע — מקשיב', '⏸ Interrupted — listening'));
+        break;
+      case 'turn-complete':
+        this._finalWaiters.splice(0).forEach((f) => f());
+        // Next answer starts on a new line.
+        this.lines.push({ who: 'app', text: '' });
+        this.lines = this.lines.filter((l) => l.text || l === this.lines[this.lines.length - 1]);
+        this._emit();
+        break;
+      case 'tool-call':
+        this._lastActivity = Date.now();
+        for (const c of ev.calls) void this._runTool(c.id, c.name, c.args);
+        break;
+      case 'usage':
+        this.totals = ev.totals;
+        this._emit();
+        break;
+      case 'error':
+        this.showHud(
+          {
+            kind: 'warn',
+            text: tr('שגיאה ב-Gemini Live', 'Gemini Live error'),
+            detail: ev.message.slice(0, 300),
+          },
+          9000
+        );
+        break;
+      case 'closed':
+        this.totals = ev.totals;
+        if (this.state === 'live') void this.stop(ev.reason, true);
+        break;
+      default:
+        break;
+    }
+  }
+
+  private _insertDictation(text: string) {
+    const t = String(text || '').trim();
+    const el = this.target;
+    if (!t || !el || !document.contains(el)) return;
+    insertAtCaret(el, t, this._sel);
+    this._sel = saveSelection(el);
+    this._dictFinals++;
+  }
+
+  private _tick() {
+    if (this.state !== 'live') return;
+    const idle = this.mode === 'dictate' ? GEMINI_DICTATE_IDLE_SECONDS : GEMINI_LIVE_IDLE_SECONDS;
+    if (
+      shouldAutoStop({
+        now: Date.now(),
+        lastActivity: this._lastActivity,
+        idleSec: idle,
+        speaking: this.speaking || !!this.confirmDelete,
+      })
+    ) {
+      void this.stop('silence');
+      return;
+    }
+    this._emit();
+  }
+
+  private async _runTool(callId: string, name: string, args: Record<string, unknown>) {
+    let result: Record<string, unknown>;
+    try {
+      result = await runLiveTool(name, args || {});
+    } catch (err) {
+      result = { ok: false, error: String((err as Error)?.message || err).slice(0, 200) };
+    }
+    offlineVoiceHooks.tools.push({ name, ok: result.ok !== false });
+    if (this._id && this.state === 'live')
+      ipcRenderer.send(GEMINI_LIVE_IPC_TOOL_RESULT, this._id, callId, name, result);
+    if (name === 'end_conversation') {
+      this._endAfterSpeech = true;
+      setTimeout(() => {
+        if (this.state === 'live' && !this.speaking) void this.stop('gemini-ended');
+      }, 4000);
+    }
+  }
+
+  /** Stop listening and close the session (also: auto-stop, server end). */
+  async stop(reason = 'user-stopped', serverClosed = false) {
+    if (this.state === 'idle' || this.state === 'stopping') return;
+    if (this.state === 'connecting') {
+      this._teardown();
+      this._reset();
+      return;
+    }
+    const id = this._id;
+    const mode = this.mode;
+    this.state = 'stopping';
+    this._emit();
+    if (this._node) this._node.onaudioprocess = null;
+    if (mode === 'dictate' && id && !serverClosed) {
+      // Let Gemini finish the last words (up to ~2.5 s).
+      ipcRenderer.send(GEMINI_LIVE_IPC_AUDIO_END, id);
+      await new Promise<void>((res) => {
+        const t = setTimeout(res, 2500);
+        this._finalWaiters.push(() => {
+          clearTimeout(t);
+          setTimeout(res, 300);
+        });
+      });
+      if (!this._dictFinals && this._dictOutput.trim()) this._insertDictation(this._dictOutput);
+      else if (this.partial.trim() && !this._dictFinals) this._insertDictation(this.partial);
+    }
+    let summary: { totals: LiveUsageTotals; seconds: number } | null = null;
+    if (id && !serverClosed) {
+      try {
+        summary = await ipcRenderer.invoke(GEMINI_LIVE_IPC_STOP, id);
+      } catch {
+        summary = null;
+      }
+    }
+    const totals = (summary && summary.totals) || this.totals;
+    const seconds = summary ? summary.seconds : Math.round((Date.now() - this.startedAt) / 1000);
+    offlineVoiceHooks.lastSession = {
+      mode: mode || '',
+      model: this.model,
+      seconds,
+      totals: totals || null,
+      reason,
+      ...this._stats,
+    };
+    const inserted = this._dictFinals;
+    const target = this.target;
+    this._teardown();
+    this._reset();
+    try {
+      void lazy('../ai-sidebar-store').default.refreshGeminiUsage();
+    } catch {
+      // usage meter not loaded
+    }
+    const cost = totals ? `≈ ₪${(totals.usd * USD_TO_ILS).toFixed(3)}` : '';
+    const mm = `${Math.floor(seconds / 60)}:${String(Math.round(seconds % 60)).padStart(2, '0')}`;
+    const why =
+      reason === 'silence'
+        ? tr(' (נעצר אחרי שקט)', ' (stopped after silence)')
+        : reason === 'time-limit'
+          ? tr(' (הגיע לזמן המקסימלי)', ' (time limit reached)')
+          : '';
+    if (mode === 'dictate') {
+      this.showHud(
+        inserted
+          ? { kind: 'ok', text: tr('✓ נוסף', '✓ Added'), detail: `${mm} · ${cost}${why}` }
+          : {
+              kind: 'warn',
+              text: tr('לא שמעתי, נסה שוב', "Didn't catch that, try again"),
+              detail: `${mm} · ${cost}${why}`,
+              actions:
+                target && document.contains(target)
+                  ? [
+                      {
+                        id: 'retry',
+                        label: tr('🎤 נסה שוב', '🎤 Try again'),
+                        run: () => void this.start(target),
+                      },
+                    ]
+                  : undefined,
+            },
+        5000
+      );
+    } else {
+      this.showHud(
+        {
+          kind: 'info',
+          text: tr('השיחה עם Gemini הסתיימה', 'The Gemini conversation ended') + why,
+          detail: tr(`משך ${mm} · עלות משוערת ${cost}`, `Length ${mm} · estimated cost ${cost}`),
+          actions: [
+            {
+              id: 'retry',
+              label: tr('🎙️ שיחה חדשה', '🎙️ New conversation'),
+              run: () => void this.start('command'),
+            },
+          ],
+        },
+        7000
+      );
+    }
+  }
+
+  /** Esc: stop at once (dictation: nothing more is typed). */
+  cancel() {
+    if (this.state === 'idle') return;
+    if (this.mode === 'dictate') {
+      this._dictFinals = 1; // nothing more is inserted
+      this.target = null;
+    }
+    void this.stop('cancelled');
+  }
+
+  private _teardown() {
+    if (this._idleTimer) clearInterval(this._idleTimer);
+    this._idleTimer = null;
+    if (this._node) {
+      this._node.onaudioprocess = null;
+      try {
+        this._node.disconnect();
+      } catch {
+        // already gone
+      }
+    }
+    if (this._stream) this._stream.getTracks().forEach((x) => x.stop());
+    if (this._ctx) void this._ctx.close().catch(() => undefined);
+    this._stopPlayback();
+    if (this._out) void this._out.close().catch(() => undefined);
+    this._out = null;
+    this._node = null;
+    this._stream = null;
+    this._ctx = null;
+    this.level = 0;
+  }
+
+  private _reset() {
+    this.state = 'idle';
+    this.mode = null;
+    this.target = null;
+    this.partial = '';
+    this._id = null;
+    this.confirmDelete = null;
+    this.deleteGate.clear();
+    this._emit();
+  }
+}
+
+export const offlineVoice = new OfflineVoice();
+
+// ---- Tools: what Gemini can do in the app -----------------------------------
+
+const MAX_QA_MESSAGES = 6;
+const MAX_QA_BODY = 1500;
+const MAX_SELECTED_BODY = 4000;
+
+function needMessage() {
+  return { ok: false, error: 'No message is selected in the app. Ask the user to select one.' };
+}
+
+function dateOnly(d: unknown): string {
+  const t = d instanceof Date ? d : new Date(String(d || ''));
+  return Number.isFinite(t.getTime()) ? t.toISOString().slice(0, 10) : '';
+}
+
+function selectedMessageId(): string | null {
+  const m = currentMessage();
+  if (m) return m.id;
+  const s = lazy('./offline-mail-store').offlineMailStore;
+  return s.selectedIds.length ? s.selectedIds[0] : null;
+}
+
+async function waitFor(cond: () => boolean, ms: number) {
+  const t0 = Date.now();
+  while (!cond() && Date.now() - t0 < ms) await new Promise((r) => setTimeout(r, 100));
+}
+
+/** Run one tool call locally. Results are short and contain no keys or paths. */
+export async function runLiveTool(
+  name: string,
+  args: Record<string, unknown>
+): Promise<Record<string, unknown>> {
+  const v = offlineVoice;
+  const drafts = () => lazy('./offline-drafts-store').offlineDraftsStore;
+  const s = (k: string) => (typeof args[k] === 'string' ? (args[k] as string).trim() : '');
+  switch (name) {
+    case 'search_mail': {
+      const q = s('query');
+      if (!q) return { ok: false, error: 'empty query' };
       if (drafts().showing) drafts().hide();
-      const s = lazy('./offline-search-store').offlineSearchStore;
-      if (s.query) s.clear();
+      const st = lazy('./offline-search-store').offlineSearchStore;
+      st.setQuery(q);
+      await waitFor(() => st.query === q && st.active && !(st as any)._timer, 3000);
+      await new Promise((r) => setTimeout(r, 150));
+      const results = (st.results || []).slice(0, 8).map((r: any, i: number) => ({
+        n: i + 1,
+        from: clipForGemini(r.entry.from, 60),
+        date: r.entry.ts ? new Date(r.entry.ts).toISOString().slice(0, 10) : '',
+        subject: clipForGemini(r.entry.subject, 100),
+      }));
+      v.addLine(
+        'app',
+        tr(`🔍 חיפוש: ${q} (${st.total || 0})`, `🔍 Search: ${q} (${st.total || 0})`)
+      );
+      return { ok: true, total: st.total || 0, results };
+    }
+    case 'ask_about_mail': {
+      const q = s('question');
+      if (!q) return { ok: false, error: 'empty question' };
+      const cat = lazy('../offline-archive-catalog');
+      const ctx = await cat.buildOfflineQuestionContext(q);
+      const msgs = (ctx.messages || []).slice(0, MAX_QA_MESSAGES).map((m: any, i: number) => ({
+        n: i + 1,
+        from: clipForGemini(m.from, 60),
+        date: dateOnly(m.date),
+        subject: clipForGemini(m.subject, 120),
+        text: clipForGemini(m.bodyText || m.snippet || '', MAX_QA_BODY),
+      }));
+      v.addLine(
+        'app',
+        tr(
+          `📨 נשלחו ל-Gemini ${msgs.length} הודעות (טקסט בלבד)`,
+          `📨 Sent ${msgs.length} messages to Gemini (text only)`
+        )
+      );
+      return { ok: true, found: ctx.found || 0, sent: msgs.length, messages: msgs };
+    }
+    case 'read_selected_message': {
+      const m = currentMessage();
+      if (!m) return needMessage();
+      const p = m.parsed || {};
+      v.addLine(
+        'app',
+        tr(
+          '📨 נשלחה ל-Gemini ההודעה הנבחרת (טקסט בלבד)',
+          '📨 Sent the selected message to Gemini (text only)'
+        )
+      );
+      return {
+        ok: true,
+        from: clipForGemini(String(p.from || ''), 80),
+        date: dateOnly(p.date),
+        subject: clipForGemini(String(p.subject || ''), 160),
+        text: clipForGemini(String(p.text || ''), MAX_SELECTED_BODY),
+      };
+    }
+    case 'go_to_folder': {
+      const p = matchFolder(s('name'), folderChoices());
+      if (!p) return { ok: false, error: 'No folder with that name' };
+      if (drafts().showing) drafts().hide();
+      const st = lazy('./offline-search-store').offlineSearchStore;
+      if (st.query) st.clear();
       const store = lazy('./offline-mail-store').offlineMailStore;
       store.setFolder(p);
-      v.showHud({
-        kind: 'ok',
-        text: tr(`📁 ${store.folderLabel(p)}`, `📁 ${store.folderLabel(p)}`),
-        detail: said,
-      });
-      return;
+      v.addLine('app', `📁 ${store.folderLabel(p)}`);
+      return { ok: true };
     }
-    case 'delete':
-    case 'archive':
-    case 'star':
-    case 'unread': {
-      const store = lazy('./offline-mail-store').offlineMailStore;
-      if (!store.selectedIds.length && !currentMessage()) return needMsg();
-      const a = lazy('./offline-message-actions');
-      if (cmd.kind === 'delete') a.actDelete();
-      else if (cmd.kind === 'archive') a.actArchive();
-      else if (cmd.kind === 'star') a.actToggleStar();
-      else a.actSetUnread(true);
-      const label = {
-        delete: tr('🗑️ נמחק (מקומית, אפשר לבטל)', '🗑️ Deleted (locally, can be undone)'),
-        archive: tr('🗄️ הועבר לארכיון (מקומית)', '🗄️ Archived (locally)'),
-        star: tr('⭐ כוכב', '⭐ Star'),
-        unread: tr('✉️ סומן כלא נקרא', '✉️ Marked unread'),
-      }[cmd.kind];
-      v.showHud({ kind: 'ok', text: label, detail: said });
-      return;
+    case 'new_draft':
+      drafts().createNew();
+      v.addLine('app', tr('📝 נפתחה טיוטה חדשה', '📝 New draft opened'));
+      return { ok: true };
+    case 'open_draft': {
+      const q = s('query').toLowerCase();
+      const list = (drafts().drafts || [])
+        .slice()
+        .sort((a: any, b: any) => b.updatedAt - a.updatedAt);
+      const words = q.split(/\s+/).filter(Boolean);
+      const hit = words.length
+        ? list.find((d: any) =>
+            words.every((w) => `${d.subject} ${d.body}`.toLowerCase().includes(w))
+          )
+        : list[0];
+      if (!hit) return { ok: false, error: 'No matching draft', drafts: list.length };
+      drafts().openDraft(hit.id);
+      v.addLine('app', tr('📝 נפתחה טיוטה', '📝 Draft opened'));
+      return { ok: true, subject: clipForGemini(hit.subject, 120) };
     }
-    case 'reply': {
+    case 'reply_to_selected': {
       const msg = currentMessage();
-      if (!msg) return needMsg();
+      if (!msg) return needMessage();
       const p = msg.parsed;
       drafts().createReply({
         id: msg.id,
@@ -831,59 +862,110 @@ export function runVoiceCommand(cmd: VoiceCommand, heard: string) {
         date: p.date,
         text: p.text,
       });
-      const ai = lazy('./write-with-ai');
-      ai.startWriteWithAi();
-      const fill = (tries: number) => {
-        const ta = document.querySelector('#ai-sidebar-question') as HTMLTextAreaElement | null;
-        if (ta && !ta.disabled) {
-          setFieldValue(ta, cmd.instruction);
-          ta.focus();
-        } else if (tries > 0) {
-          setTimeout(() => fill(tries - 1), 150);
-        }
-      };
-      setTimeout(() => fill(20), 200);
-      v.showHud(
-        {
-          kind: 'ok',
-          text: tr('✍️ ההוראה בתיבת ה-AI', '✍️ The instruction is in the AI box'),
-          detail: tr(
-            'נפתחה טיוטת תשובה. לחצו "שלח" בחלונית ה-AI כדי ש-Gemini יכתוב (בתשלום, רק בלחיצה).',
-            'A reply draft is open. Click "Send" in the AI panel to have Gemini write it (paid, only on click).'
-          ),
-        },
-        8000
+      v.addLine(
+        'app',
+        tr('↩️ נפתחה טיוטת תשובה (לא נשלח כלום)', '↩️ Reply draft opened (nothing is sent)')
       );
-      return;
+      return { ok: true, note: 'Local draft only. The app cannot send.' };
     }
-    case 'help':
-      lazy('./offline-tour').startOfflineTour();
-      return;
-    default:
-      v.showHud(
-        {
-          kind: 'warn',
-          text: tr('לא זיהיתי פקודה', 'Not a command I know'),
-          detail: said,
-          actions: [retryAction('command')],
-          action: {
-            label: tr('🔍 חפש את זה', '🔍 Search for it'),
-            run: () =>
-              runVoiceCommand({ kind: 'search', query: heard.replace(/[.!?]+$/, '') }, heard),
-          },
-        },
-        8000
+    case 'fill_draft': {
+      const text = typeof args.text === 'string' ? args.text : '';
+      const d = drafts().open;
+      if (!d)
+        return {
+          ok: false,
+          error: 'No draft is open. Use new_draft, open_draft or reply_to_selected first.',
+        };
+      if (!text.trim()) return { ok: false, error: 'empty text' };
+      const how = args.how === 'append' ? 'append' : 'replace';
+      const subject =
+        typeof args.subject === 'string' && args.subject.trim() ? args.subject.trim() : null;
+      const ok = drafts().applyAiText(d.id, text.slice(0, 8000), how, { subject });
+      v.addLine(
+        'app',
+        tr('✍️ הטקסט נכתב בטיוטה (אפשר לבטל)', '✍️ Text written into the draft (can be undone)')
       );
+      return { ok, note: 'The user reviews the draft. Nothing is sent.' };
+    }
+    case 'message_action': {
+      const id = selectedMessageId();
+      if (!id) return needMessage();
+      const a = lazy('./offline-message-actions');
+      const store = lazy('./offline-mail-store').offlineMailStore;
+      const act = s('action');
+      if (act === 'star' || act === 'unstar') {
+        if (store.isStarred(id) !== (act === 'star')) a.actToggleStar([id]);
+      } else if (act === 'archive') a.actArchive([id]);
+      else if (act === 'mark_unread') a.actSetUnread(true, [id]);
+      else return { ok: false, error: 'unknown action' };
+      const label: { [k: string]: string } = {
+        star: tr('⭐ סומן בכוכב', '⭐ Starred'),
+        unstar: tr('☆ הכוכב הוסר', '☆ Star removed'),
+        archive: tr('🗄️ הועבר לארכיון (מקומית)', '🗄️ Archived (locally)'),
+        mark_unread: tr('✉️ סומן כלא נקרא', '✉️ Marked unread'),
+      };
+      v.addLine('app', label[act]);
+      return { ok: true };
+    }
+    case 'delete_selected_message': {
+      const id = selectedMessageId();
+      if (!id) return needMessage();
+      if (args.confirmed !== true) {
+        v.deleteGate.request(id);
+        const m = currentMessage();
+        v.confirmDelete = {
+          messageId: id,
+          subject: String((m && m.parsed && m.parsed.subject) || ''),
+        };
+        v._emit();
+        return {
+          ok: true,
+          status: 'needs_confirmation',
+          instruction:
+            'Ask the user out loud to confirm. The app also shows Delete / Cancel buttons.',
+        };
+      }
+      if (!v.deleteGate.confirm(id)) {
+        return {
+          ok: false,
+          error: 'Not confirmed. Call with confirmed=false first and ask the user.',
+        };
+      }
+      v.confirmDelete = null;
+      lazy('./offline-message-actions').actDelete([id]);
+      v.addLine('app', tr('🗑️ נמחק (מקומית, אפשר לבטל)', '🗑️ Deleted (locally, can be undone)'));
+      return { ok: true, deleted: true, note: 'Moved to the local Trash; can be undone.' };
+    }
+    case 'end_conversation':
+      return { ok: true };
+    default:
+      return { ok: false, error: `unknown tool ${name}` };
   }
 }
 
-/** Ctrl+Shift+Space: voice command; Esc while recording: cancel. */
+/** On-screen answer to the delete confirmation. */
+export function answerDeleteConfirmation(yes: boolean) {
+  const v = offlineVoice;
+  const c = v.confirmDelete;
+  if (!c) return;
+  v.confirmDelete = null;
+  if (yes && v.deleteGate.confirm(c.messageId)) {
+    lazy('./offline-message-actions').actDelete([c.messageId]);
+    v.addLine('app', tr('🗑️ נמחק (מקומית, אפשר לבטל)', '🗑️ Deleted (locally, can be undone)'));
+  } else {
+    v.deleteGate.clear();
+    v.addLine('app', tr('המחיקה בוטלה', 'Delete cancelled'));
+  }
+  v._emit();
+}
+
+/** Ctrl+Shift+Space: talk to Gemini; Esc: stop. */
 export function installVoiceShortcuts(win: Window = window): () => void {
   const onKey = (e: KeyboardEvent) => {
     if (e.ctrlKey && e.shiftKey && (e.code === 'Space' || e.key === ' ')) {
       e.preventDefault();
       offlineVoice.toggle('command');
-    } else if (e.key === 'Escape' && offlineVoice.state === 'recording') {
+    } else if (e.key === 'Escape' && offlineVoice.active) {
       e.preventDefault();
       e.stopPropagation();
       offlineVoice.cancel();
@@ -922,13 +1004,13 @@ type MicProps = {
   /** CSS selector of the field, looked up inside `scope` (or the button's parent). */
   target?: string;
   scope?: string;
-  /** Voice command instead of dictation. */
+  /** Talk with Gemini instead of dictation. */
   command?: boolean;
   label?: string;
   size?: 'small' | 'normal';
 };
 
-/** Green round mic: click to talk, click again to stop. Hidden when Whisper isn't installed. */
+/** Green round mic: click to dictate with Gemini (or talk), click again to stop. */
 export class OfflineMic extends React.Component<MicProps, { tick: number }> {
   static displayName = 'OfflineMic';
   state = { tick: 0 };
@@ -957,20 +1039,20 @@ export class OfflineMic extends React.Component<MicProps, { tick: number }> {
   }
 
   render() {
-    if (!offlineVoice.available) return null;
     const v = offlineVoice;
+    if (!v.available) return null;
     const t = this._btn.current ? this._target() : null;
     const active = !!t && v.isActiveFor(t);
-    const rec = active && v.state === 'recording';
-    const busy = active && (v.state === 'transcribing' || v.state === 'starting');
+    const rec = active && v.state === 'live';
+    const busy = active && (v.state === 'connecting' || v.state === 'stopping');
     const title = this.props.command
       ? tr(
-          'פקודה קולית (Ctrl+Shift+Space): למשל "פתח טיוטה חדשה", "חפש חשבונית", "עבור לתיקייה דואר נכנס", "מחק", "ארכיון", "סמן בכוכב", "תענה ש…". מזוהה מקומית ב-Whisper; שום הקלטה לא יוצאת מהמחשב.',
-          'Voice command (Ctrl+Shift+Space): e.g. "new draft", "search invoice", "go to folder inbox", "delete", "archive", "star", "reply that…". Recognized locally by Whisper; no audio leaves the PC.'
+          'שיחה עם Gemini (Ctrl+Shift+Space): מדברים, Gemini עונה בקול ויכול לחפש, לעבור תיקייה, לפתוח טיוטה, לכתוב תשובה, לסכם הודעה, לסמן ולמחוק (רק אחרי אישור). אין שליחת מייל. הקול נשלח ל-Google רק בזמן השיחה, בתשלום.',
+          'Talk with Gemini (Ctrl+Shift+Space): speak, Gemini answers aloud and can search, open folders and drafts, write a reply, summarize a message, star/archive and delete (only after a yes). It cannot send mail. Audio goes to Google only during the conversation (paid).'
         )
       : tr(
-          'הכתבה: לחצו, דברו (עברית או אנגלית), ולחצו שוב — הטקסט נכתב במקום הסמן. מזוהה מקומית ב-Whisper; ההקלטה לא יוצאת מהמחשב. "פסיק", "נקודה", "סימן שאלה", "שורה חדשה" הופכים לסימנים.',
-          'Dictation: click, speak (Hebrew or English), click again — the text goes in at the cursor. Recognized locally by Whisper; the audio never leaves the PC. Say "comma", "period", "question mark", "new line" for punctuation.'
+          'הכתבה עם Gemini: לחצו, דברו (עברית או אנגלית), ולחצו שוב — הטקסט נכתב במקום הסמן. הקול נשלח ל-Google רק בזמן ההכתבה (בתשלום, זול).',
+          'Dictation with Gemini: click, speak (Hebrew or English), click again — the text goes in at the cursor. Audio goes to Google only while dictating (paid, cheap).'
         );
     return (
       <button
@@ -982,12 +1064,10 @@ export class OfflineMic extends React.Component<MicProps, { tick: number }> {
         aria-pressed={rec}
         aria-label={
           this.props.label ||
-          (this.props.command ? tr('פקודה קולית', 'Voice command') : tr('הכתבה', 'Dictate'))
+          (this.props.command ? tr('שיחה עם Gemini', 'Talk with Gemini') : tr('הכתבה', 'Dictate'))
         }
         title={
-          rec
-            ? tr('מקליט… לחצו לעצירה (Esc לביטול)', 'Recording… click to stop (Esc to cancel)')
-            : title
+          rec ? tr('חי — מקשיב… לחצו לעצירה (Esc)', 'Live — listening… click to stop (Esc)') : title
         }
         onMouseDown={(e) => e.preventDefault()}
         onClick={() => {
@@ -1001,21 +1081,31 @@ export class OfflineMic extends React.Component<MicProps, { tick: number }> {
   }
 }
 
-/** Status card at the bottom of the window: recording, live text, results. */
+function fmtIls(totals: LiveUsageTotals | null): string {
+  return totals ? `≈ ₪${(totals.usd * USD_TO_ILS).toFixed(3)}` : '≈ ₪0';
+}
+
+/** Card at the bottom of the window: live / listening, transcript, Stop. */
 export class OfflineVoiceHud extends React.Component<Record<string, never>, { tick: number }> {
   static displayName = 'OfflineVoiceHud';
   state = { tick: 0 };
   private _un: (() => void) | null = null;
   private _unKeys: (() => void) | null = null;
   private _raf: any = null;
+  private _log = React.createRef<HTMLDivElement>();
 
   componentDidMount() {
     this._un = offlineVoice.listen(() => this.setState({ tick: this.state.tick + 1 }));
     this._unKeys = installVoiceShortcuts();
     this._raf = setInterval(
-      () => offlineVoice.state === 'recording' && this.setState({ tick: this.state.tick + 1 }),
-      200
+      () => offlineVoice.state === 'live' && this.setState({ tick: this.state.tick + 1 }),
+      250
     );
+  }
+
+  componentDidUpdate() {
+    const l = this._log.current;
+    if (l) l.scrollTop = l.scrollHeight;
   }
 
   componentWillUnmount() {
@@ -1024,106 +1114,158 @@ export class OfflineVoiceHud extends React.Component<Record<string, never>, { ti
     clearInterval(this._raf);
   }
 
-  render() {
+  _renderHud() {
     const v = offlineVoice;
-    if (v.state === 'idle' && !v.hud) return null;
-    if (v.state === 'idle' && v.hud) {
-      const h = v.hud;
-      return (
-        <div
-          className={`offline-voice-hud ${h.kind}`}
-          data-offline-voice-hud={h.kind}
-          role="status"
-          dir="auto"
-        >
-          <div className="offline-voice-hud-text">{h.text}</div>
-          {h.detail ? (
-            <div className="offline-voice-hud-detail" dir="auto">
-              {h.detail}
-            </div>
-          ) : null}
-          {(h.actions || []).map((a) => (
-            <button
-              key={a.id}
-              type="button"
-              className="btn btn-small"
-              data-offline-voice-hud-action={a.id}
-              onClick={() => {
-                v.showHud(null, 0);
-                a.run();
-              }}
-            >
-              {a.label}
-            </button>
-          ))}
-          {h.action ? (
-            <button
-              type="button"
-              className="btn btn-small"
-              onClick={() => {
-                v.showHud(null, 0);
-                h.action!.run();
-              }}
-            >
-              {h.action.label}
-            </button>
-          ) : null}
-        </div>
-      );
-    }
-    const sec = v.state === 'recording' ? Math.floor((Date.now() - v.startedAt) / 1000) : 0;
-    const mm = `${Math.floor(sec / 60)}:${String(sec % 60).padStart(2, '0')}`;
+    const h = v.hud;
+    if (!h) return null;
     return (
       <div
-        className={`offline-voice-hud ${v.state}`}
-        data-offline-voice-hud={v.state}
+        className={`offline-voice-hud ${h.kind}`}
+        data-offline-voice-hud={h.kind}
+        role="status"
+        dir="auto"
+      >
+        <div className="offline-voice-hud-text">{h.text}</div>
+        {h.detail ? (
+          <div className="offline-voice-hud-detail" dir="auto">
+            {h.detail}
+          </div>
+        ) : null}
+        {(h.actions || []).map((a) => (
+          <button
+            key={a.id}
+            type="button"
+            className="btn btn-small"
+            data-offline-voice-hud-action={a.id}
+            onClick={() => {
+              v.showHud(null, 0);
+              a.run();
+            }}
+          >
+            {a.label}
+          </button>
+        ))}
+        {h.action ? (
+          <button
+            type="button"
+            className="btn btn-small"
+            onClick={() => {
+              v.showHud(null, 0);
+              h.action!.run();
+            }}
+          >
+            {h.action.label}
+          </button>
+        ) : null}
+      </div>
+    );
+  }
+
+  render() {
+    const v = offlineVoice;
+    if (v.state === 'idle') return this._renderHud();
+    const sec = v.state === 'live' ? Math.floor((Date.now() - v.startedAt) / 1000) : 0;
+    const mm = `${Math.floor(sec / 60)}:${String(sec % 60).padStart(2, '0')}`;
+    const talk = v.mode === 'talk';
+    const status =
+      v.state === 'connecting'
+        ? tr('⏳ מתחבר ל-Gemini…', '⏳ Connecting to Gemini…')
+        : v.state === 'stopping'
+          ? tr('⏳ מסיים…', '⏳ Finishing…')
+          : talk
+            ? v.speaking
+              ? tr(
+                  `🔊 Gemini מדבר — אפשר לקטוע · ${mm}`,
+                  `🔊 Gemini is speaking — you can interrupt · ${mm}`
+                )
+              : tr(`חי — מקשיב · ${mm}`, `Live — listening · ${mm}`)
+            : tr(`חי — מקשיב להכתבה · ${mm}`, `Live — listening for dictation · ${mm}`);
+    const lines = v.lines.filter((l) => l.text).slice(-8);
+    return (
+      <div
+        className={`offline-voice-hud live ${v.state}${talk ? ' talk' : ' dictate'}`}
+        data-offline-voice-hud={v.state === 'live' ? 'recording' : v.state}
+        data-offline-voice-live={v.state === 'live' ? 'true' : 'false'}
         role="status"
       >
         <div className="offline-voice-hud-row">
           <span className="offline-voice-dot" />
-          <span className="offline-voice-hud-text">
-            {v.state === 'transcribing'
-              ? tr('⏳ מתמלל במחשב…', '⏳ Transcribing on this PC…')
-              : v.state === 'starting'
-                ? tr('🎙️ פותח מיקרופון…', '🎙️ Opening the microphone…')
-                : v.mode === 'command'
-                  ? tr(`🎙️ אמרו פקודה… ${mm}`, `🎙️ Say a command… ${mm}`)
-                  : tr(`🎙️ מקליט… ${mm}`, `🎙️ Recording… ${mm}`)}
-          </span>
-          {v.state === 'recording' ? (
+          <span className="offline-voice-live-badge">{tr('LIVE', 'LIVE')}</span>
+          <span className="offline-voice-hud-text">{status}</span>
+          {v.state === 'live' ? (
             <span className="offline-voice-level" aria-hidden="true">
               <span style={{ width: `${Math.round(v.level * 100)}%` }} />
             </span>
           ) : null}
-          {v.state === 'recording' ? (
-            <button
-              type="button"
-              className="btn btn-small"
-              data-offline-voice-stop="true"
-              onClick={() => void v.stop()}
-            >
-              {tr('עצור', 'Stop')}
-            </button>
-          ) : null}
-          {v.state !== 'transcribing' ? (
-            <button
-              type="button"
-              className="btn btn-small"
-              data-offline-voice-cancel="true"
-              onClick={() => v.cancel()}
-            >
-              {tr('בטל', 'Cancel')}
-            </button>
-          ) : null}
+          <span className="offline-voice-cost" dir="ltr" data-offline-voice-cost="true">
+            {fmtIls(v.totals)}
+          </span>
+          <button
+            type="button"
+            className="btn btn-small offline-voice-stop"
+            data-offline-voice-stop="true"
+            disabled={v.state === 'stopping'}
+            onClick={() => void v.stop()}
+          >
+            {tr('⏹ עצור', '⏹ Stop')}
+          </button>
         </div>
-        {v.partial ? (
+        {v.confirmDelete ? (
+          <div className="offline-voice-confirm" data-offline-voice-confirm="delete">
+            <span>
+              {tr(
+                'למחוק את ההודעה הנבחרת? (מקומית, אפשר לבטל)',
+                'Delete the selected message? (locally, can be undone)'
+              )}
+            </span>
+            <button
+              type="button"
+              className="btn btn-small"
+              data-offline-voice-confirm-yes="true"
+              onClick={() => answerDeleteConfirmation(true)}
+            >
+              {tr('🗑️ מחק', '🗑️ Delete')}
+            </button>
+            <button
+              type="button"
+              className="btn btn-small"
+              data-offline-voice-confirm-no="true"
+              onClick={() => answerDeleteConfirmation(false)}
+            >
+              {tr('ביטול', 'Cancel')}
+            </button>
+          </div>
+        ) : null}
+        {talk && lines.length ? (
+          <div
+            className="offline-voice-log"
+            ref={this._log}
+            dir="auto"
+            data-offline-voice-log="true"
+          >
+            {lines.map((l, i) => (
+              <div key={i} className={`offline-voice-line ${l.who}`} dir="auto">
+                {l.who === 'user' ? '🗣️ ' : l.who === 'gemini' ? '✨ ' : ''}
+                {l.text}
+              </div>
+            ))}
+          </div>
+        ) : null}
+        {!talk && v.partial ? (
           <div className="offline-voice-partial" dir="auto" data-offline-voice-partial="true">
             {v.partial}
           </div>
         ) : null}
         <div className="offline-voice-hud-detail">
-          {tr('ההקלטה נשארת במחשב (Whisper מקומי)', 'The audio stays on this PC (local Whisper)')}
-          {whisperSetup() ? ` · ${whisperEngineLabel()}` : ''}
+          {talk
+            ? tr(
+                `הקול נשלח ל-Google רק בזמן השיחה · נעצר לבד אחרי ${GEMINI_LIVE_IDLE_SECONDS} שניות שקט · אין שליחת מייל`,
+                `Audio goes to Google only during the conversation · stops after ${GEMINI_LIVE_IDLE_SECONDS}s of silence · no mail sending`
+              )
+            : tr(
+                `הקול נשלח ל-Google רק בזמן ההכתבה · נעצר לבד אחרי ${GEMINI_DICTATE_IDLE_SECONDS} שניות שקט`,
+                `Audio goes to Google only while dictating · stops after ${GEMINI_DICTATE_IDLE_SECONDS}s of silence`
+              )}
         </div>
       </div>
     );

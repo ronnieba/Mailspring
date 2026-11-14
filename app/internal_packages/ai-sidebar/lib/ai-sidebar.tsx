@@ -1135,6 +1135,23 @@ class AISidebarInner extends React.Component<Record<string, never>, AISidebarSta
     void AISidebarStore.resetGeminiUsage();
   };
 
+  /** Voice (Gemini Live): sessions, minutes, cost and cost per minute. */
+  _renderLiveUsage(t: GeminiUsageTotals) {
+    const n = t.liveSessions || 0;
+    if (!n) return null;
+    const sec = t.liveSeconds || 0;
+    const ils = (t.liveUsd || 0) * (t.usd > 0 ? t.ils / t.usd : 3.19);
+    const perMin = sec > 0 ? ils / (sec / 60) : 0;
+    return (
+      <div className="gemini-usage-live" data-gemini-usage-live="true">
+        {tr(
+          `🎙️ קול (Gemini Live): ${n} שיחות · ${(sec / 60).toFixed(1)} דק׳ · ${fmtIls(ils)} · ≈ ${fmtIls(perMin)} לדקה`,
+          `🎙️ Voice (Gemini Live): ${n} sessions · ${(sec / 60).toFixed(1)} min · ${fmtIls(ils)} · ≈ ${fmtIls(perMin)} per minute`
+        )}
+      </div>
+    );
+  }
+
   _renderGeminiUsage() {
     const u = this.state.geminiUsage;
     if (!isOfflineArchiveMode() || !u || !u.available) {
@@ -1199,6 +1216,7 @@ class AISidebarInner extends React.Component<Record<string, never>, AISidebarSta
                 )}
               </tbody>
             </table>
+            {this._renderLiveUsage(u.total)}
             <div className="gemini-usage-budget">
               <span>
                 {tr(

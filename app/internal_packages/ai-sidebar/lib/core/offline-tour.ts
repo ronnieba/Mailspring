@@ -80,14 +80,14 @@ export const TOUR_STEPS: TourStep[] = [
     targets: ['[data-offline-ribbon-btn="voice-command"]', '[data-offline-mic]'],
     tab: 'home',
     mood: 'happy',
-    title: ['דיבור במקום הקלדה', 'Talk instead of typing'],
+    title: ['מדברים עם Gemini', 'Talk with Gemini'],
     body: [
-      'ליד כל תיבת טקסט יש מיקרופון ירוק 🎙️: לחצו, דברו בעברית או באנגלית, ולחצו שוב — המילים נכתבות במקום הסמן. "פקודה קולית" (Ctrl+Shift+Space) מבינה "פתח טיוטה חדשה", "חפש …", "עבור לתיקייה …", "מחק", "סמן בכוכב", "תענה ש…". הכול ב-Whisper מקומי — ההקלטה לא יוצאת מהמחשב.',
-      'Every text box has a green mic 🎙️: click, speak Hebrew or English, click again — the words go in at the cursor. "Voice command" (Ctrl+Shift+Space) understands "new draft", "search …", "go to folder …", "delete", "star", "reply that …". All with local Whisper — the audio never leaves the PC.',
+      '"שיחה עם Gemini" (Ctrl+Shift+Space): מדברים בעברית, Gemini עונה בקול, ואפשר לקטוע אותו באמצע. הוא יכול לחפש, לעבור לתיקייה, לפתוח טיוטה, לכתוב תשובה בטיוטה, לסכם את ההודעה הנבחרת, לסמן בכוכב / לארכיון / כלא נקרא, ולמחוק רק אחרי "כן". אין לו אפשרות לשלוח מייל. המיקרופון הירוק ליד כל תיבת טקסט = הכתבה עם Gemini. הקול נשלח ל-Google רק בזמן שהכרטיס "חי — מקשיב" מוצג (בתשלום, כמה אגורות לדקה), ונעצר לבד אחרי שקט.',
+      '"Talk with Gemini" (Ctrl+Shift+Space): speak Hebrew, Gemini answers aloud, and you can interrupt it. It can search, open a folder or draft, write a reply into a draft, summarize the selected message, star / archive / mark unread, and delete only after a "yes". It cannot send mail. The green mic next to every text box = dictation with Gemini. Audio goes to Google only while the "Live — listening" card is shown (paid, a few cents a minute) and stops by itself after silence.',
     ],
     missing: [
-      '(צריך להתקין את Whisper המקומי כדי לראות את המיקרופון)',
-      '(install the local Whisper to see the mic)',
+      '(צריך מפתח Gemini כדי לדבר עם Gemini)',
+      '(a Gemini key is needed to talk with Gemini)',
     ],
   },
   {
@@ -176,8 +176,8 @@ export const TOUR_STEPS: TourStep[] = [
 
 export const TOUR_TIPS: { [id: string]: [string, string] } = {
   voice: [
-    'לחצו על המיקרופון הירוק, דברו, ולחצו שוב. "פסיק", "נקודה", "סימן שאלה", "שורה חדשה" הופכים לסימנים. פקודות (Ctrl+Shift+Space): "פתח טיוטה חדשה", "חפש …", "עבור לתיקייה …", "מחק", "ארכיון", "סמן בכוכב", "תענה ש…" (ממלא את תיבת ה-AI; שולחים רק בלחיצה). Esc מבטל. Whisper מקומי — שום הקלטה לא יוצאת מהמחשב.',
-    'Click the green mic, speak, click again. Say "comma", "period", "question mark", "new line" for punctuation. Commands (Ctrl+Shift+Space): "new draft", "search …", "go to folder …", "delete", "archive", "star", "reply that …" (fills the AI box; sent only on click). Esc cancels. Local Whisper — no audio leaves the PC.',
+    'מיקרופון ירוק = הכתבה עם Gemini: לחצו, דברו, ולחצו שוב — הטקסט נכתב במקום הסמן. "שיחה עם Gemini" (Ctrl+Shift+Space): למשל "חפש מיילים מדנה", "עבור לתיקיית העבודה", "סכם את ההודעה", "תענה שאני מאשר" (נכתב בטיוטה, לא נשלח), "מחק" (רק אחרי אישור). אפשר לקטוע אותו. ⏹ או Esc עוצרים. הקול נשלח ל-Google רק בזמן "חי — מקשיב", ונעצר לבד אחרי שקט; העלות מוצגת בכרטיס ובמונה השימוש.',
+    'Green mic = dictation with Gemini: click, speak, click again — the text goes in at the cursor. "Talk with Gemini" (Ctrl+Shift+Space): e.g. "search mail from Dana", "go to the work folder", "summarize this message", "reply that I agree" (written into a draft, not sent), "delete" (only after a yes). You can interrupt it. ⏹ or Esc stops. Audio goes to Google only while "Live — listening" is shown and stops after silence; the cost shows on the card and in the usage meter.',
   ],
   search: [
     'מילים = חיפוש מקומי בלבד. שאלה (למשל "מתי הפגישה עם דנה?") + לחיצה על "🤖 שאל AI" = התשובה מגיעה בחלונית ה-AI עם מקורות; נשלחים רק השאלה ועד 12 הודעות מתאימות (טקסט), ורק בלחיצה. מסננים: מאת:, אל:, נושא:, קובץ:, יש:צרופות, אחרי:2024-01-01, לפני:, תיקייה:, "ביטוי מדויק", -מילה.',

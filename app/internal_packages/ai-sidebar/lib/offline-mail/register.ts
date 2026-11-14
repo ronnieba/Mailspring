@@ -18,7 +18,6 @@ import { offlineActionsUi } from './offline-message-actions';
 import { offlineSearchStore } from './offline-search-store';
 import { offlineExportHooks, openExport } from './offline-export';
 import * as offlineVoiceModule from './offline-voice';
-import { parseVoiceCommand } from '../core/offline-voice';
 import { proofreadDraftViaIpc } from '../gemini-ipc-transport';
 import AISidebarStore from '../ai-sidebar-store';
 import { offlineLang, offlineLangBodyClass, offlineDir } from '../core/offline-i18n';
@@ -153,7 +152,7 @@ export function registerOfflineMailBrowser(archivePath: string, sidebar: any) {
     actionsUi: offlineActionsUi,
     exportHooks: offlineExportHooks,
     openExport,
-    voice: { ...offlineVoiceModule, parseVoiceCommand },
+    voice: { ...offlineVoiceModule },
   };
   void offlineMailStore.start(archivePath, cachePath);
   // Window size/position/maximized state is restored by the main process

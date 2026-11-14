@@ -93,6 +93,10 @@ export interface GeminiUsageTotals {
   totalTokens: number;
   usd: number;
   ils: number;
+  /** Voice conversations / dictation (Gemini Live): sessions, seconds, est. USD. */
+  liveSessions?: number;
+  liveSeconds?: number;
+  liveUsd?: number;
 }
 
 export interface GeminiUsageSummary {

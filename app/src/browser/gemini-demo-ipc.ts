@@ -6,7 +6,7 @@
  */
 import path from 'path';
 import { IpcMain } from 'electron';
-import { handleFromMailspringWindows } from './trusted-ipc';
+import { handleFromMailspringWindows, onFromMailspringWindows } from './trusted-ipc';
 import {
   sanitizeGeminiScopeFacts,
   sanitizeDraftHistory,
@@ -19,7 +19,21 @@ import {
   GeminiDemoMailRef,
   GeminiDemoQueryInput,
 } from './gemini-demo-protocol';
-import { GeminiFetch, resolveGeminiDemoStatus, runGeminiDemoQuery } from './gemini-demo-host';
+import {
+  GeminiFetch,
+  credentialsOf,
+  resolveGeminiDemoStatus,
+  runGeminiDemoQuery,
+} from './gemini-demo-host';
+import {
+  GEMINI_LIVE_IPC_AUDIO,
+  GEMINI_LIVE_IPC_AUDIO_END,
+  GEMINI_LIVE_IPC_EVENT,
+  GEMINI_LIVE_IPC_START,
+  GEMINI_LIVE_IPC_STOP,
+  GEMINI_LIVE_IPC_TOOL_RESULT,
+} from './gemini-live-protocol';
+import { GeminiLiveSession, LiveSocketFactory } from './gemini-live-host';
 import {
   getWindowsGeminiCredentialReason,
   loadGeminiFromWindowsCredentialManager,
@@ -60,7 +74,11 @@ export interface GeminiDemoIpcOptions {
   fetch?: GeminiFetch;
   /** Profile config dir: enables the local usage ledger (gemini-usage.json). */
   configDirPath?: string;
+  /** Tests: fake WebSocket for Gemini Live. */
+  liveSocketFactory?: LiveSocketFactory;
 }
+
+const MAX_TOOL_RESULT_CHARS = 60000;
 
 const inflight = new Map<number, AbortController>();
 
@@ -258,6 +276,122 @@ export function registerGeminiDemoIpcHandlers(ipcMain: IpcMain, opts: GeminiDemo
     }
     ledger.setBudget(typeof raw === 'number' ? raw : Number(raw));
     return ledger.summary();
+  });
+
+  // ---- Gemini Live: voice conversation + dictation (offline experiment only) ----
+  // A socket exists only between an explicit start (talk / mic click) and stop.
+  const liveSessions = new Map<string, { session: GeminiLiveSession; owner: number }>();
+  let liveSeq = 0;
+  const liveFor = (event: { sender: { id: number } }, id: unknown) => {
+    const e = typeof id === 'string' ? liveSessions.get(id) : undefined;
+    return e && e.owner === event.sender.id ? e.session : null;
+  };
+
+  handleFromMailspringWindows(ipcMain, GEMINI_LIVE_IPC_START, async (event, raw: unknown) => {
+    const r = raw && typeof raw === 'object' ? (raw as Record<string, unknown>) : {};
+    const mode = r.mode === 'dictate' ? 'dictate' : 'talk';
+    if (!(opts.isOfflineArchive && opts.isOfflineArchive()) || opts.isDemoMode()) {
+      return {
+        ok: false,
+        reason: 'not-offline',
+        message: 'Gemini Live is only for the offline mail window',
+      };
+    }
+    if (windowsOffline()) {
+      await loadGeminiFromWindowsCredentialManager();
+    }
+    const status = resolveGeminiDemoStatus({
+      demoMode: false,
+      offlineArchive: true,
+      env: opts.env,
+      credentials: opts.credentials,
+    });
+    if (!status.configured) {
+      return {
+        ok: false,
+        reason: 'unconfigured',
+        message: windowsOffline()
+          ? windowsGeminiMissingReason(getWindowsGeminiCredentialReason(), status.keyPresent)
+          : status.reason,
+      };
+    }
+    // One session per window: a new start replaces the old one.
+    for (const [, e] of liveSessions) {
+      if (e.owner === event.sender.id) {
+        e.session.stop('replaced');
+      }
+    }
+    const id = `live-${++liveSeq}`;
+    const sender = event.sender;
+    const session = new GeminiLiveSession({
+      id,
+      mode,
+      key: credentialsOf({ env: opts.env, credentials: opts.credentials }).key,
+      uiLang: r.uiLang === 'en' ? 'en' : 'he',
+      socketFactory: opts.liveSocketFactory,
+      emit: (ev) => {
+        if (!sender.isDestroyed()) {
+          sender.send(GEMINI_LIVE_IPC_EVENT, id, ev);
+        }
+      },
+      onEnd: (end) => {
+        liveSessions.delete(id);
+        const ledger = getLedger();
+        if (ledger && (end.totals.total > 0 || end.totals.usd > 0)) {
+          ledger.record({
+            model: end.model,
+            mode: end.mode === 'dictate' ? 'live-dictate' : 'live-talk',
+            input: end.totals.input,
+            output: end.totals.output,
+            total: end.totals.total,
+            usd: end.totals.usd,
+            seconds: end.seconds,
+          });
+        }
+      },
+    });
+    liveSessions.set(id, { session, owner: sender.id });
+    sender.once('destroyed', () => session.stop('window-closed'));
+    const res = await session.start();
+    return res.ok
+      ? { ok: true, id, model: session.model }
+      : { ok: false, id, reason: res.reason, message: res.message };
+  });
+
+  onFromMailspringWindows(ipcMain, GEMINI_LIVE_IPC_AUDIO, (event, id: unknown, chunk: unknown) => {
+    const s = liveFor(event, id);
+    if (s && (chunk instanceof Uint8Array || chunk instanceof ArrayBuffer)) {
+      s.audio(chunk);
+    }
+  });
+
+  onFromMailspringWindows(ipcMain, GEMINI_LIVE_IPC_AUDIO_END, (event, id: unknown) => {
+    const s = liveFor(event, id);
+    if (s) {
+      s.audioEnd();
+    }
+  });
+
+  onFromMailspringWindows(
+    ipcMain,
+    GEMINI_LIVE_IPC_TOOL_RESULT,
+    (event, id: unknown, callId: unknown, name: unknown, response: unknown) => {
+      const s = liveFor(event, id);
+      if (!s || typeof callId !== 'string' || typeof name !== 'string') {
+        return;
+      }
+      let res: Record<string, unknown> =
+        response && typeof response === 'object' ? (response as Record<string, unknown>) : {};
+      if (JSON.stringify(res).length > MAX_TOOL_RESULT_CHARS) {
+        res = { error: 'result too large' };
+      }
+      s.toolResult(callId, name, res);
+    }
+  );
+
+  handleFromMailspringWindows(ipcMain, GEMINI_LIVE_IPC_STOP, (event, id: unknown) => {
+    const s = liveFor(event, id);
+    return s ? s.stop('user-stopped') : null;
   });
 
   handleFromMailspringWindows(ipcMain, GEMINI_IPC_CANCEL, (_event, generationRaw: unknown) => {

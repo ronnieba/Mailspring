@@ -6,11 +6,15 @@
  * mail, fonts, trackers. Local schemes (file:, data:, blob:, devtools) are
  * allowed. The only remote host left reachable is the Gemini Developer API,
  * which the app contacts solely after an explicit Summarize of one selected
- * message when a key has been configured by the user.
+ * message when a key has been configured by the user. Its live voice
+ * (WebSocket) endpoint is reachable only while a voice session the user
+ * started is running (gemini-live-gate); the socket itself lives in the main
+ * process.
  *
  * Mailsync is not started in this mode, so there is no IMAP/SMTP process.
  */
 import { session } from 'electron';
+import { isLiveGateOpen } from './gemini-live-gate';
 
 const ALLOWED_SCHEMES = new Set([
   'file:',
@@ -55,6 +59,9 @@ export function offlineRequestDecision(rawUrl: string): 'allow' | 'allow-remote'
     return 'allow';
   }
   if (u.protocol === 'https:' && ALLOWED_REMOTE_HOSTS.has(u.hostname)) {
+    return 'allow-remote';
+  }
+  if (u.protocol === 'wss:' && ALLOWED_REMOTE_HOSTS.has(u.hostname) && isLiveGateOpen()) {
     return 'allow-remote';
   }
   return 'block';
