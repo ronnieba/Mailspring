@@ -135,6 +135,13 @@ async function main() {
       /data-offline-draft-attach-originals/.test(view) && /צרף את הקבצים המקוריים/.test(view),
       'draft button'
     );
+    assert(
+      /loadForView=\{async \(i\) => \{[\s\S]{0,300}draftAttachmentPath\(dir, list\[i\]\)/.test(
+        view
+      ),
+      'viewer for draft files'
+    );
+    assert(/loadImage=\{\(i\) =>/.test(view), 'image previews');
     const ribbon = read('lib/offline-mail/offline-ribbon.tsx');
     assert(/'draft-attach-originals'/.test(ribbon), 'ribbon button');
   });

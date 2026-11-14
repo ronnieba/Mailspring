@@ -24,6 +24,7 @@ import { OfflineAttachmentList } from './offline-attachments-view';
 import { chooseFilesToAttach, droppedFilePaths, openWithDefaultApp } from './offline-file-actions';
 import { draftAttachmentPath } from '../core/offline-attachments';
 import { attachReplyOriginals, replyOriginalsInfo } from './offline-reply-originals';
+import fs from 'fs';
 import { ProofSegment } from '../core/text-diff';
 import { offlineDateLocale, offlineDir, tr } from '../core/offline-i18n';
 import { startWriteWithAi, undoAiChange } from './write-with-ai';
@@ -331,6 +332,24 @@ export class OfflineDraftEditor extends DraftsComponent<Record<string, never>, E
               return tr('אין תיקיית פרופיל', 'No profile folder');
             }
             return openWithDefaultApp(draftAttachmentPath(dir, list[i]));
+          }}
+          loadImage={(i) => {
+            // Small inline previews of pictures in the draft (copies in the profile).
+            if (!dir || (list[i].size || 0) > 8 * 1024 * 1024) {
+              return null;
+            }
+            try {
+              return fs.readFileSync(draftAttachmentPath(dir, list[i]));
+            } catch (e) {
+              return null;
+            }
+          }}
+          loadForView={async (i) => {
+            // Built-in viewer: reads the draft's own copy inside the offline profile.
+            if (!dir) {
+              throw new Error(tr('אין תיקיית פרופיל', 'No profile folder'));
+            }
+            return fs.promises.readFile(draftAttachmentPath(dir, list[i]));
           }}
           onRemove={(i) => offlineDraftsStore.removeAttachment(d.id, list[i].id)}
         />
