@@ -274,12 +274,12 @@ export function actResetLocalChanges(): number {
       `לאפס את כל השינויים המקומיים?\n\n` +
         `כוכבים: ${c.starred} · לא נקראו: ${c.unread} · הועברו: ${c.moved}\n` +
         `אשפה: ${c.trash} · ארכיון: ${c.archive} · ספאם: ${c.spam}\n` +
-        `שולחים חסומים: ${c.blocked} · אנשי קשר שנשמרו: ${c.contacts}\n\n` +
+        `שולחים חסומים: ${c.blocked} · אנשי קשר שנשמרו: ${c.contacts} · כללים: ${c.rules}\n\n` +
         `כל ההודעות יחזרו לתיקיות המקוריות. עותק הדואר עצמו לא השתנה אף פעם.`,
       `Reset all local changes?\n\n` +
         `Starred: ${c.starred} · Unread: ${c.unread} · Moved: ${c.moved}\n` +
         `Trash: ${c.trash} · Archive: ${c.archive} · Spam: ${c.spam}\n` +
-        `Blocked senders: ${c.blocked} · Saved contacts: ${c.contacts}\n\n` +
+        `Blocked senders: ${c.blocked} · Saved contacts: ${c.contacts} · Rules: ${c.rules}\n\n` +
         `All messages go back to their original folders. The mail copy itself was never changed.`
     )
   );
@@ -413,6 +413,10 @@ export function showMessageMoreMenu(anchor: HTMLElement, ids: string[]) {
   menu.append(new MenuItem({ type: 'separator' }));
   item(tr('👤 הוסף שולח לאנשי הקשר', '👤 Add sender to contacts'), () => actAddContacts(ids));
   item(tr('⛔ חסום שולח', '⛔ Block sender'), () => actBlockSenders(ids));
+  item(tr('📋 צור כלל מהשולח…', '📋 Create rule from sender…'), () =>
+    // Late require: the rules window imports this module.
+    require('./offline-rules-view').newRuleFromMessage(ids[0])
+  );
   menu.append(new MenuItem({ type: 'separator' }));
   item(tr('🖨️ הדפס', '🖨️ Print'), () => void actPrint(ids[0]), ids.length === 1);
   const r = anchor.getBoundingClientRect();

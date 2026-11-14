@@ -10,6 +10,7 @@
 import fs from 'fs';
 import path from 'path';
 import { parseAddressList, isLikelyEmail } from './offline-address-book';
+import { LocalRule, RuleRun, sanitizeRuleRuns, sanitizeRules } from './offline-rules';
 
 export const OFFLINE_LOCAL_CHANGES_FILE = 'offline-local-changes.json';
 export const OFFLINE_LOCAL_CHANGES_VERSION = 1;
@@ -53,15 +54,26 @@ export type OverlayData = {
   messages: { [id: string]: OverlayMessage };
   blocked: BlockedSender[];
   contacts: SavedContact[];
+  /** Local rules (t233), in order. */
+  rules: LocalRule[];
+  /** Last rule runs, newest last (for "Undo last run"). */
+  ruleRuns: RuleRun[];
 };
 
 export function emptyOverlay(): OverlayData {
-  return { version: OFFLINE_LOCAL_CHANGES_VERSION, messages: {}, blocked: [], contacts: [] };
+  return {
+    version: OFFLINE_LOCAL_CHANGES_VERSION,
+    messages: {},
+    blocked: [],
+    contacts: [],
+    rules: [],
+    ruleRuns: [],
+  };
 }
 
 const ID_RE = /^[A-Za-z0-9_.:-]{1,80}$/;
 
-function cleanMessage(m: any): OverlayMessage | null {
+export function cleanMessage(m: any): OverlayMessage | null {
   if (!m || typeof m !== 'object') {
     return null;
   }
@@ -112,6 +124,8 @@ export function sanitizeOverlay(raw: any): OverlayData {
       out.contacts.push(c);
     }
   }
+  out.rules = sanitizeRules(raw.rules);
+  out.ruleRuns = sanitizeRuleRuns(raw.ruleRuns, cleanMessage);
   return out;
 }
 
@@ -243,6 +257,11 @@ export function overlayCounts(data: OverlayData) {
     ...places,
     blocked: data.blocked.length,
     contacts: data.contacts.length,
-    total: Object.keys(data.messages).length + data.blocked.length + data.contacts.length,
+    rules: data.rules.length,
+    total:
+      Object.keys(data.messages).length +
+      data.blocked.length +
+      data.contacts.length +
+      data.rules.length,
   };
 }

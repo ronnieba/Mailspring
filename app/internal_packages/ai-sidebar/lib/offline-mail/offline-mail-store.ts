@@ -63,10 +63,31 @@ import {
   overlayCounts,
   patchMessage,
   readOverlay,
+  senderDisplayName,
   senderEmail,
   writeOverlay,
 } from '../core/offline-local-overlay';
 import { tr } from '../core/offline-i18n';
+import {
+  LocalRule,
+  LocalRuleThen,
+  LocalRuleWhen,
+  MAX_RULE_RUNS,
+  MAX_RULES,
+  RuleRun,
+  newRuleId,
+  planRules,
+  ruleHasCondition,
+  sanitizeRule,
+} from '../core/offline-rules';
+
+/** Result of one rules run (counts only). */
+export type OfflineRuleRunResult = {
+  run: RuleRun | null;
+  changed: number;
+  blocked: number;
+  perRule: { [ruleId: string]: number };
+};
 
 /** Undo for one local change (restores the previous records). */
 export type OfflineUndo = () => void;
@@ -256,6 +277,7 @@ class OfflineMailStore {
       });
       this._applyIndex(index);
       this.status = 'ready';
+      this._runRulesOnNewMail();
       console.log(
         `[Offline mail] indexed ${index.entries.length} messages in ${
           Object.keys(this._countsByFolder()).length
@@ -641,6 +663,241 @@ class OfflineMailStore {
 
   localChangeCounts() {
     return overlayCounts(this.overlay);
+  }
+
+  // ---- Local rules (t233) ----------------------------------------------
+
+  /** Last automatic run on new mail (for a toast), cleared once shown. */
+  pendingRuleNotice: OfflineRuleRunResult | null = null;
+
+  get rules(): LocalRule[] {
+    return this.overlay.rules;
+  }
+
+  private _saveRules() {
+    this.overlayVersion++;
+    this._saveOverlay();
+    this._emit();
+  }
+
+  /** Add or replace a rule. Returns the saved rule, or null when invalid. */
+  saveRule(input: {
+    id?: string;
+    name?: string;
+    enabled?: boolean;
+    when: LocalRuleWhen;
+    then: LocalRuleThen;
+  }): LocalRule | null {
+    const now = Date.now();
+    const old = input.id ? this.overlay.rules.find((r) => r.id === input.id) : undefined;
+    const rule = sanitizeRule({
+      id: old ? old.id : newRuleId(now),
+      name: input.name || '',
+      enabled: input.enabled !== false,
+      when: input.when,
+      then: input.then,
+      createdAt: old ? old.createdAt : now,
+      // New mail = mail that arrives after the rule was made / last ran.
+      lastRunAt: old ? old.lastRunAt : now,
+      applied: old ? old.applied : 0,
+    });
+    if (!rule || !ruleHasCondition(rule.when)) {
+      return null;
+    }
+    if (old) {
+      this.overlay.rules = this.overlay.rules.map((r) => (r.id === rule.id ? rule : r));
+    } else {
+      if (this.overlay.rules.length >= MAX_RULES) {
+        return null;
+      }
+      this.overlay.rules = [...this.overlay.rules, rule];
+    }
+    this._saveRules();
+    return rule;
+  }
+
+  setRuleEnabled(id: string, on: boolean) {
+    const r = this.overlay.rules.find((x) => x.id === id);
+    if (!r || r.enabled === !!on) {
+      return;
+    }
+    this.overlay.rules = this.overlay.rules.map((x) =>
+      x.id === id ? { ...x, enabled: !!on, lastRunAt: on ? Date.now() : x.lastRunAt } : x
+    );
+    this._saveRules();
+  }
+
+  /** Delete a rule (what it already did stays; "Undo last run" still works). */
+  deleteRule(id: string): OfflineUndo | null {
+    const idx = this.overlay.rules.findIndex((r) => r.id === id);
+    if (idx < 0) {
+      return null;
+    }
+    const removed = this.overlay.rules[idx];
+    this.overlay.rules = this.overlay.rules.filter((r) => r.id !== id);
+    this._saveRules();
+    return () => {
+      if (!this.overlay.rules.some((r) => r.id === removed.id)) {
+        const next = this.overlay.rules.slice();
+        next.splice(Math.min(idx, next.length), 0, removed);
+        this.overlay.rules = next;
+        this._saveRules();
+      }
+    };
+  }
+
+  moveRule(id: string, delta: number) {
+    const list = this.overlay.rules.slice();
+    const i = list.findIndex((r) => r.id === id);
+    const j = i + delta;
+    if (i < 0 || j < 0 || j >= list.length) {
+      return;
+    }
+    [list[i], list[j]] = [list[j], list[i]];
+    this.overlay.rules = list;
+    this._saveRules();
+  }
+
+  /** Delete every rule (their past changes stay until undone / reset). */
+  deleteAllRules(): number {
+    const n = this.overlay.rules.length;
+    if (n) {
+      this.overlay.rules = [];
+      this._saveRules();
+    }
+    return n;
+  }
+
+  /**
+   * Run rules: `ids` = these rules (else every enabled rule). 'manual' looks
+   * at all mail; 'new-mail' only at mail newer than each rule's last run.
+   * One recorded run, undoable with undoLastRuleRun().
+   */
+  runRules(ids: string[] | null, trigger: 'manual' | 'new-mail' = 'manual'): OfflineRuleRunResult {
+    const empty: OfflineRuleRunResult = { run: null, changed: 0, blocked: 0, perRule: {} };
+    if (!this.index) {
+      return empty;
+    }
+    const chosen = this.overlay.rules.filter(
+      (r) => (ids ? ids.includes(r.id) : true) && (ids && trigger === 'manual' ? true : r.enabled)
+    );
+    if (!chosen.length) {
+      return empty;
+    }
+    const now = Date.now();
+    const targets = this.index.entries
+      .filter((e) => !this._hidden.has(e.id) && this._byId.has(e.id))
+      .map((e) => ({
+        id: e.id,
+        folder: this._byId.get(e.id)!.folder,
+        from: e.from,
+        to: e.to,
+        cc: e.cc,
+        subject: e.subject,
+        hasAttachments: e.hasAttachments,
+        attachCount: e.attachCount,
+        ts: e.ts,
+        mtimeMs: e.mtimeMs,
+      }));
+    const plan = planRules(
+      chosen.map((r) => ({ ...r, enabled: true })),
+      targets,
+      this.overlay,
+      {
+        since: trigger === 'new-mail' ? (r) => r.lastRunAt : undefined,
+        senderOf: (from) => ({ email: senderEmail(from), name: senderDisplayName(from) }),
+        placeOf: (f) => localPlaceOf(f),
+      }
+    );
+    const changes = Array.from(plan.patches.keys()).map((id) => ({
+      id,
+      before: this.overlay.messages[id] ? { ...this.overlay.messages[id] } : null,
+    }));
+    for (const [id, patch] of plan.patches) {
+      const p = { ...patch };
+      // Moved back to the folder it really is in = no move record.
+      if (p.folder && p.folder === this.originalFolder(id)) {
+        p.folder = undefined;
+      }
+      patchMessage(this.overlay, id, p, now);
+    }
+    const blocked: string[] = [];
+    for (const [email, name] of plan.block) {
+      if (!this.overlay.blocked.some((b) => b.email === email)) {
+        this.overlay.blocked = [...this.overlay.blocked, { email, name, at: now }];
+        blocked.push(email);
+      }
+    }
+    this.overlay.rules = this.overlay.rules.map((r) =>
+      chosen.some((c) => c.id === r.id)
+        ? { ...r, lastRunAt: now, applied: r.applied + (plan.perRule[r.id] || 0) }
+        : r
+    );
+    let run: RuleRun | null = null;
+    if (changes.length || blocked.length) {
+      run = {
+        id: `run-${now.toString(36)}`,
+        at: now,
+        trigger,
+        ruleIds: chosen.map((r) => r.id),
+        changes,
+        blocked,
+      };
+      this.overlay.ruleRuns = [...this.overlay.ruleRuns, run].slice(-MAX_RULE_RUNS);
+    }
+    this.overlayVersion++;
+    this._saveOverlay();
+    if (run) {
+      this._rebuildView(false);
+    } else {
+      this._emit();
+    }
+    return { run, changed: changes.length, blocked: blocked.length, perRule: plan.perRule };
+  }
+
+  /** The last recorded rules run (what "Undo last run" would undo). */
+  lastRuleRun(): RuleRun | null {
+    const runs = this.overlay.ruleRuns;
+    return runs.length ? runs[runs.length - 1] : null;
+  }
+
+  /** Put back what the last rules run changed (messages and blocks). */
+  undoLastRuleRun(): number {
+    const run = this.lastRuleRun();
+    if (!run) {
+      return 0;
+    }
+    for (const c of run.changes) {
+      if (c.before) {
+        this.overlay.messages[c.id] = { ...c.before };
+      } else {
+        delete this.overlay.messages[c.id];
+      }
+    }
+    if (run.blocked.length) {
+      const undo = new Set(run.blocked);
+      this.overlay.blocked = this.overlay.blocked.filter((b) => !undo.has(b.email));
+    }
+    this.overlay.ruleRuns = this.overlay.ruleRuns.slice(0, -1);
+    this.overlayVersion++;
+    this._saveOverlay();
+    this._rebuildView(false);
+    return run.changes.length + run.blocked.length;
+  }
+
+  /** After (re)indexing: enabled rules act on mail that arrived since they last ran. */
+  private _runRulesOnNewMail() {
+    if (!this.overlay.rules.some((r) => r.enabled)) {
+      return;
+    }
+    try {
+      const res = this.runRules(null, 'new-mail');
+      if (res.run) {
+        this.pendingRuleNotice = res;
+      }
+    } catch (err) {
+      console.warn('[Offline mail] rules on new mail failed', (err as Error)?.message);
+    }
   }
 
   setShowBlocked(on: boolean) {

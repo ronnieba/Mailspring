@@ -56,6 +56,7 @@ import {
 } from './offline-message-actions';
 import { localPlaceOf } from '../core/offline-local-overlay';
 import { attachReplyOriginals, replyOriginalsInfo } from './offline-reply-originals';
+import { OfflineRulesDialog, newRuleFromMessage, openRules } from './offline-rules-view';
 
 type Btn = {
   id: string;
@@ -625,6 +626,35 @@ export class OfflineRibbon extends React.Component<Record<string, never>, State>
               },
             ],
           },
+          {
+            id: 'rules-group',
+            label: tr('כללים', 'Rules'),
+            buttons: [
+              {
+                id: 'rules',
+                icon: '📋',
+                label: tr(`כללים (${s.rules.length})`, `Rules (${s.rules.length})`),
+                title: tr(
+                  'כללים מקומיים: העבר / כוכב / לא נקרא / מחק / חסום אוטומטית לפי שולח, נמען, נושא, קבצים או תיקייה',
+                  'Local rules: move / star / unread / delete / block automatically by sender, recipient, subject, files or folder'
+                ),
+                onClick: () => openRules(),
+              },
+              {
+                id: 'rule-from-message',
+                icon: '➕',
+                label: tr('כלל מההודעה', 'Rule from message'),
+                disabled: !s.actionIds().length,
+                title: s.actionIds().length
+                  ? tr(
+                      'כלל חדש עם השולח של ההודעה שנבחרה',
+                      'New rule with the sender of the selected message'
+                    )
+                  : noMsg,
+                onClick: () => newRuleFromMessage(),
+              },
+            ],
+          },
           ...(draft ? [this._editGroup()] : []),
         ].concat(((g) => (g ? [g] : []))(this._actionsGroup()));
       case 'view':
@@ -1008,8 +1038,8 @@ export class OfflineRibbon extends React.Component<Record<string, never>, State>
                 label: tr('אפס את כל השינויים המקומיים', 'Reset all local changes'),
                 disabled: !s.localChangeCounts().total,
                 title: tr(
-                  'מחזיר את כל ההודעות לתיקיות המקוריות, מוחק כוכבים/סימוני קריאה, חסימות ואנשי קשר שנשמרו (עם אישור)',
-                  'Puts every message back in its original folder and clears stars, read marks, blocks and saved contacts (asks first)'
+                  'מחזיר את כל ההודעות לתיקיות המקוריות, מוחק כוכבים/סימוני קריאה, חסימות, אנשי קשר שנשמרו וכללים (עם אישור)',
+                  'Puts every message back in its original folder and clears stars, read marks, blocks, saved contacts and rules (asks first)'
                 ),
                 onClick: () => void actResetLocalChanges(),
               },
@@ -1185,6 +1215,7 @@ export class OfflineRibbon extends React.Component<Record<string, never>, State>
           </div>
         </div>
         <OfflineActionsHost />
+        <OfflineRulesDialog />
       </div>
     );
   }

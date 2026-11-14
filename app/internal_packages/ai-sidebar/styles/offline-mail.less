@@ -3405,6 +3405,98 @@ button.offline-brand-button {
   }
 }
 
+.offline-modal.offline-rules {
+  width: 640px;
+  max-height: 80vh;
+  overflow-y: auto;
+  .offline-rule-rows {
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+    overflow-y: auto;
+    max-height: 46vh;
+  }
+  .offline-rule-row {
+    display: flex;
+    align-items: flex-start;
+    gap: 8px;
+    padding: 8px;
+    border-radius: 8px;
+    border: 1px solid var(--ofl-border, @border-color-primary);
+    background: var(--ofl-list-bg, @background-primary);
+    &.is-off {
+      opacity: 0.55;
+    }
+  }
+  .offline-rule-text {
+    flex: 1;
+    min-width: 0;
+  }
+  .offline-rule-name {
+    font-weight: 600;
+  }
+  .offline-rule-desc {
+    font-size: 12.5px;
+    overflow-wrap: anywhere;
+  }
+  .offline-rule-meta {
+    font-size: 11px;
+    opacity: 0.65;
+  }
+  .offline-rule-buttons {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 4px;
+    justify-content: flex-end;
+    max-width: 260px;
+  }
+  .offline-rule-toolbar {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 6px;
+  }
+  .offline-rule-form {
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+  }
+  .offline-rule-section {
+    font-weight: 700;
+    margin-top: 4px;
+    color: @component-active-color;
+  }
+  .offline-rule-field {
+    display: grid;
+    grid-template-columns: 130px 1fr;
+    align-items: center;
+    gap: 8px;
+    input,
+    select {
+      box-sizing: border-box;
+      width: 100%;
+      padding: 5px 8px;
+      border-radius: 6px;
+      border: 1px solid var(--ofl-border, @border-color-primary);
+      background: var(--ofl-list-bg, @background-primary);
+      color: inherit;
+    }
+  }
+  .offline-rule-check {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+  }
+  .offline-rule-actions {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 4px 14px;
+  }
+  .offline-rule-error {
+    color: #c62828;
+    font-weight: 600;
+  }
+}
+
 .offline-modal-backdrop {
   position: fixed;
   inset: 0;
