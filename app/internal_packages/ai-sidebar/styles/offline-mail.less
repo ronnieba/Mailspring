@@ -3198,6 +3198,34 @@ body.theme-ui-dark .offline-search-row-item .offline-search-folder {
     margin-inline-end: 5px;
   }
 }
+/* Clickable ribbon logo (toggles the AI panel). */
+button.offline-brand-button {
+  border: none;
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  padding-block: 2px 3px;
+  padding-inline: 4px 6px;
+  margin-block-end: 2px;
+  border-radius: 6px;
+  cursor: pointer;
+  &:hover {
+    background: color-mix(in srgb, currentColor 9%, transparent);
+  }
+  &:active {
+    background: color-mix(in srgb, currentColor 15%, transparent);
+  }
+  &:focus {
+    outline: none;
+  }
+  &:focus-visible {
+    outline: 2px solid @offline-accent;
+    outline-offset: 1px;
+  }
+  &[aria-pressed='true'] .offline-brand-logo {
+    box-shadow: 0 0 0 2px color-mix(in srgb, @offline-accent 55%, transparent);
+  }
+}
 .offline-ribbon.compact .offline-brand {
   margin-inline-end: 6px;
 }

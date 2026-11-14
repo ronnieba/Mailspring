@@ -208,6 +208,31 @@ export class OfflineRibbon extends React.Component<Record<string, never>, State>
     writeRibbonPrefs(configDir(), { tab, collapsed });
   }
 
+  // Ribbon logo: open/close the AI panel; when opening, put the cursor in
+  // the AI instruction box. Never sends anything to Gemini.
+  _aiPanelOpen(): boolean {
+    const loc = WorkspaceStore.Location.MessageListSidebar;
+    return !!loc && !WorkspaceStore.isLocationHidden(loc);
+  }
+
+  _toggleAiPanel = () => {
+    const loc = WorkspaceStore.Location.MessageListSidebar;
+    if (!loc) {
+      return;
+    }
+    const opening = WorkspaceStore.isLocationHidden(loc);
+    Actions.toggleWorkspaceLocationHidden(loc);
+    if (opening) {
+      window.setTimeout(() => {
+        const ta = document.querySelector('.ai-sidebar textarea') as HTMLElement;
+        if (ta) {
+          ta.focus();
+        }
+      }, 80);
+    }
+    this.forceUpdate();
+  };
+
   _toggleCollapsed() {
     const collapsed = !this.state.collapsed;
     this.setState({ collapsed });
@@ -781,7 +806,11 @@ export class OfflineRibbon extends React.Component<Record<string, never>, State>
         data-offline-ribbon-compact={compact ? 'true' : 'false'}
       >
         <div className="offline-ribbon-tabs" role="tablist" aria-label={tr('תפריט', 'Menu')}>
-          <OfflineBrand compact={compact} />
+          <OfflineBrand
+            compact={compact}
+            onActivate={this._toggleAiPanel}
+            aiOpen={this._aiPanelOpen()}
+          />
           {showingMail() ? null : (
             <button
               type="button"

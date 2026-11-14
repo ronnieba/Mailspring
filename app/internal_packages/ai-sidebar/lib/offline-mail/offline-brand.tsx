@@ -50,15 +50,19 @@ export function OfflineBrandLogo(props: { size?: 16 | 24 | 32; className?: strin
   );
 }
 
-export function OfflineBrand(props: { compact?: boolean }) {
-  return (
-    <div
-      className="offline-brand"
-      data-offline-brand="true"
-      title={offlineBrandLabel()}
-      aria-label={offlineBrandLabel()}
-      role="img"
-    >
+export function offlineBrandToggleTitle(): string {
+  return tr(`פתח/סגור את עוזר ${OFFLINE_BRAND_NAME}`, `Toggle ${OFFLINE_BRAND_NAME} assistant`);
+}
+
+/** Ribbon brand. With onActivate it is a button that toggles the AI panel
+ * (native <button>: Enter / Space work, focus ring via :focus-visible). */
+export function OfflineBrand(props: {
+  compact?: boolean;
+  onActivate?: () => void;
+  aiOpen?: boolean;
+}) {
+  const content = (
+    <>
       <OfflineBrandLogo />
       <span className="offline-brand-name" dir="ltr">
         {OFFLINE_BRAND_NAME}
@@ -71,6 +75,33 @@ export function OfflineBrand(props: { compact?: boolean }) {
           {offlineBrandSubtitle()}
         </span>
       )}
-    </div>
+    </>
+  );
+  if (!props.onActivate) {
+    return (
+      <div
+        className="offline-brand"
+        data-offline-brand="true"
+        title={offlineBrandLabel()}
+        aria-label={offlineBrandLabel()}
+        role="img"
+      >
+        {content}
+      </div>
+    );
+  }
+  return (
+    <button
+      type="button"
+      className="offline-brand offline-brand-button"
+      data-offline-brand="true"
+      data-offline-brand-ai-open={props.aiOpen ? 'true' : 'false'}
+      title={offlineBrandToggleTitle()}
+      aria-label={`${offlineBrandLabel()} – ${offlineBrandToggleTitle()}`}
+      aria-pressed={!!props.aiOpen}
+      onClick={props.onActivate}
+    >
+      {content}
+    </button>
   );
 }

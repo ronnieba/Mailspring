@@ -10,11 +10,7 @@
  */
 import fs from 'fs';
 import path from 'path';
-import {
-  offlineAppIconPath,
-  offlineBrandDir,
-  OFFLINE_APP_NAME,
-} from '../../src/browser/offline-branding';
+import { offlineAppIconPath, offlineBrandDir, OFFLINE_APP_NAME } from '../../src/browser/offline-branding';
 
 let pass = 0;
 let fail = 0;
@@ -45,11 +41,7 @@ for (const s of sizes) {
   const w = buf.readUInt32BE(16);
   const h = buf.readUInt32BE(20);
   const colorType = buf[25];
-  check(`mail-ai-${s}.png is ${s}x${s} RGBA`, w === s && h === s && colorType === 6, {
-    w,
-    h,
-    colorType,
-  });
+  check(`mail-ai-${s}.png is ${s}x${s} RGBA`, w === s && h === s && colorType === 6, { w, h, colorType });
 }
 const ico = fs.readFileSync(path.join(brandDir, 'mail-ai.ico'));
 const count = ico.readUInt16LE(4);
@@ -63,88 +55,57 @@ check(
   [16, 24, 32, 48, 64, 128, 256].every((s) => icoSizes.includes(s)),
   icoSizes
 );
-check(
-  'icon script + source kept for re-runs',
-  fs.existsSync(path.join(brandDir, 'make-icons.py')) &&
-    fs.existsSync(path.join(brandDir, 'mail-ai-source.jpg'))
-);
+check('icon script + source kept for re-runs', fs.existsSync(path.join(brandDir, 'make-icons.py')) && fs.existsSync(path.join(brandDir, 'mail-ai-source.jpg')));
 
 console.log('window / tray icon selection');
 check(
   'win32 + offline -> brand .ico',
-  offlineAppIconPath(appDir, { platform: 'win32', offline: true }) ===
-    path.join(brandDir, 'mail-ai.ico')
+  offlineAppIconPath(appDir, { platform: 'win32', offline: true }) === path.join(brandDir, 'mail-ai.ico')
 );
-check(
-  'win32, normal app -> unchanged',
-  offlineAppIconPath(appDir, { platform: 'win32', offline: false }) === null
-);
-check(
-  'mac offline -> unchanged',
-  offlineAppIconPath(appDir, { platform: 'darwin', offline: true }) === null
-);
-check(
-  'linux offline -> unchanged',
-  offlineAppIconPath(appDir, { platform: 'linux', offline: true }) === null
-);
-check(
-  'missing assets -> unchanged',
-  offlineAppIconPath(path.join(appDir, 'nope'), { platform: 'win32', offline: true }) === null
-);
+check('win32, normal app -> unchanged', offlineAppIconPath(appDir, { platform: 'win32', offline: false }) === null);
+check('mac offline -> unchanged', offlineAppIconPath(appDir, { platform: 'darwin', offline: true }) === null);
+check('linux offline -> unchanged', offlineAppIconPath(appDir, { platform: 'linux', offline: true }) === null);
+check('missing assets -> unchanged', offlineAppIconPath(path.join(appDir, 'nope'), { platform: 'win32', offline: true }) === null);
 check('name', OFFLINE_APP_NAME === 'Mail AI');
 
 const win = read('src/browser/mailspring-window.ts');
 check(
   'window uses the brand icon before BrowserWindow is created',
-  /offlineAppIconPath\(this\.resourcePath\)[\s\S]*browserWindowOptions\.icon = offlineIcon[\s\S]*new BrowserWindow\(browserWindowOptions\)/.test(
-    win
-  )
+  /offlineAppIconPath\(this\.resourcePath\)[\s\S]*browserWindowOptions\.icon = offlineIcon[\s\S]*new BrowserWindow\(browserWindowOptions\)/.test(win)
 );
 const tray = read('src/browser/system-tray-manager.ts');
-check(
-  'tray default icon prefers the brand icon offline',
-  /_defaultIconPath\(\) \{[\s\S]{0,200}offlineAppIconPath/.test(tray)
-);
-check(
-  'tray ignores renderer icon swaps offline',
-  /updateTraySettings\(iconPath[\s\S]{0,300}offlineAppIconPath[\s\S]{0,200}iconPath = this\._iconPath/.test(
-    tray
-  )
-);
+check('tray default icon prefers the brand icon offline', /_defaultIconPath\(\) \{[\s\S]{0,200}offlineAppIconPath/.test(tray));
+check('tray ignores renderer icon swaps offline', /updateTraySettings\(iconPath[\s\S]{0,300}offlineAppIconPath[\s\S]{0,200}iconPath = this\._iconPath/.test(tray));
 
 console.log('in-app logo');
 const brand = read('internal_packages/ai-sidebar/lib/offline-mail/offline-brand.tsx');
-check(
-  'brand label "Mail AI · מצב לא מקוון" / "Offline"',
-  brand.includes("tr('מצב לא מקוון', 'Offline')") &&
-    brand.includes('`${OFFLINE_BRAND_NAME} · ${offlineBrandSubtitle()}`')
-);
-check(
-  'logo file URL from resourcePath',
-  brand.includes('pathToFileURL') && brand.includes("'static', 'images', 'offline'")
-);
+check('brand label "Mail AI · מצב לא מקוון" / "Offline"', brand.includes("tr('מצב לא מקוון', 'Offline')") && brand.includes('`${OFFLINE_BRAND_NAME} · ${offlineBrandSubtitle()}`'));
+check('logo file URL from resourcePath', brand.includes('pathToFileURL') && brand.includes("'static', 'images', 'offline'"));
 const ribbon = read('internal_packages/ai-sidebar/lib/offline-mail/offline-ribbon.tsx');
-check(
-  'ribbon tab row starts with the brand',
-  /offline-ribbon-tabs"[^>]*>\s*<OfflineBrand compact=\{compact\} \/>/.test(ribbon)
-);
+check('ribbon tab row starts with the brand', /offline-ribbon-tabs"[^>]*>\s*<OfflineBrand\s/.test(ribbon));
+
+console.log('clickable ribbon logo (t221)');
+check('brand is a native button when clickable (Enter/Space)', /<button\s+type="button"\s+className="offline-brand offline-brand-button"/.test(brand));
+check('tooltip he/en', brand.includes('tr(`פתח/סגור את עוזר ${OFFLINE_BRAND_NAME}`, `Toggle ${OFFLINE_BRAND_NAME} assistant`)'));
+check('aria-pressed reflects the AI panel', brand.includes('aria-pressed={!!props.aiOpen}') && ribbon.includes('aiOpen={this._aiPanelOpen()}'));
+check('ribbon passes the toggle', ribbon.includes('onActivate={this._toggleAiPanel}'));
+const toggle = ribbon.slice(ribbon.indexOf('_toggleAiPanel = () =>'), ribbon.indexOf('_toggleCollapsed() {'));
+check('toggle opens/closes the AI panel location', toggle.includes('Actions.toggleWorkspaceLocationHidden(loc)') && toggle.includes('WorkspaceStore.Location.MessageListSidebar'));
+check('focuses the AI box only when opening', /if \(opening\) \{[\s\S]*\.ai-sidebar textarea[\s\S]*focus\(\)/.test(toggle));
+check('no Gemini / AI request from the click', !/send|ask|gemini|runQuery|_run/i.test(toggle));
+const lessAll = read('internal_packages/ai-sidebar/styles/offline-mail.less');
+check('pointer cursor, hover and keyboard focus ring', /button\.offline-brand-button \{[\s\S]*cursor: pointer[\s\S]*&:hover[\s\S]*&:focus-visible/.test(lessAll));
+
+console.log('icon script');
+const script = fs.readFileSync(path.join(brandDir, 'make-icons.py'), 'utf8');
+check('script handles letters on the envelope and outlined letters', script.includes('ON_ENVELOPE') && script.includes('A7B'));
+check('script redraws the envelope flap V at 16/24 px', script.includes('FLAP = _flap_lines()') && script.includes('if FLAP:'));
 const sidebar = read('internal_packages/ai-sidebar/lib/ai-sidebar.tsx');
-check(
-  'AI header branded only offline, demo text kept',
-  /offline \? \([\s\S]{0,200}ai-brand-title[\s\S]{0,400}\) : \(\s*<h2>\{tr\('🤖 עוזר AI', '🤖 AI assistant'\)\}<\/h2>/.test(
-    sidebar
-  )
-);
+check('AI header branded only offline, demo text kept', /offline \? \([\s\S]{0,200}ai-brand-title[\s\S]{0,400}\) : \(\s*<h2>\{tr\('🤖 עוזר AI', '🤖 AI assistant'\)\}<\/h2>/.test(sidebar));
 const less = read('internal_packages/ai-sidebar/styles/offline-mail.less');
 const block = less.slice(less.indexOf('/* Mail AI branding'));
-check(
-  'brand styles present',
-  block.includes('.offline-brand {') && block.includes('.ai-brand-title')
-);
-check(
-  'brand styles use logical properties only',
-  !/(margin|padding)-(left|right)|\bleft:|\bright:|text-align: (left|right)/.test(block)
-);
+check('brand styles present', block.includes('.offline-brand {') && block.includes('.ai-brand-title'));
+check('brand styles use logical properties only', !/(margin|padding)-(left|right)|\bleft:|\bright:|text-align: (left|right)/.test(block));
 check('brand colours inherit (light + dark palettes)', !/#[0-9a-f]{3,6}/i.test(block));
 
 console.log(`\n${pass} passed, ${fail} failed`);
