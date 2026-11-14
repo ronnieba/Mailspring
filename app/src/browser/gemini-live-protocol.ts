@@ -22,6 +22,8 @@ export const GEMINI_TRANSCRIBE_MODEL = 'gemini-3.5-transcribe-live';
 
 export const GEMINI_LIVE_IPC_START = 'gemini-live:start';
 export const GEMINI_LIVE_IPC_AUDIO = 'gemini-live:audio';
+/** Typed message from the conversation panel (text turn). */
+export const GEMINI_LIVE_IPC_TEXT = 'gemini-live:text';
 export const GEMINI_LIVE_IPC_AUDIO_END = 'gemini-live:audio-end';
 export const GEMINI_LIVE_IPC_TOOL_RESULT = 'gemini-live:tool-result';
 export const GEMINI_LIVE_IPC_STOP = 'gemini-live:stop';
@@ -339,7 +341,31 @@ export const GEMINI_LIVE_SYSTEM_INSTRUCTION = [
 ].join('\n');
 
 /** First message on the socket for a conversation or a dictation session. */
-export function buildLiveSetup(mode: GeminiLiveMode, opts: { uiLang?: 'he' | 'en' } = {}) {
+export type LiveHistoryTurn = { role: 'user' | 'model'; text: string };
+
+/** Earlier turns for "continue": user/model text only, capped. */
+export function sanitizeLiveHistory(
+  raw: unknown,
+  maxTurns = 16,
+  maxChars = 3000
+): LiveHistoryTurn[] {
+  if (!Array.isArray(raw)) return [];
+  const out: LiveHistoryTurn[] = [];
+  let chars = 0;
+  for (const t of raw.slice(-maxTurns)) {
+    if (!t || (t.role !== 'user' && t.role !== 'model') || typeof t.text !== 'string') continue;
+    const text = t.text.trim().slice(0, Math.max(0, maxChars - chars));
+    if (!text) continue;
+    out.push({ role: t.role, text });
+    chars += text.length;
+  }
+  return out;
+}
+
+export function buildLiveSetup(
+  mode: GeminiLiveMode,
+  opts: { uiLang?: 'he' | 'en'; withHistory?: boolean } = {}
+) {
   if (mode === 'dictate') {
     return {
       setup: {
@@ -370,6 +396,7 @@ export function buildLiveSetup(mode: GeminiLiveMode, opts: { uiLang?: 'he' | 'en
         automaticActivityDetection: { silenceDurationMs: 800 },
         activityHandling: 'START_OF_ACTIVITY_INTERRUPTS',
       },
+      ...(opts.withHistory ? { historyConfig: { initialHistoryInClientContent: true } } : {}),
     },
   };
 }

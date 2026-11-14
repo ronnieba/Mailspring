@@ -14,7 +14,7 @@
  */
 import React from 'react';
 import { ipcRenderer } from 'electron';
-import { tr, offlineLang } from '../core/offline-i18n';
+import { tr, offlineLang, offlineDir, offlineDateLocale } from '../core/offline-i18n';
 import {
   DeleteGate,
   VOICE_CHUNK_SAMPLES,
@@ -29,6 +29,17 @@ import {
   shouldAutoStop,
 } from '../core/offline-voice';
 import {
+  LiveConversation,
+  addPiece,
+  closeTurn,
+  continueHistory,
+  conversationText,
+  conversationTitle as conversationTitleOf,
+  newConversation,
+  readTranscripts,
+  writeTranscripts,
+} from '../core/offline-live-transcript';
+import {
   GEMINI_DICTATE_IDLE_SECONDS,
   GEMINI_LIVE_IDLE_SECONDS,
   GEMINI_LIVE_IPC_AUDIO,
@@ -36,6 +47,7 @@ import {
   GEMINI_LIVE_IPC_EVENT,
   GEMINI_LIVE_IPC_START,
   GEMINI_LIVE_IPC_STOP,
+  GEMINI_LIVE_IPC_TEXT,
   GEMINI_LIVE_IPC_TOOL_RESULT,
   GeminiLiveEvent,
   LiveUsageTotals,
@@ -76,7 +88,19 @@ export const offlineVoiceHooks: {
   } | null;
   /** Tests: do not play Gemini's voice (still counted). */
   mute: boolean;
-} = { getStream: null, events: [], tools: [], lastSession: null, mute: false };
+  /** Tests: replace the clipboard (never touch the real one in tests). */
+  copyText: ((text: string) => void) | null;
+  /** Tests: transcription pieces as received (who + text), newest last. */
+  pieces: Array<{ who: string; text: string }>;
+} = {
+  getStream: null,
+  events: [],
+  tools: [],
+  lastSession: null,
+  mute: false,
+  copyText: null,
+  pieces: [],
+};
 
 function lazy<T = any>(m: string): T {
   // eslint-disable-next-line @typescript-eslint/no-var-requires
@@ -198,7 +222,17 @@ class OfflineVoice {
   speaking = false;
   /** Dictation: words heard so far but not final yet. */
   partial = '';
-  lines: VoiceLine[] = [];
+  /** The conversation being spoken now (or the last one). */
+  conversation: LiveConversation = newConversation();
+  /** Saved conversations, newest first (offline profile only). */
+  history: LiveConversation[] = [];
+  private _historyLoaded = false;
+  /** Conversation panel. */
+  panelOpen = false;
+  /** Open the panel when a conversation starts (until he closes it). */
+  panelAuto = true;
+  /** Which conversation the panel shows (null = the current one). */
+  viewId: string | null = null;
   totals: LiveUsageTotals | null = null;
   model = '';
   hud: VoiceHud = null;
@@ -256,18 +290,126 @@ class OfflineVoice {
     this._emit();
   }
 
-  addLine(who: VoiceLine['who'], text: string, append = false) {
-    const t = String(text || '');
-    if (!t.trim()) return;
-    const last = this.lines[this.lines.length - 1];
-    if (append && last && last.who === who) {
-      // Gemini's spoken-text pieces sometimes come without the space between words.
-      const glue =
-        who === 'gemini' && /[\p{L}\p{N}]$/u.test(last.text) && /^[\p{L}\p{N}]/u.test(t) ? ' ' : '';
-      last.text = (last.text + glue + t).replace(/\s+/g, ' ');
-    } else this.lines.push({ who, text: t.trim() });
-    if (this.lines.length > 30) this.lines.splice(0, this.lines.length - 30);
+  /** Transcript lines of the current conversation (for the LIVE card). */
+  get lines(): VoiceLine[] {
+    return this.conversation.items.map((i) => ({ who: i.who, text: i.text }));
+  }
+
+  /** Add to the transcript: speech pieces join the open bubble; app lines stand alone. */
+  addLine(who: VoiceLine['who'], text: string, _append = false) {
+    if (who !== 'app') offlineVoiceHooks.pieces.push({ who, text });
+    if (offlineVoiceHooks.pieces.length > 300) offlineVoiceHooks.pieces.splice(0, 100);
+    addPiece(this.conversation.items, who, text);
     this._emit();
+  }
+
+  // ---- Transcript history (offline profile only) ----
+
+  private _configDir(): string | null {
+    try {
+      return AppEnv.getConfigDirPath();
+    } catch {
+      return null;
+    }
+  }
+
+  loadHistory() {
+    if (this._historyLoaded) return;
+    this._historyLoaded = true;
+    const dir = this._configDir();
+    this.history = dir ? readTranscripts(dir) : [];
+  }
+
+  private _saveHistory() {
+    const dir = this._configDir();
+    if (!dir) return;
+    const c = this.conversation;
+    const list = [c, ...this.history.filter((h) => h.id !== c.id)];
+    try {
+      writeTranscripts(dir, list);
+      this._historyLoaded = false;
+      this.loadHistory();
+    } catch (err) {
+      console.error('[Offline voice] transcript not saved:', (err as Error).message);
+    }
+  }
+
+  /** The conversation the panel shows. */
+  get viewed(): LiveConversation {
+    if (!this.viewId || this.viewId === this.conversation.id) {
+      // After a restart: show the last saved conversation, not an empty one.
+      const empty = !this.conversation.items.some((i) => i.who !== 'app');
+      if (!this.viewId && empty && this.state === 'idle' && this.history.length)
+        return this.history[0];
+      return this.conversation;
+    }
+    return this.history.find((h) => h.id === this.viewId) || this.conversation;
+  }
+
+  openPanel(open = true) {
+    this.panelOpen = open;
+    if (!open && this.state !== 'idle') this.panelAuto = false;
+    if (open) this.loadHistory();
+    this._emit();
+  }
+
+  view(id: string | null) {
+    this.viewId = id;
+    this._emit();
+  }
+
+  copyConversation(c: LiveConversation = this.viewed): boolean {
+    const text = conversationText(
+      c,
+      offlineLang() === 'en' ? { user: 'Me', gemini: 'Gemini' } : { user: 'אני', gemini: 'Gemini' }
+    );
+    if (!text.trim()) return false;
+    if (offlineVoiceHooks.copyText) offlineVoiceHooks.copyText(text);
+    else lazy('electron').clipboard.writeText(text);
+    return true;
+  }
+
+  /** Remove a conversation from the panel and from the saved history. */
+  clearConversation(id: string = this.viewed.id) {
+    if (this.state !== 'idle' && id === this.conversation.id) {
+      this.conversation.items = [];
+      this._emit();
+      return;
+    }
+    this.loadHistory();
+    this.history = this.history.filter((h) => h.id !== id);
+    if (id === this.conversation.id) this.conversation = newConversation();
+    const dir = this._configDir();
+    if (dir) {
+      try {
+        writeTranscripts(dir, this.history);
+      } catch (err) {
+        console.error('[Offline voice] transcript not saved:', (err as Error).message);
+      }
+    }
+    this.viewId = null;
+    this._emit();
+  }
+
+  /** Talk again, continuing a saved conversation (Gemini gets its recent turns). */
+  continueConversation(id: string = this.viewed.id) {
+    if (this.state !== 'idle') return;
+    this.loadHistory();
+    const c =
+      id === this.conversation.id ? this.conversation : this.history.find((h) => h.id === id);
+    void this.start('command', { continueFrom: c || null });
+  }
+
+  /** Typed message to Gemini during a conversation (from the panel). */
+  sendText(text: string): boolean {
+    const t = String(text || '').trim();
+    if (!t || this.state !== 'live' || this.mode !== 'talk' || !this._id) return false;
+    closeTurn(this.conversation.items);
+    this.addLine('user', t);
+    closeTurn(this.conversation.items);
+    ipcRenderer.send(GEMINI_LIVE_IPC_TEXT, this._id, t);
+    this._lastActivity = Date.now();
+    return true;
   }
 
   toggle(t: Target) {
@@ -290,13 +432,26 @@ class OfflineVoice {
     });
   }
 
-  async start(t: Target) {
+  async start(t: Target, opts: { continueFrom?: LiveConversation | null } = {}) {
     if (this.state !== 'idle') return;
     this._bindIpc();
     this.mode = t === 'command' ? 'talk' : 'dictate';
     this.target = t === 'command' ? null : t;
     this._sel = t === 'command' ? null : saveSelection(t);
-    this.lines = [];
+    let history: Array<{ role: 'user' | 'model'; text: string }> = [];
+    if (this.mode === 'talk') {
+      this.loadHistory();
+      const c = opts.continueFrom;
+      if (c && c.items.length) {
+        this.conversation = c;
+        history = continueHistory(c);
+        closeTurn(c.items);
+      } else {
+        this.conversation = newConversation();
+      }
+      this.viewId = null;
+      if (this.panelAuto) this.panelOpen = true;
+    }
     this.partial = '';
     this.totals = null;
     this.model = '';
@@ -329,6 +484,7 @@ class OfflineVoice {
       const res = await ipcRenderer.invoke(GEMINI_LIVE_IPC_START, {
         mode: this.mode,
         uiLang: offlineLang() === 'en' ? 'en' : 'he',
+        history,
       });
       if (!res || !res.ok) {
         this._teardown();
@@ -354,8 +510,15 @@ class OfflineVoice {
       this.startedAt = Date.now();
       this._lastActivity = Date.now();
       this._idleTimer = setInterval(() => this._tick(), 1000);
-      if (this.mode === 'talk')
-        this.addLine('app', tr('🔴 מחובר — אפשר לדבר', '🔴 Connected — go ahead and talk'));
+      if (this.mode === 'talk') {
+        this.conversation.sessions++;
+        this.addLine(
+          'app',
+          history.length
+            ? tr('🔴 ממשיכים את השיחה — אפשר לדבר', '🔴 Continuing the conversation — go ahead')
+            : tr('🔴 מחובר — אפשר לדבר', '🔴 Connected — go ahead and talk')
+        );
+      }
       this._emit();
     } catch (err) {
       this._teardown();
@@ -495,13 +658,13 @@ class OfflineVoice {
       case 'interrupted':
         this._stats.interrupted++;
         this._stopPlayback();
+        closeTurn(this.conversation.items);
         this.addLine('app', tr('⏸ נקטע — מקשיב', '⏸ Interrupted — listening'));
         break;
       case 'turn-complete':
         this._finalWaiters.splice(0).forEach((f) => f());
-        // Next answer starts on a new line.
-        this.lines.push({ who: 'app', text: '' });
-        this.lines = this.lines.filter((l) => l.text || l === this.lines[this.lines.length - 1]);
+        // Next words start a new bubble.
+        closeTurn(this.conversation.items);
         this._emit();
         break;
       case 'tool-call':
@@ -619,6 +782,14 @@ class OfflineVoice {
       reason,
       ...this._stats,
     };
+    if (mode === 'talk') {
+      const c = this.conversation;
+      closeTurn(c.items);
+      c.endedAt = Date.now();
+      c.seconds += seconds || 0;
+      c.usd += (totals && totals.usd) || 0;
+      this._saveHistory();
+    }
     const inserted = this._dictFinals;
     const target = this.target;
     this._teardown();
@@ -774,7 +945,10 @@ export async function runLiveTool(
       }));
       v.addLine(
         'app',
-        tr(`🔍 חיפוש: ${q} (${st.total || 0})`, `🔍 Search: ${q} (${st.total || 0})`)
+        tr(
+          `🔍 חיפשתי: ${q} (${st.total === 1 ? 'תוצאה אחת' : `${st.total || 0} תוצאות`})`,
+          `🔍 Searched: ${q} (${st.total === 1 ? '1 result' : `${st.total || 0} results`})`
+        )
       );
       return { ok: true, total: st.total || 0, results };
     }
@@ -826,12 +1000,15 @@ export async function runLiveTool(
       if (st.query) st.clear();
       const store = lazy('./offline-mail-store').offlineMailStore;
       store.setFolder(p);
-      v.addLine('app', `📁 ${store.folderLabel(p)}`);
+      v.addLine(
+        'app',
+        tr(`📁 עברתי לתיקייה: ${store.folderLabel(p)}`, `📁 Opened folder: ${store.folderLabel(p)}`)
+      );
       return { ok: true };
     }
     case 'new_draft':
       drafts().createNew();
-      v.addLine('app', tr('📝 נפתחה טיוטה חדשה', '📝 New draft opened'));
+      v.addLine('app', tr('📝 פתחתי טיוטה חדשה', '📝 Opened a new draft'));
       return { ok: true };
     case 'open_draft': {
       const q = s('query').toLowerCase();
@@ -846,7 +1023,7 @@ export async function runLiveTool(
         : list[0];
       if (!hit) return { ok: false, error: 'No matching draft', drafts: list.length };
       drafts().openDraft(hit.id);
-      v.addLine('app', tr('📝 נפתחה טיוטה', '📝 Draft opened'));
+      v.addLine('app', tr('📝 פתחתי טיוטה', '📝 Opened a draft'));
       return { ok: true, subject: clipForGemini(hit.subject, 120) };
     }
     case 'reply_to_selected': {
@@ -864,7 +1041,7 @@ export async function runLiveTool(
       });
       v.addLine(
         'app',
-        tr('↩️ נפתחה טיוטת תשובה (לא נשלח כלום)', '↩️ Reply draft opened (nothing is sent)')
+        tr('↩️ פתחתי טיוטת תשובה (לא נשלח כלום)', '↩️ Opened a reply draft (nothing is sent)')
       );
       return { ok: true, note: 'Local draft only. The app cannot send.' };
     }
@@ -883,7 +1060,7 @@ export async function runLiveTool(
       const ok = drafts().applyAiText(d.id, text.slice(0, 8000), how, { subject });
       v.addLine(
         'app',
-        tr('✍️ הטקסט נכתב בטיוטה (אפשר לבטל)', '✍️ Text written into the draft (can be undone)')
+        tr('✍️ כתבתי בטיוטה (ניתן לבטל)', '✍️ Wrote into the draft (can be undone)')
       );
       return { ok, note: 'The user reviews the draft. Nothing is sent.' };
     }
@@ -901,7 +1078,7 @@ export async function runLiveTool(
       const label: { [k: string]: string } = {
         star: tr('⭐ סומן בכוכב', '⭐ Starred'),
         unstar: tr('☆ הכוכב הוסר', '☆ Star removed'),
-        archive: tr('🗄️ הועבר לארכיון (מקומית)', '🗄️ Archived (locally)'),
+        archive: tr('🗄️ הועבר לארכיון (ניתן לבטל)', '🗄️ Archived (can be undone)'),
         mark_unread: tr('✉️ סומן כלא נקרא', '✉️ Marked unread'),
       };
       v.addLine('app', label[act]);
@@ -933,7 +1110,7 @@ export async function runLiveTool(
       }
       v.confirmDelete = null;
       lazy('./offline-message-actions').actDelete([id]);
-      v.addLine('app', tr('🗑️ נמחק (מקומית, אפשר לבטל)', '🗑️ Deleted (locally, can be undone)'));
+      v.addLine('app', tr('🗑️ נמחק (ניתן לבטל)', '🗑️ Deleted (can be undone)'));
       return { ok: true, deleted: true, note: 'Moved to the local Trash; can be undone.' };
     }
     case 'end_conversation':
@@ -951,7 +1128,7 @@ export function answerDeleteConfirmation(yes: boolean) {
   v.confirmDelete = null;
   if (yes && v.deleteGate.confirm(c.messageId)) {
     lazy('./offline-message-actions').actDelete([c.messageId]);
-    v.addLine('app', tr('🗑️ נמחק (מקומית, אפשר לבטל)', '🗑️ Deleted (locally, can be undone)'));
+    v.addLine('app', tr('🗑️ נמחק (ניתן לבטל)', '🗑️ Deleted (can be undone)'));
   } else {
     v.deleteGate.clear();
     v.addLine('app', tr('המחיקה בוטלה', 'Delete cancelled'));
@@ -1162,6 +1339,15 @@ export class OfflineVoiceHud extends React.Component<Record<string, never>, { ti
   }
 
   render() {
+    return (
+      <>
+        {this._renderCard()}
+        {offlineVoice.panelOpen ? <OfflineLivePanel /> : null}
+      </>
+    );
+  }
+
+  _renderCard() {
     const v = offlineVoice;
     if (v.state === 'idle') return this._renderHud();
     const sec = v.state === 'live' ? Math.floor((Date.now() - v.startedAt) / 1000) : 0;
@@ -1200,6 +1386,18 @@ export class OfflineVoiceHud extends React.Component<Record<string, never>, { ti
           <span className="offline-voice-cost" dir="ltr" data-offline-voice-cost="true">
             {fmtIls(v.totals)}
           </span>
+          {talk ? (
+            <button
+              type="button"
+              className="btn btn-small"
+              data-offline-voice-transcript="true"
+              aria-pressed={v.panelOpen}
+              title={tr('הצג / הסתר את תמלול השיחה', 'Show / hide the conversation transcript')}
+              onClick={() => v.openPanel(!v.panelOpen)}
+            >
+              {tr('💬 תמלול', '💬 Transcript')}
+            </button>
+          ) : null}
           <button
             type="button"
             className="btn btn-small offline-voice-stop"
@@ -1236,7 +1434,7 @@ export class OfflineVoiceHud extends React.Component<Record<string, never>, { ti
             </button>
           </div>
         ) : null}
-        {talk && lines.length ? (
+        {talk && lines.length && !v.panelOpen ? (
           <div
             className="offline-voice-log"
             ref={this._log}
@@ -1266,6 +1464,313 @@ export class OfflineVoiceHud extends React.Component<Record<string, never>, { ti
                 `הקול נשלח ל-Google רק בזמן ההכתבה · נעצר לבד אחרי ${GEMINI_DICTATE_IDLE_SECONDS} שניות שקט`,
                 `Audio goes to Google only while dictating · stops after ${GEMINI_DICTATE_IDLE_SECONDS}s of silence`
               )}
+        </div>
+      </div>
+    );
+  }
+}
+
+function fmtClock(ts: number): string {
+  try {
+    return new Date(ts).toLocaleTimeString(offlineDateLocale(), {
+      hour: '2-digit',
+      minute: '2-digit',
+    });
+  } catch {
+    return '';
+  }
+}
+
+function fmtWhen(ts: number): string {
+  try {
+    return new Date(ts).toLocaleString(offlineDateLocale(), {
+      day: 'numeric',
+      month: 'numeric',
+      hour: '2-digit',
+      minute: '2-digit',
+    });
+  } catch {
+    return '';
+  }
+}
+
+function fmtDur(sec: number): string {
+  const s = Math.round(sec || 0);
+  return `${Math.floor(s / 60)}:${String(s % 60).padStart(2, '0')}`;
+}
+
+/** Chat-style transcript of conversations with Gemini, with a short history. */
+export class OfflineLivePanel extends React.Component<
+  Record<string, never>,
+  { tick: number; history: boolean; text: string; copied: boolean; confirmClear: boolean }
+> {
+  static displayName = 'OfflineLivePanel';
+  state = { tick: 0, history: false, text: '', copied: false, confirmClear: false };
+  private _un: (() => void) | null = null;
+  private _body = React.createRef<HTMLDivElement>();
+  private _stick = true;
+  private _timers: any[] = [];
+
+  componentDidMount() {
+    this._un = offlineVoice.listen(() => this.setState({ tick: this.state.tick + 1 }));
+    offlineVoice.loadHistory();
+    this._scroll();
+  }
+
+  componentDidUpdate() {
+    this._scroll();
+  }
+
+  componentWillUnmount() {
+    if (this._un) this._un();
+    this._timers.forEach((t) => clearTimeout(t));
+  }
+
+  _scroll() {
+    const b = this._body.current;
+    if (b && this._stick) b.scrollTop = b.scrollHeight;
+  }
+
+  _later(fn: () => void, ms: number) {
+    this._timers.push(setTimeout(fn, ms));
+  }
+
+  _send() {
+    if (offlineVoice.sendText(this.state.text)) this.setState({ text: '' });
+  }
+
+  _renderHistory() {
+    const v = offlineVoice;
+    const cur = v.conversation;
+    const list = [
+      ...(cur.items.some((i) => i.who !== 'app') && !v.history.some((h) => h.id === cur.id)
+        ? [cur]
+        : []),
+      ...v.history,
+    ];
+    return (
+      <div className="offline-live-history" data-offline-live-history="true">
+        {list.length ? (
+          list.map((c) => (
+            <button
+              key={c.id}
+              type="button"
+              className={`offline-live-history-item${c.id === v.viewed.id ? ' current' : ''}`}
+              data-offline-live-history-item={c.id}
+              onClick={() => {
+                v.view(c.id === cur.id ? null : c.id);
+                this._stick = true;
+                this.setState({ history: false, confirmClear: false });
+              }}
+            >
+              <span className="when" dir="auto">
+                {fmtWhen(c.startedAt)} · {fmtDur(c.seconds)}
+                {c.usd ? ` · ≈ ₪${(c.usd * USD_TO_ILS).toFixed(2)}` : ''}
+              </span>
+              <span className="title" dir="auto">
+                {conversationTitleOf(c) || tr('(בלי דיבור)', '(no speech)')}
+              </span>
+            </button>
+          ))
+        ) : (
+          <div className="offline-live-empty">
+            {tr('אין עדיין שיחות שמורות.', 'No saved conversations yet.')}
+          </div>
+        )}
+      </div>
+    );
+  }
+
+  render() {
+    const v = offlineVoice;
+    const c = v.viewed;
+    const live = v.state !== 'idle' && v.mode === 'talk';
+    const viewingLive = live && c.id === v.conversation.id;
+    const items = c.items.filter((i) => i.text);
+    return (
+      <div
+        className="offline-live-panel"
+        dir={offlineDir()}
+        data-offline-live-panel="true"
+        role="log"
+      >
+        <div className="offline-live-head">
+          {viewingLive ? <span className="offline-voice-dot" /> : null}
+          <span className="offline-live-title">
+            {tr('💬 שיחה עם Gemini', '💬 Conversation with Gemini')}
+          </span>
+          <button
+            type="button"
+            className="btn btn-small"
+            data-offline-live-btn="history"
+            aria-pressed={this.state.history}
+            title={tr('שיחות קודמות', 'Earlier conversations')}
+            onClick={() => this.setState({ history: !this.state.history })}
+          >
+            {tr('🕘 היסטוריה', '🕘 History')}
+          </button>
+          <button
+            type="button"
+            className="btn btn-small"
+            data-offline-live-btn="copy"
+            disabled={!items.length}
+            title={tr('העתק את התמלול', 'Copy the transcript')}
+            onClick={() => {
+              if (v.copyConversation(c)) {
+                this.setState({ copied: true });
+                this._later(() => this.setState({ copied: false }), 2000);
+              }
+            }}
+          >
+            {this.state.copied ? tr('✓ הועתק', '✓ Copied') : tr('📋 העתק', '📋 Copy')}
+          </button>
+          <button
+            type="button"
+            className={`btn btn-small${this.state.confirmClear ? ' danger' : ''}`}
+            data-offline-live-btn="clear"
+            disabled={!items.length}
+            title={tr('מחק את התמלול הזה מהמחשב', 'Delete this transcript from the PC')}
+            onClick={() => {
+              if (!this.state.confirmClear) {
+                this.setState({ confirmClear: true });
+                this._later(() => this.setState({ confirmClear: false }), 4000);
+                return;
+              }
+              this.setState({ confirmClear: false });
+              v.clearConversation(c.id);
+            }}
+          >
+            {this.state.confirmClear
+              ? tr('בטוח? לחצו שוב', 'Sure? Click again')
+              : tr('🗑️ נקה', '🗑️ Clear')}
+          </button>
+          <button
+            type="button"
+            className="btn btn-small offline-live-close"
+            data-offline-live-btn="close"
+            aria-label={tr('סגור', 'Close')}
+            onClick={() => v.openPanel(false)}
+          >
+            ✕
+          </button>
+        </div>
+        {this.state.history ? this._renderHistory() : null}
+        {c.id !== v.conversation.id || !viewingLive ? (
+          <div className="offline-live-sub" dir="auto">
+            {items.length
+              ? `${fmtWhen(c.startedAt)} · ${fmtDur(c.seconds)}${c.usd ? ` · ≈ ₪${(c.usd * USD_TO_ILS).toFixed(3)}` : ''}`
+              : ''}
+          </div>
+        ) : null}
+        <div
+          className="offline-live-body"
+          ref={this._body}
+          data-offline-live-body="true"
+          onScroll={(e) => {
+            const b = e.currentTarget;
+            this._stick = b.scrollHeight - b.scrollTop - b.clientHeight < 40;
+          }}
+        >
+          {items.length ? (
+            items.map((i, k) =>
+              i.who === 'app' ? (
+                <div key={k} className="offline-live-sys" dir="auto" data-offline-live-item="app">
+                  {i.text}
+                </div>
+              ) : (
+                <div key={k} className={`offline-live-row ${i.who}`}>
+                  <div
+                    className={`offline-live-bubble ${i.who}`}
+                    dir="auto"
+                    data-offline-live-item={i.who}
+                  >
+                    {i.text}
+                    <span className="offline-live-time">{fmtClock(i.ts)}</span>
+                  </div>
+                </div>
+              )
+            )
+          ) : (
+            <div className="offline-live-empty">
+              {tr(
+                'עדיין אין תמלול. לחצו "שיחה עם Gemini" (Ctrl+Shift+Space) ודברו — מה שאתם אומרים ומה ש-Gemini עונה יופיע כאן.',
+                'No transcript yet. Click "Talk with Gemini" (Ctrl+Shift+Space) and speak — what you say and what Gemini answers shows up here.'
+              )}
+            </div>
+          )}
+        </div>
+        <div className="offline-live-foot">
+          {viewingLive ? (
+            <>
+              <input
+                type="text"
+                className="offline-live-input"
+                data-offline-live-input="true"
+                dir="auto"
+                value={this.state.text}
+                disabled={v.state !== 'live'}
+                placeholder={tr('אפשר גם לכתוב ל-Gemini…', 'You can also type to Gemini…')}
+                onChange={(e) => this.setState({ text: e.target.value })}
+                onKeyDown={(e) => {
+                  if (e.key === 'Enter' && !e.shiftKey) {
+                    e.preventDefault();
+                    this._send();
+                  }
+                }}
+              />
+              <button
+                type="button"
+                className="btn btn-small"
+                data-offline-live-btn="say"
+                disabled={!this.state.text.trim() || v.state !== 'live'}
+                title={tr('העבר ל-Gemini (לא שולח מייל)', 'Give it to Gemini (does not send mail)')}
+                onClick={() => this._send()}
+              >
+                ↵
+              </button>
+              <button
+                type="button"
+                className="btn btn-small offline-voice-stop"
+                data-offline-live-btn="stop"
+                onClick={() => void v.stop()}
+              >
+                {tr('⏹ עצור', '⏹ Stop')}
+              </button>
+            </>
+          ) : (
+            <>
+              {items.some((i) => i.who !== 'app') ? (
+                <button
+                  type="button"
+                  className="btn btn-small"
+                  data-offline-live-btn="continue"
+                  disabled={v.state !== 'idle'}
+                  title={tr(
+                    'דברו שוב עם Gemini והמשיכו מאותה נקודה (הוא מקבל את סוף השיחה הזו כטקסט)',
+                    'Talk again and pick up where you left off (Gemini gets the end of this conversation as text)'
+                  )}
+                  onClick={() => v.continueConversation(c.id)}
+                >
+                  {tr('🎙️ המשך את השיחה', '🎙️ Continue this conversation')}
+                </button>
+              ) : null}
+              <button
+                type="button"
+                className="btn btn-small"
+                data-offline-live-btn="new"
+                disabled={v.state !== 'idle'}
+                onClick={() => void v.start('command')}
+              >
+                {tr('🎙️ שיחה חדשה', '🎙️ New conversation')}
+              </button>
+            </>
+          )}
+        </div>
+        <div className="offline-live-note">
+          {tr(
+            'התמלול נשמר רק במחשב הזה (בפרופיל האופליין) · 30 השיחות האחרונות',
+            'The transcript is saved only on this PC (offline profile) · last 30 conversations'
+          )}
         </div>
       </div>
     );

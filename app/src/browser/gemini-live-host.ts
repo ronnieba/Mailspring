@@ -13,6 +13,7 @@ import {
   GEMINI_TRANSCRIBE_MODEL,
   GeminiLiveEvent,
   GeminiLiveMode,
+  LiveHistoryTurn,
   LiveUsageTotals,
   addLiveUsage,
   buildLiveSetup,
@@ -97,6 +98,8 @@ export class GeminiLiveSession {
       now?: () => number;
       maxSeconds?: number;
       setupTimeoutMs?: number;
+      /** Continue: earlier turns sent once after setup (text). */
+      history?: LiveHistoryTurn[];
     }
   ) {
     this.id = opts.id;
@@ -141,7 +144,14 @@ export class GeminiLiveSession {
     }
     const ws = this.ws;
     ws.onopen = () => {
-      ws.send(JSON.stringify(buildLiveSetup(this.mode, { uiLang: this.opts.uiLang })));
+      ws.send(
+        JSON.stringify(
+          buildLiveSetup(this.mode, {
+            uiLang: this.opts.uiLang,
+            withHistory: this.mode === 'talk' && !!(this.opts.history && this.opts.history.length),
+          })
+        )
+      );
     };
     ws.onmessage = (ev) => {
       void frameText(ev.data).then((t) => this.onMessage(t));
@@ -184,6 +194,15 @@ export class GeminiLiveSession {
     }
     if (m.setupComplete) {
       this.ready = true;
+      const h = this.mode === 'talk' ? this.opts.history || [] : [];
+      if (h.length) {
+        this.send({
+          clientContent: {
+            turns: h.map((t) => ({ role: t.role, parts: [{ text: t.text }] })),
+            turnComplete: false,
+          },
+        });
+      }
       this.opts.emit({ type: 'ready', model: this.model });
       this.resolveReady({ ok: true });
     }
@@ -268,6 +287,17 @@ export class GeminiLiveSession {
     });
     if (ok) this.audioSeconds += b.byteLength / 32000;
     return ok;
+  }
+
+  /** A typed message (from the conversation panel) as a user turn. */
+  sendText(text: string): boolean {
+    const t = String(text || '')
+      .trim()
+      .slice(0, 2000);
+    if (!t || this.mode !== 'talk') return false;
+    return this.send({
+      clientContent: { turns: [{ role: 'user', parts: [{ text: t }] }], turnComplete: true },
+    });
   }
 
   audioEnd(): boolean {

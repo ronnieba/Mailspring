@@ -37,6 +37,19 @@ import {
 import { GeminiLiveSession, LiveSocket, redactKey } from '../../src/browser/gemini-live-host';
 import { isLiveGateOpen, resetLiveGateForTests } from '../../src/browser/gemini-live-gate';
 import { offlineRequestDecision } from '../../src/browser/offline-network-guard';
+import os from 'os';
+import {
+  LIVE_CONTINUE_MAX_CHARS,
+  LiveItem,
+  addPiece,
+  closeTurn,
+  continueHistory,
+  conversationText,
+  newConversation,
+  readTranscripts,
+  writeTranscripts,
+} from './lib/core/offline-live-transcript';
+import { sanitizeLiveHistory } from '../../src/browser/gemini-live-protocol';
 
 let passed = 0;
 let failed = 0;
@@ -353,6 +366,122 @@ async function main() {
     assert(out.totals.estimated === true && out.totals.input === 25, JSON.stringify(out.totals));
     assert(Math.abs(out.totals.usd - (25 * 3.5 + 3 * 21) / 1e6) < 1e-9, String(out.totals.usd));
     assert(h.ends[0].totals.usd > 0, 'recorded');
+  });
+
+  await test('transcript: bubbles per turn, spaces between joined words, app lines apart', () => {
+    const it: LiveItem[] = [];
+    addPiece(it, 'user', 'חפש מיילים');
+    addPiece(it, 'user', ' על slides');
+    addPiece(it, 'app', '🔍 חיפשתי: slides');
+    addPiece(it, 'gemini', 'מצאתי שני מיילים');
+    addPiece(it, 'gemini', 'שקשורים לסליידס.');
+    closeTurn(it);
+    addPiece(it, 'gemini', 'עוד משהו?');
+    assert(it.length === 4, JSON.stringify(it));
+    assert(it[0].text === 'חפש מיילים על slides', it[0].text);
+    assert(it[2].text === 'מצאתי שני מיילים שקשורים לסליידס.', it[2].text);
+    assert(it[3].text === 'עוד משהו?' && it[1].who === 'app', 'new bubble after turn end');
+    const c = newConversation(0);
+    c.items = it;
+    const txt = conversationText(c);
+    assert(/^אני: חפש/.test(txt) && /Gemini: מצאתי/.test(txt) && /· 🔍/.test(txt), txt);
+  });
+
+  await test('continue: recent turns only, capped, starting with the user', () => {
+    const c = newConversation(0);
+    addPiece(c.items, 'gemini', 'שלום');
+    closeTurn(c.items);
+    for (let i = 0; i < 40; i++) {
+      addPiece(c.items, 'user', `שאלה ${i} ${'א'.repeat(150)}`);
+      addPiece(c.items, 'app', 'x');
+      addPiece(c.items, 'gemini', `תשובה ${i}`);
+      closeTurn(c.items);
+    }
+    const h = continueHistory(c);
+    const chars = h.reduce((n, t) => n + t.text.length, 0);
+    assert(h.length && h.length <= 16 && chars <= LIVE_CONTINUE_MAX_CHARS, `${h.length} ${chars}`);
+    assert(h[0].role === 'user' && h[h.length - 1].text === 'תשובה 39', 'order');
+    assert(!h.some((t) => t.text === 'x'), 'no app lines');
+    const s = sanitizeLiveHistory([
+      { role: 'system', text: 'x' },
+      { role: 'user', text: 'y'.repeat(5000) },
+      3,
+    ]);
+    assert(s.length === 1 && s[0].text.length === 3000, 'sanitized');
+  });
+
+  await test('transcripts saved only in the profile, newest 30, empty ones dropped', () => {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'live-tr-'));
+    try {
+      const list = [];
+      for (let i = 0; i < 35; i++) {
+        const c = newConversation(i);
+        c.endedAt = i;
+        addPiece(c.items, 'user', `שיחה ${i}`);
+        list.push(c);
+      }
+      const empty = newConversation(99);
+      empty.endedAt = 99;
+      addPiece(empty.items, 'app', 'מחובר');
+      writeTranscripts(dir, [...list, empty]);
+      const back = readTranscripts(dir);
+      assert(back.length === 30 && back[0].items[0].text === 'שיחה 34', String(back.length));
+      assert(!back.some((c) => c.items.some((i) => (i as any).open)), 'no UI flags saved');
+      assert(fs.readdirSync(dir).join() === 'gemini-live-transcripts.json', 'one file');
+    } finally {
+      fs.rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  await test('session: continue sends earlier turns once (history config); typed text is a user turn', async () => {
+    resetLiveGateForTests();
+    const h = mkSession('talk', {
+      history: [
+        { role: 'user', text: 'חפש' },
+        { role: 'model', text: 'מצאתי' },
+      ],
+    });
+    const p = h.s.start();
+    h.sock().onopen && h.sock().onopen!();
+    assert(
+      h.sock().sent[0].setup.historyConfig.initialHistoryInClientContent === true,
+      'history config'
+    );
+    h.sock().serve({ setupComplete: {} });
+    await tick();
+    await p;
+    const cc = h.sock().sent[1].clientContent;
+    assert(
+      cc.turns.length === 2 && cc.turns[1].role === 'model' && cc.turnComplete === false,
+      JSON.stringify(cc)
+    );
+    assert(h.s.sendText('תודה'), 'text');
+    const t = h.sock().sent[2].clientContent;
+    assert(t.turns[0].parts[0].text === 'תודה' && t.turnComplete === true, 'typed turn');
+    h.s.stop();
+    const plain = buildLiveSetup('talk').setup as any;
+    assert(!plain.historyConfig, 'no history config for a new conversation');
+  });
+
+  await test('conversation panel: bubbles, history, copy / clear / continue, typing, saved locally', () => {
+    const v = read('lib/offline-mail/offline-voice.tsx');
+    for (const k of ['history', 'copy', 'clear', 'close', 'continue', 'new', 'say', 'stop']) {
+      assert(v.includes(`data-offline-live-btn="${k}"`), k);
+    }
+    assert(/data-offline-live-item=\{i\.who\}/.test(v) && /dir="auto"/.test(v), 'bubbles, RTL');
+    assert(
+      /writeTranscripts\(dir/.test(v) && /AppEnv\.getConfigDirPath\(\)/.test(v),
+      'profile only'
+    );
+    assert(/offlineVoiceHooks\.copyText/.test(v), 'clipboard hook for tests');
+    assert(/חיפשתי:/.test(v) && /נמחק \(ניתן לבטל\)/.test(v), 'action lines');
+    const ribbon = read('lib/offline-mail/offline-ribbon.tsx');
+    assert(
+      /id: 'voice-transcript'[\s\S]{0,800}offlineVoice\.openPanel/.test(ribbon),
+      'ribbon button'
+    );
+    const s = buildLiveSetup('talk').setup as any;
+    assert(s.inputAudioTranscription && s.outputAudioTranscription, 'transcription on');
   });
 
   await test('delete needs a yes for the same message, soon', () => {

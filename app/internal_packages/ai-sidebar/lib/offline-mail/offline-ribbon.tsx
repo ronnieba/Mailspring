@@ -711,6 +711,17 @@ export class OfflineRibbon extends React.Component<Record<string, never>, State>
                       ),
                       onClick: () => offlineVoice.toggle('command'),
                     },
+                    {
+                      id: 'voice-transcript',
+                      icon: '💬',
+                      label: tr('תמלול שיחות', 'Transcripts'),
+                      pressed: offlineVoice.panelOpen,
+                      title: tr(
+                        'התמלול של השיחות עם Gemini: מה אמרתם, מה הוא ענה ומה הוא עשה. נשמר רק במחשב הזה; אפשר להעתיק, לנקות ולהמשיך שיחה.',
+                        'Transcripts of conversations with Gemini: what you said, what it answered and what it did. Saved only on this PC; copy, clear, or continue a conversation.'
+                      ),
+                      onClick: () => offlineVoice.openPanel(!offlineVoice.panelOpen),
+                    },
                   ],
                 },
               ]

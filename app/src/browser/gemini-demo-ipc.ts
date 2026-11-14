@@ -31,7 +31,9 @@ import {
   GEMINI_LIVE_IPC_EVENT,
   GEMINI_LIVE_IPC_START,
   GEMINI_LIVE_IPC_STOP,
+  GEMINI_LIVE_IPC_TEXT,
   GEMINI_LIVE_IPC_TOOL_RESULT,
+  sanitizeLiveHistory,
 } from './gemini-live-protocol';
 import { GeminiLiveSession, LiveSocketFactory } from './gemini-live-host';
 import {
@@ -328,6 +330,7 @@ export function registerGeminiDemoIpcHandlers(ipcMain: IpcMain, opts: GeminiDemo
       mode,
       key: credentialsOf({ env: opts.env, credentials: opts.credentials }).key,
       uiLang: r.uiLang === 'en' ? 'en' : 'he',
+      history: mode === 'talk' ? sanitizeLiveHistory(r.history) : [],
       socketFactory: opts.liveSocketFactory,
       emit: (ev) => {
         if (!sender.isDestroyed()) {
@@ -362,6 +365,13 @@ export function registerGeminiDemoIpcHandlers(ipcMain: IpcMain, opts: GeminiDemo
     const s = liveFor(event, id);
     if (s && (chunk instanceof Uint8Array || chunk instanceof ArrayBuffer)) {
       s.audio(chunk);
+    }
+  });
+
+  onFromMailspringWindows(ipcMain, GEMINI_LIVE_IPC_TEXT, (event, id: unknown, text: unknown) => {
+    const s = liveFor(event, id);
+    if (s && typeof text === 'string') {
+      s.sendText(text);
     }
   });
 
