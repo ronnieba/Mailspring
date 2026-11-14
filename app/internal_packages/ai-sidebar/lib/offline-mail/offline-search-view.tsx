@@ -6,6 +6,7 @@ import { offlineMailStore } from './offline-mail-store';
 import { offlineSearchStore, OfflineSearchScope, OfflineSearchSort } from './offline-search-store';
 import { OfflineStoreComponent } from './use-offline-store';
 import { askAiAboutMail } from './write-with-ai';
+import { OfflineHelpTip } from './offline-tour';
 
 const ROW = 78;
 const OVERSCAN = 6;
@@ -128,6 +129,7 @@ export class OfflineSearchBar extends OfflineStoreComponent {
           >
             {tr('🤖 שאל AI', '🤖 Ask AI')}
           </button>
+          <OfflineHelpTip tip="search" />
         </div>
         <div className="offline-search-options">
           <select

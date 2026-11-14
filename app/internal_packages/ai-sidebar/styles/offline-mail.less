@@ -3672,3 +3672,295 @@ button.offline-brand-button {
     font-size: 12px;
   }
 }
+
+// ---- Interactive guide (t235): Maily the mascot, spotlight tour, "?" tips ----
+
+@keyframes ofl-mascot-bob {
+  0%,
+  100% {
+    transform: translateY(0);
+  }
+  50% {
+    transform: translateY(-4px);
+  }
+}
+@keyframes ofl-mascot-wave {
+  0%,
+  100% {
+    transform: rotate(0deg);
+  }
+  50% {
+    transform: rotate(-22deg);
+  }
+}
+@keyframes ofl-mascot-twinkle {
+  0%,
+  100% {
+    transform: scale(1) rotate(0deg);
+    opacity: 1;
+  }
+  50% {
+    transform: scale(0.75) rotate(20deg);
+    opacity: 0.8;
+  }
+}
+@keyframes ofl-mascot-blink {
+  0%,
+  92%,
+  100% {
+    transform: scaleY(1);
+  }
+  96% {
+    transform: scaleY(0.1);
+  }
+}
+@keyframes ofl-tour-pop {
+  from {
+    opacity: 0;
+    transform: translateY(6px) scale(0.97);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+
+.offline-mascot {
+  flex: none;
+  overflow: visible;
+  .ofl-m-body,
+  .ofl-m-sparkle,
+  .ofl-m-sparkle-small,
+  .ofl-m-arm-r,
+  .ofl-m-eyes {
+    transform-box: fill-box;
+    transform-origin: center;
+  }
+  .ofl-m-arm-r {
+    transform-origin: 0% 100%;
+  }
+  &.is-animated {
+    .ofl-m-body {
+      animation: ofl-mascot-bob 2.4s ease-in-out infinite;
+    }
+    .ofl-m-sparkle {
+      animation: ofl-mascot-twinkle 1.8s ease-in-out infinite;
+    }
+    .ofl-m-sparkle-small {
+      animation: ofl-mascot-twinkle 1.8s ease-in-out 0.6s infinite;
+    }
+    .ofl-m-eyes {
+      animation: ofl-mascot-blink 4s infinite;
+    }
+    &.mood-wave .ofl-m-arm-r {
+      animation: ofl-mascot-wave 0.9s ease-in-out infinite;
+    }
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .offline-mascot.is-animated * {
+    animation: none !important;
+  }
+  .offline-tour-bubble,
+  .offline-tour-prompt {
+    animation: none !important;
+  }
+}
+
+.offline-tour {
+  position: fixed;
+  inset: 0;
+  z-index: 3200;
+  .offline-tour-blocker {
+    position: absolute;
+    inset: 0;
+  }
+  .offline-tour-dim {
+    position: absolute;
+    inset: 0;
+    background: rgba(10, 20, 30, 0.5);
+  }
+  .offline-tour-spot {
+    position: absolute;
+    border-radius: 10px;
+    pointer-events: none;
+    box-shadow: 0 0 0 3px #25d07a, 0 0 0 7px rgba(37, 208, 122, 0.35),
+      0 0 0 9999px rgba(10, 20, 30, 0.5);
+    transition: left 0.25s ease, top 0.25s ease, width 0.25s ease, height 0.25s ease;
+  }
+}
+
+.offline-tour-bubble,
+.offline-tour-prompt {
+  position: fixed;
+  box-sizing: border-box;
+  padding: 14px 16px 12px;
+  border-radius: 16px;
+  background: var(--ofl-surface, #ffffff);
+  color: var(--ofl-fg, #1f2a33);
+  border: 2px solid #25d07a;
+  box-shadow: 0 14px 44px rgba(0, 0, 0, 0.35);
+  font-size: 13.5px;
+  line-height: 1.5;
+  animation: ofl-tour-pop 0.22s ease-out;
+  .offline-tour-title {
+    font-size: 16px;
+    font-weight: 800;
+    background: linear-gradient(90deg, #16b36b, #0bb3c6);
+    -webkit-background-clip: text;
+    background-clip: text;
+    color: transparent;
+  }
+  .offline-tour-buttons {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 6px;
+    margin-top: 10px;
+    .btn-emphasis {
+      background: linear-gradient(135deg, #25d07a, #0bc3d6);
+      border-color: transparent;
+      color: #fff;
+      font-weight: 700;
+    }
+  }
+}
+
+.offline-tour-bubble {
+  z-index: 3201;
+  .offline-tour-head {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    margin: -4px 0 6px;
+  }
+  .offline-tour-body {
+    white-space: pre-line;
+  }
+  .offline-tour-missing {
+    margin-top: 6px;
+    font-size: 12px;
+    opacity: 0.7;
+  }
+  .offline-tour-dots {
+    display: flex;
+    gap: 4px;
+    justify-content: center;
+    margin-top: 10px;
+    span {
+      width: 7px;
+      height: 7px;
+      border-radius: 50%;
+      background: rgba(127, 127, 127, 0.3);
+      &.past {
+        background: rgba(37, 208, 122, 0.5);
+      }
+      &.on {
+        width: 18px;
+        border-radius: 4px;
+        background: #25d07a;
+      }
+    }
+  }
+  .offline-tour-count {
+    font-size: 12px;
+    opacity: 0.6;
+    margin-inline-end: auto;
+  }
+}
+
+.offline-tour-prompt {
+  inset-inline-end: 18px;
+  bottom: 18px;
+  z-index: 3100;
+  width: 380px;
+  max-width: calc(100vw - 36px);
+  display: flex;
+  gap: 12px;
+  align-items: flex-start;
+  .offline-tour-prompt-text {
+    flex: 1;
+  }
+  .btn-link {
+    background: none;
+    border: none;
+    text-decoration: underline;
+    opacity: 0.7;
+    cursor: pointer;
+    color: inherit;
+  }
+}
+
+.offline-tour-bubble .btn-link {
+  background: none;
+  border: none;
+  text-decoration: underline;
+  opacity: 0.75;
+  cursor: pointer;
+  color: inherit;
+}
+
+.offline-tip {
+  position: relative;
+  display: inline-flex;
+  vertical-align: middle;
+  margin-inline-start: 6px;
+  .offline-tip-btn {
+    width: 18px;
+    height: 18px;
+    padding: 0;
+    border-radius: 50%;
+    border: 1.5px solid #25d07a;
+    background: rgba(37, 208, 122, 0.12);
+    color: #16a463;
+    font-size: 11px;
+    font-weight: 800;
+    line-height: 15px;
+    cursor: pointer;
+    &:hover {
+      background: rgba(37, 208, 122, 0.25);
+    }
+  }
+  .offline-tip-pop {
+    position: absolute;
+    top: 24px;
+    inset-inline-end: -8px;
+    z-index: 3050;
+    width: 280px;
+    display: flex;
+    gap: 8px;
+    align-items: flex-start;
+    padding: 10px 12px;
+    border-radius: 12px;
+    background: var(--ofl-surface, #ffffff);
+    color: var(--ofl-fg, #1f2a33);
+    border: 1.5px solid #25d07a;
+    box-shadow: 0 8px 26px rgba(0, 0, 0, 0.25);
+    font-size: 12.5px;
+    font-weight: normal;
+    line-height: 1.45;
+    white-space: normal;
+    text-align: start;
+    animation: ofl-tour-pop 0.18s ease-out;
+  }
+}
+
+body.theme-ui-dark {
+  .offline-tour-bubble,
+  .offline-tour-prompt,
+  .offline-tip .offline-tip-pop {
+    background: var(--ofl-surface, #1f2a30);
+    color: var(--ofl-fg, #e8f1ee);
+    border-color: #2fdc86;
+  }
+  .offline-tour-bubble .offline-tour-title,
+  .offline-tour-prompt .offline-tour-title {
+    background: linear-gradient(90deg, #7ef0a8, #5fe3f0);
+    -webkit-background-clip: text;
+    background-clip: text;
+  }
+  .offline-tip .offline-tip-btn {
+    color: #7ef0a8;
+  }
+}

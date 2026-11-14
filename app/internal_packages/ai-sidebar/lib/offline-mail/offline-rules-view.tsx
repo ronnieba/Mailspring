@@ -9,6 +9,7 @@ import { tr, offlineDir, offlineLang } from '../core/offline-i18n';
 import { offlineMailStore } from './offline-mail-store';
 import { offlineSearchStore } from './offline-search-store';
 import { offlineActionsUi } from './offline-message-actions';
+import { OfflineHelpTip } from './offline-tour';
 import { localPlaceOf, senderEmail } from '../core/offline-local-overlay';
 import {
   describeRule,
@@ -587,6 +588,7 @@ export class OfflineRulesDialog extends React.Component<Record<string, never>, S
                 ? tr('✏️ עריכת כלל', '✏️ Edit rule')
                 : tr('➕ כלל חדש', '➕ New rule')
               : tr('📋 כללים', '📋 Rules')}
+            <OfflineHelpTip tip="rules" />
           </div>
           <div className="offline-modal-note">
             {tr(

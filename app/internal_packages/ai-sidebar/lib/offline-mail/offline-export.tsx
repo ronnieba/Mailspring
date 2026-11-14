@@ -16,6 +16,7 @@ import {
   buildPrintDocumentMany,
 } from './offline-message-actions';
 import { loadOfflineMessage, readOfflineMessageRaw } from '../core/offline-mail-index';
+import { OfflineHelpTip } from './offline-tour';
 
 export type ExportFormat = 'pdf' | 'eml';
 export type ExportWhat = 'message' | 'conversation';
@@ -327,7 +328,10 @@ export class OfflineExportDialog extends React.Component<Record<string, never>, 
           onMouseDown={(e) => e.stopPropagation()}
           onKeyDown={(e) => e.key === 'Escape' && closeExport()}
         >
-          <div className="offline-modal-title">{tr('💾 שמירה בשם', '💾 Save as')}</div>
+          <div className="offline-modal-title">
+            {tr('💾 שמירה בשם', '💾 Save as')}
+            <OfflineHelpTip tip="export" />
+          </div>
           <div className="offline-rule-section">{tr('מה לשמור', 'What to save')}</div>
           {radio(
             'ofl-export-what',

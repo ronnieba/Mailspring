@@ -58,6 +58,12 @@ import { localPlaceOf } from '../core/offline-local-overlay';
 import { attachReplyOriginals, replyOriginalsInfo } from './offline-reply-originals';
 import { OfflineRulesDialog, newRuleFromMessage, openRules } from './offline-rules-view';
 import { OfflineExportDialog, openExport } from './offline-export';
+import {
+  OFFLINE_RIBBON_TAB_EVENT,
+  OfflineTourHost,
+  offlineTour,
+  startOfflineTour,
+} from './offline-tour';
 
 type Btn = {
   id: string;
@@ -213,6 +219,19 @@ export class OfflineRibbon extends React.Component<Record<string, never>, State>
     this._unsubs.push(offlineMailStore.listen(update));
     this._unsubs.push(offlineDraftsStore.listen(update));
     this._unsubs.push(AISidebarStore.listen(update));
+    this._unsubs.push(offlineTour.listen(update));
+    // The interactive guide shows the tab of each step.
+    const onShowTab = (e: Event) => {
+      const tab = (e as CustomEvent).detail;
+      if (
+        OFFLINE_RIBBON_TABS.some((t) => t.id === tab) &&
+        (tab !== this.state.tab || this.state.collapsed)
+      ) {
+        this._setTab(tab);
+      }
+    };
+    window.addEventListener(OFFLINE_RIBBON_TAB_EVENT, onShowTab);
+    this._unsubs.push(() => window.removeEventListener(OFFLINE_RIBBON_TAB_EVENT, onShowTab));
     const themeSub = AppEnv.themes.onDidChangeActiveThemes(update);
     this._unsubs.push(() => themeSub.dispose());
     const el = this._panel.current;
@@ -997,6 +1016,33 @@ export class OfflineRibbon extends React.Component<Record<string, never>, State>
         }
         return [
           {
+            id: 'help',
+            label: tr('עזרה', 'Help'),
+            buttons: [
+              {
+                id: 'interactive-tour',
+                icon: '✨',
+                label: tr('מדריך אינטראקטיבי', 'Interactive guide'),
+                title: tr(
+                  'סיור קצר עם מיילי על כל חלקי האפליקציה (אפשר לדלג בכל רגע)',
+                  'A short tour with Maily over every part of the app (skip any time)'
+                ),
+                onClick: () => startOfflineTour(),
+              },
+              {
+                id: 'tips',
+                icon: '❔',
+                label: tr('טיפים "?"', '"?" tips'),
+                pressed: offlineTour.tipsOn,
+                title: tr(
+                  'הצג/הסתר את סימני ה-"?" הקטנים עם טיפים ליד החיפוש, ה-AI, הכללים והשמירה',
+                  'Show/hide the small "?" tips next to search, the AI, rules and Save as'
+                ),
+                onClick: () => offlineTour.setTips(!offlineTour.tipsOn),
+              },
+            ],
+          },
+          {
             id: 'prefs',
             label: tr('הגדרות', 'Settings'),
             buttons: [
@@ -1232,6 +1278,7 @@ export class OfflineRibbon extends React.Component<Record<string, never>, State>
         <OfflineActionsHost />
         <OfflineRulesDialog />
         <OfflineExportDialog />
+        <OfflineTourHost />
       </div>
     );
   }
