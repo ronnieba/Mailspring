@@ -3405,6 +3405,22 @@ button.offline-brand-button {
   }
 }
 
+.offline-modal.offline-export {
+  .offline-rule-section {
+    font-weight: 700;
+    margin-top: 4px;
+    color: @component-active-color;
+  }
+  .offline-rule-check {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    &.is-disabled {
+      opacity: 0.5;
+    }
+  }
+}
+
 .offline-modal.offline-rules {
   width: 640px;
   max-height: 80vh;

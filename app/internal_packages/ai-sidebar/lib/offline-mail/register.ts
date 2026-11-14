@@ -16,6 +16,7 @@ import { offlineAddressBook } from './offline-address-book-store';
 import * as offlineActions from './offline-message-actions';
 import { offlineActionsUi } from './offline-message-actions';
 import { offlineSearchStore } from './offline-search-store';
+import { offlineExportHooks, openExport } from './offline-export';
 import { proofreadDraftViaIpc } from '../gemini-ipc-transport';
 import AISidebarStore from '../ai-sidebar-store';
 import { offlineLang, offlineLangBodyClass, offlineDir } from '../core/offline-i18n';
@@ -148,6 +149,8 @@ export function registerOfflineMailBrowser(archivePath: string, sidebar: any) {
     ai: AISidebarStore,
     actions: offlineActions,
     actionsUi: offlineActionsUi,
+    exportHooks: offlineExportHooks,
+    openExport,
   };
   void offlineMailStore.start(archivePath, cachePath);
   // Window size/position/maximized state is restored by the main process

@@ -303,6 +303,18 @@ function esc(s: string): string {
 
 /** The page that is printed: headers + body (same sanitizing as the reader). */
 export function buildPrintDocument(m: ParsedOfflineMail): string {
+  return buildSandboxedHtmlDocument(buildPrintSection(m));
+}
+
+/** Several messages (a conversation) on one page, each starting a new sheet. */
+export function buildPrintDocumentMany(list: ParsedOfflineMail[]): string {
+  return buildSandboxedHtmlDocument(
+    list.map((m) => buildPrintSection(m)).join('<div style="page-break-before:always"></div>')
+  );
+}
+
+/** One message's headers + body (no page wrapper). */
+export function buildPrintSection(m: ParsedOfflineMail): string {
   const row = (k: string, v: string) =>
     v ? `<tr><th>${esc(k)}</th><td dir="auto">${esc(v)}</td></tr>` : '';
   const header =
@@ -319,7 +331,7 @@ export function buildPrintDocument(m: ParsedOfflineMail): string {
     `<style>.ofl-print-head h1{font-size:18px;margin:0 0 8px}.ofl-print-head table{border-collapse:collapse;font-size:13px}` +
     `.ofl-print-head th{text-align:start;padding:1px 10px 1px 0;color:#555;font-weight:600;white-space:nowrap}` +
     `@media print{body{padding:0}}</style>`;
-  return buildSandboxedHtmlDocument(`${style}<div dir="${offlineDir()}">${header}</div>${body}`);
+  return `${style}<div dir="${offlineDir()}">${header}</div>${body}`;
 }
 
 /**
@@ -419,6 +431,12 @@ export function showMessageMoreMenu(anchor: HTMLElement, ids: string[]) {
   );
   menu.append(new MenuItem({ type: 'separator' }));
   item(tr('🖨️ הדפס', '🖨️ Print'), () => void actPrint(ids[0]), ids.length === 1);
+  item(
+    tr('💾 שמור בשם (PDF או eml)…', '💾 Save as (PDF or .eml)…'),
+    // Late require: the export window imports this module.
+    () => require('./offline-export').openExport(ids[0]),
+    ids.length === 1
+  );
   const r = anchor.getBoundingClientRect();
   menu.popup({ x: Math.round(r.left), y: Math.round(r.bottom) });
 }

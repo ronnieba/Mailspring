@@ -57,6 +57,7 @@ import {
 import { localPlaceOf } from '../core/offline-local-overlay';
 import { attachReplyOriginals, replyOriginalsInfo } from './offline-reply-originals';
 import { OfflineRulesDialog, newRuleFromMessage, openRules } from './offline-rules-view';
+import { OfflineExportDialog, openExport } from './offline-export';
 
 type Btn = {
   id: string;
@@ -437,6 +438,20 @@ export class OfflineRibbon extends React.Component<Record<string, never>, State>
             ? tr('פותח את חלון ההדפסה של Windows', 'Opens the Windows print dialog')
             : tr('בחר הודעה אחת להדפסה', 'Select one message to print'),
         onClick: () => void actPrint(ids[0]),
+      },
+      {
+        id: 'act-export',
+        icon: '💾',
+        label: tr('שמור בשם', 'Save as'),
+        disabled: n !== 1,
+        title:
+          n === 1
+            ? tr(
+                'שמירת ההודעה או כל השיחה כקובץ PDF או eml, במקום שתבחרו',
+                'Save the message or the whole conversation as PDF or .eml, where you choose'
+              )
+            : tr('בחר הודעה אחת', 'Select one message'),
+        onClick: () => openExport(ids[0]),
       }
     );
     return {
@@ -1216,6 +1231,7 @@ export class OfflineRibbon extends React.Component<Record<string, never>, State>
         </div>
         <OfflineActionsHost />
         <OfflineRulesDialog />
+        <OfflineExportDialog />
       </div>
     );
   }
