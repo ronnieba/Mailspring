@@ -223,6 +223,27 @@ export class OfflineDraftsStore {
     return this._dir;
   }
 
+  /** Copy file bytes into the draft (inside the profile); returns how many were added. */
+  addAttachmentBytes(id: string, files: DraftFileBytes[]): number {
+    const d = this.drafts.find((x) => x.id === id);
+    if (!d || !this._dir || !files.length) {
+      return 0;
+    }
+    const list = (d.attachments || []).slice();
+    for (const f of files) {
+      try {
+        list.push(addDraftAttachmentBytes(this._dir, id, f.filename, f.contentType, f.data));
+      } catch (err) {
+        console.warn('[Offline drafts] attachment not copied:', (err as Error).message);
+      }
+    }
+    const added = list.length - (d.attachments || []).length;
+    if (added) {
+      this._setAttachments(id, list);
+    }
+    return added;
+  }
+
   /** Copy files the user picked into the draft (inside the profile). */
   addAttachmentFiles(id: string, paths: string[]): { added: number; failed: string[] } {
     const d = this.drafts.find((x) => x.id === id);

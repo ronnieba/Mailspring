@@ -23,6 +23,7 @@ import { OfflineRichEditor } from './offline-rich-editor';
 import { OfflineAttachmentList } from './offline-attachments-view';
 import { chooseFilesToAttach, droppedFilePaths, openWithDefaultApp } from './offline-file-actions';
 import { draftAttachmentPath } from '../core/offline-attachments';
+import { attachReplyOriginals, replyOriginalsInfo } from './offline-reply-originals';
 import { ProofSegment } from '../core/text-diff';
 import { offlineDateLocale, offlineDir, tr } from '../core/offline-i18n';
 import { startWriteWithAi, undoAiChange } from './write-with-ai';
@@ -248,9 +249,22 @@ export class OfflineDraftEditor extends DraftsComponent<Record<string, never>, E
     void chooseFilesToAttach().then((paths) => this._addFiles(d, paths));
   }
 
+  _attachOriginals(d: OfflineDraft) {
+    const r = attachReplyOriginals(d);
+    this.setState({
+      attachNote: r.skipped
+        ? tr(
+            `${r.added} קבצים צורפו; ${r.skipped} גדולים מדי לטיוטה ולא צורפו.`,
+            `${r.added} file(s) attached; ${r.skipped} too large for a draft were skipped.`
+          )
+        : null,
+    });
+  }
+
   _renderAttachments(d: OfflineDraft) {
     const list = d.attachments || [];
     const dir = offlineDraftsStore.configDir;
+    const originals = replyOriginalsInfo(d);
     return (
       <>
         <div
@@ -265,6 +279,33 @@ export class OfflineDraftEditor extends DraftsComponent<Record<string, never>, E
             📎{' '}
             {list.length ? tr('הוסף עוד קבצים', 'Add more files') : tr('צרף קבצים', 'Attach files')}
           </button>
+          {originals && originals.total > 0 ? (
+            <button
+              className="btn offline-draft-attach-originals"
+              data-offline-draft-attach-originals={originals.missing}
+              disabled={!originals.missing}
+              title={
+                originals.missing
+                  ? tr(
+                      'מעתיק לטיוטה את הקבצים שהיו מצורפים להודעה שאתה עונה עליה (רק במחשב, אין שליחה)',
+                      'Copies the files attached to the message you are replying to into this draft (on this computer only, no sending)'
+                    )
+                  : tr(
+                      'כל הקבצים המקוריים כבר מצורפים',
+                      'All the original files are already attached'
+                    )
+              }
+              onClick={() => this._attachOriginals(d)}
+            >
+              📎↩️{' '}
+              {originals.missing
+                ? tr(
+                    `צרף את הקבצים המקוריים (${originals.missing})`,
+                    `Attach the original files (${originals.missing})`
+                  )
+                : tr('הקבצים המקוריים צורפו ✓', 'Original files attached ✓')}
+            </button>
+          ) : null}
           <span className="offline-draft-attachbar-hint">
             {list.length
               ? tr(

@@ -55,6 +55,7 @@ import {
   selectionUnread,
 } from './offline-message-actions';
 import { localPlaceOf } from '../core/offline-local-overlay';
+import { attachReplyOriginals, replyOriginalsInfo } from './offline-reply-originals';
 
 type Btn = {
   id: string;
@@ -814,6 +815,27 @@ export class OfflineRibbon extends React.Component<Record<string, never>, State>
                   }
                 },
               },
+              ...((info) =>
+                info && info.total
+                  ? [
+                      {
+                        id: 'draft-attach-originals',
+                        icon: '📎',
+                        label: tr('צרף את הקבצים המקוריים', 'Attach the original files'),
+                        disabled: !info.missing,
+                        title: info.missing
+                          ? tr(
+                              `מעתיק ${info.missing} קבצים מההודעה המקורית לטיוטה (אין שליחה)`,
+                              `Copies ${info.missing} file(s) from the original message into the draft (no sending)`
+                            )
+                          : tr(
+                              'כל הקבצים המקוריים כבר מצורפים',
+                              'All the original files are already attached'
+                            ),
+                        onClick: () => draft && attachReplyOriginals(draft),
+                      } as Btn,
+                    ]
+                  : [])(replyOriginalsInfo(draft)),
               {
                 id: 'draft-proofread',
                 icon: '✨',
