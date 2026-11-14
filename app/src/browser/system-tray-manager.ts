@@ -1,6 +1,7 @@
 import path from 'path';
 import { app, Tray, Menu, nativeImage, NativeImage, nativeTheme } from 'electron';
 import { localized } from '../intl';
+import { offlineAppIconPath } from './offline-branding';
 import { waitForStatusNotifierHost } from './sni-host';
 import Application from './application';
 
@@ -121,6 +122,16 @@ class SystemTrayManager {
   }
 
   _defaultIconPath() {
+    // Offline experiment on Windows: the "Mail AI" app icon.
+    const brand = _isOffline(this._application)
+      ? offlineAppIconPath(this._application.resourcePath, {
+          platform: this._platform,
+          offline: true,
+        })
+      : null;
+    if (brand) {
+      return brand;
+    }
     if (this._platform === 'win32') {
       // The renderer's system-tray package normally supplies the icon. When it
       // is not running (e.g. the offline experiment), Windows would show an
@@ -209,6 +220,16 @@ class SystemTrayManager {
   };
 
   updateTraySettings(iconPath: string, unreadString: string) {
+    // Offline experiment on Windows keeps its own app icon in the tray.
+    if (
+      _isOffline(this._application) &&
+      offlineAppIconPath(this._application.resourcePath, {
+        platform: this._platform,
+        offline: true,
+      })
+    ) {
+      iconPath = this._iconPath;
+    }
     if (this._iconPath !== iconPath) {
       this._iconPath = iconPath;
       if (this._tray) this._tray.setImage(_getIcon(this._iconPath));

@@ -65,6 +65,7 @@ function fmtIls(n: number): string {
 }
 import { isRealSelectedSummaryMode } from '../../../src/real-selected-summary';
 import { isOfflineArchiveMode } from '../../../src/offline-archive';
+import { OfflineBrandLogo, OFFLINE_BRAND_NAME } from './offline-mail/offline-brand';
 import { RealSelectedPreview } from './core/real-selected-mail';
 import {
   getOfflineArchiveCatalog,
@@ -1873,7 +1874,14 @@ class AISidebarInner extends React.Component<Record<string, never>, AISidebarSta
         data-offline-archive={offline ? 'true' : undefined}
       >
         <div className="ai-sidebar-header">
-          <h2>{tr('🤖 עוזר AI', '🤖 AI assistant')}</h2>
+          {offline ? (
+            <h2 className="ai-brand-title" data-ai-brand-title="true">
+              <OfflineBrandLogo size={24} className="ai-brand-logo" />
+              <span>{tr(`עוזר ${OFFLINE_BRAND_NAME}`, `${OFFLINE_BRAND_NAME} assistant`)}</span>
+            </h2>
+          ) : (
+            <h2>{tr('🤖 עוזר AI', '🤖 AI assistant')}</h2>
+          )}
           <span
             className={classNames('provider-badge', {
               'gemini-on': offline && !!this.state.geminiStatus?.configured,

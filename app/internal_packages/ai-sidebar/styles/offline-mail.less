@@ -3162,3 +3162,60 @@ body.theme-ui-dark .offline-search-row-item .offline-search-folder {
   background: color-mix(in srgb, @component-active-color 22%, transparent);
   border-color: color-mix(in srgb, @component-active-color 70%, transparent);
 }
+
+/* Mail AI branding (t217): logo + short name in the ribbon tab row and the
+   AI panel header. Logical properties only; colours inherit from the ribbon /
+   panel so every light and dark palette works. */
+.offline-brand {
+  display: flex;
+  align-items: center;
+  align-self: center;
+  flex-shrink: 0;
+  gap: 6px;
+  margin-inline-end: 12px;
+  padding-block-end: 3px;
+  white-space: nowrap;
+  user-select: none;
+  cursor: default;
+  .offline-brand-logo {
+    display: block;
+    width: 24px;
+    height: 24px;
+    border-radius: 5px;
+  }
+  .offline-brand-name {
+    font-size: 13px;
+    font-weight: 700;
+    letter-spacing: 0.2px;
+    color: inherit;
+  }
+  .offline-brand-sub {
+    font-size: 11.5px;
+    opacity: 0.68;
+    color: inherit;
+  }
+  .offline-brand-dot {
+    margin-inline-end: 5px;
+  }
+}
+.offline-ribbon.compact .offline-brand {
+  margin-inline-end: 6px;
+}
+.ai-sidebar-header h2.ai-brand-title {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  min-width: 0;
+  .ai-brand-logo {
+    display: block;
+    flex-shrink: 0;
+    width: 24px;
+    height: 24px;
+    border-radius: 5px;
+  }
+  span {
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+}

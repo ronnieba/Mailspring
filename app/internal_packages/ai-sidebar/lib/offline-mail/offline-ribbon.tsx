@@ -29,6 +29,7 @@ import { startWriteWithAi } from './write-with-ai';
 import { ScopeMode } from '../core/types';
 import { offlineVersionLabel } from '../../../../src/offline-menu';
 import { OfflineSortKey, SORT_LABELS } from '../core/offline-list-view';
+import { OfflineBrand } from './offline-brand';
 
 type Btn = {
   id: string;
@@ -780,6 +781,7 @@ export class OfflineRibbon extends React.Component<Record<string, never>, State>
         data-offline-ribbon-compact={compact ? 'true' : 'false'}
       >
         <div className="offline-ribbon-tabs" role="tablist" aria-label={tr('תפריט', 'Menu')}>
+          <OfflineBrand compact={compact} />
           {showingMail() ? null : (
             <button
               type="button"

@@ -4,6 +4,7 @@ import fs from 'fs';
 import url from 'url';
 import { EventEmitter } from 'events';
 import { isWaylandSession } from './is-wayland';
+import { offlineAppIconPath } from './offline-branding';
 import { developerToolsAvailable } from '../developer-tools';
 import { XDG_DATA_PATHS, getFirstExistingPath } from '../utils/xdg-paths';
 import { prepareViewWebview, guardViewGuest } from './view-sessions';
@@ -160,6 +161,12 @@ export default class MailspringWindow extends EventEmitter {
         }
       }
       browserWindowOptions.icon = WindowIconPath;
+    }
+
+    // Offline experiment on Windows: its own "Mail AI" window/taskbar icon.
+    const offlineIcon = offlineAppIconPath(this.resourcePath);
+    if (offlineIcon) {
+      browserWindowOptions.icon = offlineIcon;
     }
 
     this.browserWindow = new BrowserWindow(browserWindowOptions);
