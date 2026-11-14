@@ -21,6 +21,8 @@ import {
 import { readOfflineMessageHead, OfflineIndexEntry } from '../core/offline-mail-index';
 import { extractOfflineSearchText } from '../core/offline-mail-mime';
 import { offlineMailStore } from './offline-mail-store';
+import { QA_MAX_MESSAGES, questionToSearchQuery } from '../core/offline-search-qa';
+import { setOfflineQuestionSearcher } from '../offline-archive-catalog';
 
 export type OfflineSearchScope = 'folder' | 'subtree' | 'all';
 export type OfflineSearchSort = 'relevance' | 'date';
@@ -374,6 +376,46 @@ class OfflineSearchStore {
     this._emit();
   }
 
+  /**
+   * "Ask about my mail": the best local matches for a natural-language
+   * question, by relevance, over the whole local copy (or folder: named in it).
+   * Respects local changes (moved / deleted / blocked are left out, like the
+   * views). Does not change the search box or the results list.
+   */
+  searchForQuestion(
+    question: string,
+    limit = QA_MAX_MESSAGES
+  ): { query: string; terms: string[]; ids: string[]; total: number } {
+    const qs = questionToSearchQuery(question);
+    if (!this._ix || !qs.query) {
+      return { ...qs, ids: [], total: 0 };
+    }
+    const p = parseSearchQuery(qs.query);
+    if (!p.terms.some((t) => !t.negate)) {
+      return { ...qs, ids: [], total: 0 };
+    }
+    const scope = p.folders.length ? this.scopeFolders(p) : null;
+    const { hits, total } = this._ix.search(p, {
+      folders: null,
+      sort: 'relevance',
+      limit: Math.max(limit * 10, 100),
+    });
+    const ids: string[] = [];
+    for (const h of hits) {
+      if (ids.length >= limit) {
+        break;
+      }
+      if (!offlineMailStore.getEntry(h.id) || !offlineMailStore.isListed(h.id)) {
+        continue;
+      }
+      if (!offlineMailStore.searchShows(h.id, false, scope)) {
+        continue;
+      }
+      ids.push(h.id);
+    }
+    return { ...qs, ids, total: Math.max(total, ids.length) };
+  }
+
   /** Folder changed while searching "this folder": search the new one. */
   onFolderChanged() {
     const cur = offlineMailStore.currentFolder;
@@ -451,3 +493,6 @@ class OfflineSearchStore {
 }
 
 export const offlineSearchStore = new OfflineSearchStore();
+
+// "Ask about my mail" in the AI panel runs its local search here (no UI change).
+setOfflineQuestionSearcher((q) => offlineSearchStore.searchForQuestion(q));

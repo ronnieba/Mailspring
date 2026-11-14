@@ -517,7 +517,8 @@ export interface GeminiDemoQueryInput {
 }
 
 export interface GeminiScopeFacts {
-  scopeKind: 'selected' | 'folder' | 'all';
+  /** 'search': the top local full-text search results for the user's question. */
+  scopeKind: 'selected' | 'folder' | 'all' | 'search';
   includesSubfolders: boolean;
   totalInScope: number;
   sent: number;
@@ -548,7 +549,10 @@ export function sanitizeGeminiScopeFacts(
   const r = raw as Record<string, unknown>;
   const total = nonNegInt(r.totalInScope);
   if (total === null) return undefined;
-  const kind = r.scopeKind === 'selected' || r.scopeKind === 'folder' ? r.scopeKind : 'all';
+  const kind =
+    r.scopeKind === 'selected' || r.scopeKind === 'folder' || r.scopeKind === 'search'
+      ? r.scopeKind
+      : 'all';
   return {
     scopeKind: kind,
     includesSubfolders: r.includesSubfolders === true,

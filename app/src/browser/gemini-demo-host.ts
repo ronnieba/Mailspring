@@ -445,7 +445,9 @@ export function formatScopeFacts(f: GeminiScopeFacts): string {
       ? 'messages the user selected'
       : f.scopeKind === 'folder'
         ? `one folder the user selected (${f.includesSubfolders ? 'including' : 'NOT including'} subfolders)`
-        : 'the whole local mail copy';
+        : f.scopeKind === 'search'
+          ? 'the top results of a local full-text search for the question (other mail was not searched by you and was not sent)'
+          : 'the whole local mail copy';
   return [
     `scope=${scope}`,
     `total_messages_in_scope=${f.totalInScope}`,

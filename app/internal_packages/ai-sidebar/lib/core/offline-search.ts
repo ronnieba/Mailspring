@@ -181,6 +181,11 @@ function lexQuery(
   return out;
 }
 
+/** True when `key:` is a search operator (from:, נושא:, has: ...). */
+export function isSearchOperatorKey(key: string): boolean {
+  return !!FIELD_ALIASES[String(key || '').toLowerCase()];
+}
+
 export function parseSearchQuery(q: string): ParsedSearchQuery {
   const res: ParsedSearchQuery = {
     terms: [],

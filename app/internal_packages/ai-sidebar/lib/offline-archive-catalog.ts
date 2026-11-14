@@ -15,7 +15,9 @@ import {
   GEMINI_SCOPED_BODY_SCAN,
   planScopedRetrieval,
   selectScopedForGemini,
+  cleanBodyForGemini,
 } from './core/gemini-context';
+import { capForQa, QA_MAX_BODY_CHARS } from './core/offline-search-qa';
 import { tr } from './core/offline-i18n';
 
 /**
@@ -427,7 +429,7 @@ export interface OfflineGeminiContext {
 
 /** Exact, locally computed facts about the whole scope (not only what is sent). */
 export interface OfflineScopeFacts {
-  scopeKind: 'selected' | 'folder' | 'all';
+  scopeKind: 'selected' | 'folder' | 'all' | 'search';
   includesSubfolders: boolean;
   totalInScope: number;
   sent: number;
@@ -445,7 +447,8 @@ function senderKey(from: string): string {
 export function computeOfflineScopeFacts(
   scope: ResolvedScope,
   rows: OfflineArchiveMessage[],
-  sent: number
+  sent: number,
+  kind?: OfflineScopeFacts['scopeKind']
 ): OfflineScopeFacts {
   let oldest = Infinity;
   let newest = -Infinity;
@@ -462,8 +465,9 @@ export function computeOfflineScopeFacts(
     }
   }
   return {
-    scopeKind:
-      scope.mode === 'selected-messages'
+    scopeKind: kind
+      ? kind
+      : scope.mode === 'selected-messages'
         ? 'selected'
         : scope.mode === 'current-folder'
           ? 'folder'
@@ -545,6 +549,111 @@ export async function buildOfflineGeminiContext(
     facts: computeOfflineScopeFacts(scope, rows, messages.length),
   };
 }
+
+// ------------------------------------------------ ask about my mail (search + AI)
+
+export type OfflineQuestionSearch = (question: string) => {
+  query: string;
+  terms: string[];
+  ids: string[];
+  total: number;
+};
+let questionSearcher: OfflineQuestionSearch | null = null;
+
+/** The offline mail window registers its local full-text search here. */
+export function setOfflineQuestionSearcher(fn: OfflineQuestionSearch | null): void {
+  questionSearcher = fn;
+}
+
+export function hasOfflineQuestionSearch(): boolean {
+  return !!questionSearcher;
+}
+
+export interface OfflineQuestionContext extends OfflineGeminiContext {
+  /** Local search query built from the question (shown to the user). */
+  query: string;
+  terms: string[];
+  /** Messages the local search matched (all of them, not only those sent). */
+  found: number;
+}
+
+/**
+ * Question → local full-text search → the text of the top results (search
+ * order kept), capped per message and in total. Nothing is sent from here.
+ */
+export async function buildOfflineQuestionContext(
+  question: string,
+  opts: { signal?: AbortSignal } = {}
+): Promise<OfflineQuestionContext> {
+  const empty = (query = '', terms: string[] = [], found = 0): OfflineQuestionContext => ({
+    messages: [],
+    inScope: found,
+    scanned: 0,
+    matched: 0,
+    sent: 0,
+    totalChars: 0,
+    facts: computeOfflineScopeFacts(SEARCH_SCOPE, [], 0, 'search'),
+    query,
+    terms,
+    found,
+  });
+  if (!questionSearcher) {
+    return empty();
+  }
+  const r = questionSearcher(question);
+  const rows = r.ids
+    .map((id) => byId.get(id) || catalog.find((m) => m.id === id))
+    .filter((m): m is OfflineArchiveMessage => !!m);
+  if (!rows.length) {
+    return empty(r.query, r.terms, r.total);
+  }
+  const scanned: Array<{ m: OfflineArchiveMessage; body: string }> = [];
+  for (let i = 0; i < rows.length; i++) {
+    if (opts.signal?.aborted) {
+      throw new Error('Operation cancelled');
+    }
+    scanned.push({
+      m: rows[i],
+      body: cleanBodyForGemini(bodyOf(rows[i]) || '', QA_MAX_BODY_CHARS),
+    });
+    if (i % 5 === 4) {
+      await new Promise((res) => setTimeout(res, 0));
+    }
+  }
+  const chosen = capForQa(scanned);
+  const messages: MessageRef[] = chosen.map((c) => ({
+    id: c.m.id,
+    threadId: c.m.threadId,
+    accountId: c.m.accountId,
+    subject: c.m.subject,
+    from: c.m.from,
+    date: c.m.date ? new Date(c.m.date) : new Date(0),
+    snippet: c.cleanBody.replace(/\s+/g, ' ').slice(0, 160),
+    folderId: c.m.folderId,
+    bodyText: c.cleanBody,
+  }));
+  const facts = computeOfflineScopeFacts(SEARCH_SCOPE, rows, messages.length, 'search');
+  facts.totalInScope = Math.max(r.total, rows.length);
+  return {
+    messages,
+    inScope: facts.totalInScope,
+    scanned: scanned.length,
+    matched: rows.length,
+    sent: messages.length,
+    totalChars: chosen.reduce((n, c) => n + c.cleanBody.length, 0),
+    facts,
+    query: r.query,
+    terms: r.terms,
+    found: facts.totalInScope,
+  };
+}
+
+const SEARCH_SCOPE: ResolvedScope = {
+  mode: 'all-mail',
+  accountIds: [OFFLINE_ARCHIVE_ACCOUNT_ID],
+  description: 'search results',
+  isEmpty: false,
+};
 
 export function getOfflineArchiveBody(messageId: string): string | null {
   const found = byId.get(messageId) || catalog.find((m) => m.id === messageId);

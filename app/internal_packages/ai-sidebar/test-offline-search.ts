@@ -423,6 +423,21 @@ async function main() {
     );
   });
 
+  await test('ask about my mail: a question becomes a local search; UI search untouched', () => {
+    offlineSearchStore.clear();
+    const name = (id: string) => path.basename(offlineMailStore.getEntry(id)!.rel, '.eml');
+    const r = offlineSearchStore.searchForQuestion('What did we book for the family trip?');
+    assert(r.query === 'book OR family OR trip', r.query);
+    assert(r.ids.length >= 1 && name(r.ids[0]) === '4', r.ids.map(name).join());
+    const h = offlineSearchStore.searchForQuestion('מה כתוב בפוליסה החדשה?');
+    assert(h.ids.map(name).includes('3'), h.ids.map(name).join());
+    const none = offlineSearchStore.searchForQuestion('מה? איך? למה?');
+    assert(none.ids.length === 0 && none.query === '', 'only question words');
+    const capped = offlineSearchStore.searchForQuestion('family OR meeting OR מלפפון', 1);
+    assert(capped.ids.length === 1, 'limit');
+    assert(!offlineSearchStore.active && offlineSearchStore.query === '', 'search box untouched');
+  });
+
   await test('no network code in the search modules', () => {
     for (const f of [
       'lib/core/offline-search.ts',

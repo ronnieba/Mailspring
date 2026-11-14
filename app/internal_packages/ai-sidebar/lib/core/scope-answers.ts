@@ -250,7 +250,9 @@ export function scopePhrase(f: GeminiScopeFacts): string {
           `בתיקייה הזו${f.includesSubfolders ? ' (כולל תת-תיקיות)' : ' (בלי תת-תיקיות)'}`,
           `In this folder${f.includesSubfolders ? ' (including subfolders)' : ' (without subfolders)'}`
         )
-      : tr('בכל העותק המקומי', 'In the whole local copy');
+      : f.scopeKind === 'search'
+        ? tr('בתוצאות החיפוש המקומי', 'In the local search results')
+        : tr('בכל העותק המקומי', 'In the whole local copy');
 }
 
 export const LOCAL_ANSWER_FOOTER =

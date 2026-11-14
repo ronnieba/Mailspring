@@ -5,6 +5,7 @@ import { highlightParts, SnippetPart, truncateMiddlePath } from '../core/offline
 import { offlineMailStore } from './offline-mail-store';
 import { offlineSearchStore, OfflineSearchScope, OfflineSearchSort } from './offline-search-store';
 import { OfflineStoreComponent } from './use-offline-store';
+import { askAiAboutMail } from './write-with-ai';
 
 const ROW = 78;
 const OVERSCAN = 6;
@@ -114,6 +115,19 @@ export class OfflineSearchBar extends OfflineStoreComponent {
               ✕
             </button>
           ) : null}
+          <button
+            type="button"
+            className="offline-search-ask-ai"
+            data-offline-search-ask-ai="true"
+            disabled={!s.query.trim()}
+            title={tr(
+              'שאל את ה-AI: כתבו שאלה בשפה חופשית (למשל "מתי הפגישה עם דנה?"). קודם חיפוש מקומי, ואז ה-AI בענן עונה רק מטקסט ההודעות המתאימות ביותר, עם קישורים אליהן. נשלח רק בלחיצה הזו.',
+              'Ask the AI: type a question in plain words (e.g. "When is the meeting with Dana?"). Local search first, then the cloud AI answers only from the text of the best matches, with links to them. Sent only on this click.'
+            )}
+            onClick={() => askAiAboutMail(s.query)}
+          >
+            {tr('🤖 שאל AI', '🤖 Ask AI')}
+          </button>
         </div>
         <div className="offline-search-options">
           <select

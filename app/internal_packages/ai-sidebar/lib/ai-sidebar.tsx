@@ -404,6 +404,14 @@ class AISidebarInner extends React.Component<Record<string, never>, AISidebarSta
     AISidebarStore.submitQuery(query);
   };
 
+  /** "🔎 Search & ask": local search over all mail first, then Gemini on the top results. */
+  _onAskAboutMail = () => {
+    const query = this.state.inputValue.trim();
+    if (!query || this.state.isProcessing) return;
+    this.setState({ inputValue: '' });
+    void AISidebarStore.askAboutMail(query);
+  };
+
   _onSummarizeSelected = () => {
     if (this.state.isProcessing) return;
     void AISidebarStore.summarizeSelectedMessage();
@@ -1817,6 +1825,23 @@ class AISidebarInner extends React.Component<Record<string, never>, AISidebarSta
                 ? tr('שלח ➤', 'Send ➤')
                 : tr('שלח', 'Send')}
           </button>
+          {isOfflineArchiveMode() && this.state.scopeMode !== 'open-draft' && (
+            <button
+              className={classNames('clear-btn', 'ai-ask-mail-btn', {
+                ready: hasText && !isProcessing,
+              })}
+              onClick={this._onAskAboutMail}
+              disabled={isProcessing || !hasText}
+              data-ai-ask-mail="true"
+              aria-label={tr('חפש בכל הדואר ושאל', 'Search all mail and ask')}
+              title={tr(
+                'חיפוש מקומי בכל הדואר לפי מילות השאלה, ואז Gemini עונה רק מ-12 ההודעות המתאימות ביותר (טקסט בלבד, עם קישורים להודעות). בלי Gemini מחובר: רק רשימת ההודעות שנמצאו, שום דבר לא נשלח.',
+                'Local search over all mail using the words in the question, then Gemini answers only from the top 12 matches (text only, with links to the messages). Without Gemini connected: just the list of matches; nothing is sent.'
+              )}
+            >
+              {tr('🔎 חפש ושאל', '🔎 Search & ask')}
+            </button>
+          )}
           {isOfflineArchiveMode() && this.state.scopeMode !== 'open-draft' && (
             <button
               className="clear-btn"

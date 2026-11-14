@@ -17,6 +17,22 @@ export function undoAiChange(): boolean {
   return false;
 }
 
+/**
+ * "🤖 Ask AI" from the search box: shows the AI panel and asks the question
+ * about all mail (local search first). Only called from an explicit click.
+ */
+export function askAiAboutMail(question: string): void {
+  const q = String(question || '').trim();
+  if (!q) {
+    return;
+  }
+  const loc = WorkspaceStore.Location.MessageListSidebar;
+  if (loc && WorkspaceStore.isLocationHidden(loc)) {
+    Actions.toggleWorkspaceLocationHidden(loc);
+  }
+  void AISidebarStore.askAboutMail(q);
+}
+
 export function startWriteWithAi(): void {
   const loc = WorkspaceStore.Location.MessageListSidebar;
   if (loc && WorkspaceStore.isLocationHidden(loc)) {

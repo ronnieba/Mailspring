@@ -66,6 +66,8 @@ import {
 } from './core/real-selected-mail';
 import {
   buildOfflineGeminiContext,
+  buildOfflineQuestionContext,
+  hasOfflineQuestionSearch,
   getOfflineScopeFacts,
   isOfflineArchiveBrowserDriven,
   navigateOfflineArchive,
@@ -1300,6 +1302,210 @@ class AISidebarStore extends MailspringStore {
       timestamp: new Date(),
       isMock: false,
     });
+  }
+
+  /**
+   * "Ask about my mail" (explicit click only). The question is first run as a
+   * local full-text search over the whole local copy; only the text of the top
+   * results (capped, no attachments) goes to Gemini in ONE request. Citations
+   * open the messages. Without Gemini connected, the local matches are listed
+   * and nothing is sent.
+   */
+  async askAboutMail(question: string) {
+    const q = String(question || '').trim();
+    if (!q || this._state.isProcessing || !isOfflineArchiveMode() || isDemoMode()) {
+      return;
+    }
+    if (!hasOfflineQuestionSearch()) {
+      this._state.error = tr('החיפוש המקומי עוד לא מוכן.', 'Local search is not ready yet.');
+      this.trigger();
+      return;
+    }
+    this._state.conversation.push({
+      id: `user-${Date.now()}`,
+      role: 'user',
+      content: `🔎🤖 ${q}`,
+      timestamp: new Date(),
+    });
+    const startedGeneration = nextQueryGeneration(this._queryGeneration);
+    this._queryGeneration = startedGeneration;
+    this._state.isProcessing = true;
+    this._state.error = null;
+    this._state.abortController = new AbortController();
+    this._state.progressPhase = 'local';
+    this._state.progress = {
+      totalEligible: null,
+      processed: 0,
+      withBodies: 0,
+      missingBodies: 0,
+      syncCoverage: null,
+      isComplete: false,
+      isCancelled: false,
+    };
+    this._inFlightMessageId = null;
+    this._inFlightSnapshotEpoch = 0;
+    this.trigger();
+    const stillCurrent = () =>
+      shouldAcceptAssistantResponse({
+        startedGeneration,
+        currentGeneration: this._queryGeneration,
+        aborted: !!this._state.abortController?.signal.aborted,
+      });
+    const sys = (content: string) =>
+      this._state.conversation.push({
+        id: `system-${Date.now()}`,
+        role: 'system',
+        content,
+        timestamp: new Date(),
+      });
+    try {
+      const signal = this._state.abortController.signal;
+      const ctx = await buildOfflineQuestionContext(q, { signal });
+      if (!stillCurrent()) {
+        return;
+      }
+      const searched = tr(
+        `🔎 חיפוש מקומי: ${ctx.query || '—'}`,
+        `🔎 Local search: ${ctx.query || '—'}`
+      );
+      if (!ctx.messages.length) {
+        sys(
+          `${searched}\n` +
+            tr(
+              'לא נמצאו הודעות מתאימות. לא נשלח דבר ל-Gemini. נסו מילים אחרות מהשאלה.',
+              'No matching messages. Nothing was sent to Gemini. Try other words.'
+            )
+        );
+        return;
+      }
+      const localCitations: Citation[] = ctx.messages.map((m) => ({
+        messageId: m.id,
+        threadId: m.threadId,
+        subject: m.subject,
+        from: m.from,
+        date: m.date,
+        snippet: m.snippet,
+      }));
+      await this.refreshGeminiStatus();
+      if (!stillCurrent()) {
+        return;
+      }
+      if (!this._state.geminiStatus.configured) {
+        this._state.conversation.push({
+          id: `assistant-${Date.now()}`,
+          role: 'assistant',
+          content:
+            tr(
+              `Gemini לא מחובר, לכן לא נשלח דבר. אלה ${ctx.sent} ההודעות שהחיפוש המקומי מצא (מתוך ${ctx.found}). לחצו על הודעה כדי לפתוח אותה.`,
+              `Gemini is not connected, so nothing was sent. These are the ${ctx.sent} messages the local search found (of ${ctx.found}). Click one to open it.`
+            ) + `\n\n---\n${searched}`,
+          citations: localCitations,
+          timestamp: new Date(),
+          isMock: true,
+        });
+        return;
+      }
+      this._state.progressPhase = 'gemini';
+      this._state.progress = {
+        totalEligible: ctx.sent,
+        processed: ctx.sent,
+        withBodies: ctx.sent,
+        missingBodies: 0,
+        syncCoverage: 100,
+        isComplete: false,
+        isCancelled: false,
+      };
+      this.trigger();
+      const scope: ResolvedScope = {
+        mode: 'selected-messages',
+        messageIds: ctx.messages.map((m) => m.id),
+        threadIds: ctx.messages.map((m) => m.threadId),
+        accountIds: Array.from(new Set(ctx.messages.map((m) => m.accountId))),
+        description: tr('תוצאות החיפוש המקומי', 'Local search results'),
+        isEmpty: false,
+      };
+      this._gemini.setGeneration(startedGeneration);
+      this._gemini.setQueryExtras({ mode: 'offline-archive-scoped', scopeFacts: ctx.facts });
+      const result = await this._gemini.processQuery(
+        q,
+        ctx.messages,
+        scope,
+        { ...DEFAULT_BUDGET, timeoutMs: OFFLINE_SEND_TIMEOUT_MS },
+        undefined,
+        signal
+      );
+      if (!stillCurrent()) {
+        return;
+      }
+      const citations: Citation[] = rebuildCitationsFromSources(result.citations, ctx.messages);
+      const validated = validateProviderPayload(
+        {
+          response: result.response,
+          citations,
+          tokensUsed: result.tokensUsed,
+          isMock: false,
+          mockLabel: GEMINI_DISPLAY_NAME,
+        },
+        {
+          allowedSourceIds: new Set(ctx.messages.map((m) => m.id)),
+          startedGeneration,
+          currentGeneration: this._queryGeneration,
+          aborted: !!this._state.abortController?.signal.aborted,
+          allowLiveOfflineScoped: true,
+          sourcesAreSynthetic: false,
+        }
+      );
+      if (!isAIBoundaryOk(validated)) {
+        if (isAIBoundaryFailure(validated)) {
+          this._state.error = validated.message;
+          sys(
+            `❌ ${tr('שגיאה', 'Error')}: תשובת Gemini נדחתה (${validated.reason}). ${validated.message}`
+          );
+        }
+        return;
+      }
+      const coverage = tr(
+        `${searched} · נמצאו ${ctx.found}, נשלחו ל-Gemini ${ctx.sent} הראשונות (טקסט בלבד, בלי קבצים מצורפים).`,
+        `${searched} · found ${ctx.found}, sent the top ${ctx.sent} to Gemini (text only, no attachments).`
+      );
+      const tokens = validated.result.tokensUsed
+        ? tr(` · ${validated.result.tokensUsed} טוקנים`, ` · ${validated.result.tokensUsed} tokens`)
+        : '';
+      // No citation from the model: still show where the answer came from.
+      const shown = validated.result.citations.length ? validated.result.citations : localCitations;
+      this._state.conversation.push({
+        id: `assistant-${Date.now()}`,
+        role: 'assistant',
+        content: `${validated.result.response}\n\n---\n${coverage}${tokens}`,
+        citations: shown,
+        timestamp: new Date(),
+        isMock: false,
+      });
+    } catch (err) {
+      if (!stillCurrent()) {
+        return;
+      }
+      const errorMsg = (err as Error).message;
+      const geminiReason = (err as Error & { geminiReason?: string }).geminiReason;
+      if (errorMsg !== 'Operation cancelled') {
+        this._state.error = errorMsg;
+        this._state.conversation.push({
+          id: `error-${Date.now()}`,
+          role: 'system',
+          content: `❌ ${tr('שגיאה: ', 'Error: ')}${errorMsg}`,
+          timestamp: new Date(),
+          geminiErrorKind: geminiReason,
+        });
+      }
+    } finally {
+      if (startedGeneration === this._queryGeneration) {
+        this._state.isProcessing = false;
+        this._state.abortController = null;
+        this._state.progressPhase = null;
+        this.trigger();
+      }
+      void this.refreshGeminiUsage();
+    }
   }
 
   /**
