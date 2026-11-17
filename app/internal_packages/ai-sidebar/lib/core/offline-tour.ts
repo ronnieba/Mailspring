@@ -67,6 +67,16 @@ export const TOUR_STEPS: TourStep[] = [
     ],
   },
   {
+    id: 'home-screen',
+    targets: ['[data-offline-welcome]'],
+    title: ['מסך הסיכום', 'The summary screen'],
+    body: [
+      'כשלא נבחרה הודעה מופיע כאן סיכום: כמה הודעות, לא נקראו ובכוכב, שולחים מובילים, פעילות של שבועיים והודעות אחרונות — וקיצורים מהירים. הכל מחושב במחשב, בלי AI.',
+      'With no message selected you get a summary here: counts, unread and starred, top senders, two weeks of activity and the newest mail — plus shortcuts. All computed locally, no AI.',
+    ],
+    missing: ['(לחצו Esc או בטלו את הבחירה כדי לראות אותו)', '(clear the selection to see it)'],
+  },
+  {
     id: 'search',
     targets: ['[data-offline-search-bar]'],
     title: ['חיפוש', 'Search'],
@@ -133,6 +143,17 @@ export const TOUR_STEPS: TourStep[] = [
     missing: ['(בחרו הודעה כדי לראות את הכפתורים)', '(select a message to see these buttons)'],
   },
   {
+    id: 'tags',
+    targets: ['[data-offline-ribbon-btn="act-tag"]', '.offline-list-tagfilter'],
+    tab: 'home',
+    title: ['תגיות צבע', 'Color tags'],
+    body: [
+      'תייגו הודעות (עבודה, חשבונות, משפחה או תגיות משלכם) מ"🏷️ תגית" או מהקליק הימני. פס צבע מופיע ברשימה, ואפשר לסנן לפי תגית ולתת לכללים לתייג לבד. רק במחשב הזה.',
+      'Tag messages (work, bills, family or your own) from "🏷️ Tag" or the right-click menu. A color strip shows in the list; filter by tag and let rules tag for you. This computer only.',
+    ],
+    missing: ['(בחרו הודעה כדי לראות את הכפתור)', '(select a message to see the button)'],
+  },
+  {
     id: 'viewer',
     targets: ['[data-offline-attachments]', '.offline-reader'],
     title: ['צפייה בקבצים מצורפים', 'Attachment viewer'],
@@ -147,8 +168,18 @@ export const TOUR_STEPS: TourStep[] = [
     tab: 'home',
     title: ['כללים', 'Rules'],
     body: [
-      'כמו ב-Outlook: "כל מה שמגיע מ... — העבר לתיקייה / כוכב / מחק / חסום". פועל על הדואר הקיים בלחיצה ועל דואר חדש כשהוא נטען. אפשר לבטל.',
-      'Like Outlook: "everything from ... — move / star / delete / block". Runs on existing mail when you click and on new mail as it loads. Undoable.',
+      'כמו ב-Outlook: "כל מה שמגיע מ... — העבר לתיקייה / כוכב / תגית / מחק / חסום". פועל על הדואר הקיים בלחיצה ועל דואר חדש כשהוא נטען. אפשר לבטל.',
+      'Like Outlook: "everything from ... — move / star / tag / delete / block". Runs on existing mail when you click and on new mail as it loads. Undoable.',
+    ],
+  },
+  {
+    id: 'look',
+    targets: ['[data-offline-ribbon-btn="appearance"]', '[data-offline-ribbon-group="text-size"]'],
+    tab: 'view',
+    title: ['מראה וגודל טקסט', 'Look and text size'],
+    body: [
+      'בהיר, כהה או אוטומטי (לפי Windows). "A−" ו-"A+" משנים את גודל הטקסט ברשימה, בקורא ובחלונית ה-AI — והבחירה נשמרת.',
+      'Light, dark or automatic (follows Windows). "A−" and "A+" change the text size in the list, reader and AI panel — and it is remembered.',
     ],
   },
   {
@@ -157,8 +188,8 @@ export const TOUR_STEPS: TourStep[] = [
     tab: 'settings',
     title: ['איפוס', 'Reset'],
     body: [
-      'כל השינויים המקומיים (העברות, כוכבים, חסימות, כללים) נשמרים רק כאן. "אפס את כל השינויים המקומיים" מחזיר הכל למצב המקורי.',
-      'All local changes (moves, stars, blocks, rules) live only here. "Reset all local changes" puts everything back as it was.',
+      'כל השינויים המקומיים (העברות, כוכבים, תגיות, חסימות, כללים) נשמרים רק כאן. "אפס את כל השינויים המקומיים" מחזיר הכל למצב המקורי.',
+      'All local changes (moves, stars, tags, blocks, rules) live only here. "Reset all local changes" puts everything back as it was.',
     ],
   },
   {
@@ -190,6 +221,14 @@ export const TOUR_TIPS: { [id: string]: [string, string] } = {
   rules: [
     'כלל = תנאים + פעולה. "הפעל עכשיו" על הדואר הקיים; כללים פעילים פועלים גם על דואר חדש. "בטל הפעלה אחרונה" מחזיר.',
     'A rule = conditions + one action. "Run now" for mail already here; enabled rules also act on new mail. "Undo last run" puts it back.',
+  ],
+  tags: [
+    'תגית = צבע + שם, רק במחשב הזה. הוספה/הסרה מ"🏷️ תגית" בסרגל, מהקליק הימני או מהשבב מתחת לנושא. סינון: "כל התגיות" מעל הרשימה. כלל יכול להוסיף תגית לבד. מחיקת תגית לא מוחקת הודעות.',
+    'A tag = a color + a name, this computer only. Add/remove from "🏷️ Tag" in the ribbon, the right-click menu or the chip under the subject. Filter: "All tags" above the list. A rule can add a tag for you. Deleting a tag never deletes messages.',
+  ],
+  welcome: [
+    'המספרים נספרים מהעותק המקומי (בלי חסומים, אשפה וספאם מקומיים). לחיצה על "לא נקראו" / "בכוכב" / "עם צרופות" מסננת את הרשימה; לחיצה על שולח מחפשת את ההודעות שלו.',
+    'Counts come from the local copy (without blocked senders and the local Trash/Spam). Clicking Unread / Starred / With attachments filters the list; clicking a sender searches their mail.',
   ],
   export: [
     'PDF לקריאה והדפסה; eml שומר את ההודעה המקורית (שיחה = קובץ אחד עם כל ההודעות). אתם בוחרים איפה לשמור.',

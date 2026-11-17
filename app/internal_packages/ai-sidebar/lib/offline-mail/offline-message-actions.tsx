@@ -16,6 +16,7 @@ import { offlineSearchStore } from './offline-search-store';
 import { LocalPlace, LOCAL_PLACE_LABELS, localPlaceOf } from '../core/offline-local-overlay';
 import { buildSandboxedHtmlDocument, ParsedOfflineMail } from '../core/offline-mail-mime';
 import { loadOfflineMessage } from '../core/offline-mail-index';
+import { OfflineHelpTip } from './offline-tour';
 
 type Listener = () => void;
 
@@ -25,6 +26,9 @@ class OfflineActionsUi {
   toast: Toast | null = null;
   picker: { ids: string[]; query: string } | null = null;
   blockedOpen = false;
+  /** Tag manager dialog (t243). */
+  tagsOpen = false;
+  tagDraft = '';
   /** Tests: build the print page but do not open the print dialog. */
   printDryRun = false;
   lastPrint: { bytes: number; hasHeader: boolean } | null = null;
@@ -393,9 +397,72 @@ export async function actPrint(id?: string) {
   win.loadFile(file).catch(() => cleanup());
 }
 
-// ---- Native "⋯" menu (reader header) -----------------------------------
+// ---- Local color tags (t243) -------------------------------------------
 
-export function showMessageMoreMenu(anchor: HTMLElement, ids: string[]) {
+export function actSetTag(tagId: string, on: boolean, ids?: string[]) {
+  const list = targets(ids);
+  const tag = offlineMailStore.tags().find((t) => t.id === tagId);
+  if (!list.length || !tag) {
+    return;
+  }
+  const undo = offlineMailStore.setTag(list, tagId, on);
+  done(
+    on
+      ? tr(
+          `🏷️ התגית „${tag.name}” נוספה ל${count(list.length)}`,
+          `🏷️ Tag "${tag.name}" added to ${count(list.length)}`
+        )
+      : tr(
+          `🏷️ התגית „${tag.name}” הוסרה מ${count(list.length)}`,
+          `🏷️ Tag "${tag.name}" removed from ${count(list.length)}`
+        ),
+    undo
+  );
+}
+
+export function actToggleTag(tagId: string, ids?: string[]) {
+  const list = targets(ids);
+  actSetTag(tagId, !offlineMailStore.allHaveTag(list, tagId), list);
+}
+
+export function openTagManager() {
+  offlineActionsUi.tagsOpen = true;
+  offlineActionsUi.tagDraft = '';
+  offlineActionsUi.emit();
+}
+
+/** Menu items: one checkbox per tag + "Manage tags…". */
+function tagMenuItems(ids: string[]): any[] {
+  const { MenuItem } = require('@electron/remote');
+  const s = offlineMailStore;
+  const out: any[] = s.tags().map(
+    (t) =>
+      new MenuItem({
+        label: `● ${t.name}`,
+        type: 'checkbox',
+        checked: ids.length > 0 && s.allHaveTag(ids, t.id),
+        enabled: ids.length > 0,
+        click: () => actToggleTag(t.id, ids),
+      })
+  );
+  if (out.length) out.push(new MenuItem({ type: 'separator' }));
+  out.push(
+    new MenuItem({ label: tr('🏷️ ניהול תגיות…', '🏷️ Manage tags…'), click: openTagManager })
+  );
+  return out;
+}
+
+export function showTagMenu(anchor: HTMLElement, ids?: string[]) {
+  const { Menu } = require('@electron/remote');
+  const menu = new Menu();
+  for (const it of tagMenuItems(targets(ids))) menu.append(it);
+  const r = anchor.getBoundingClientRect();
+  menu.popup({ x: Math.round(r.left), y: Math.round(r.bottom) });
+}
+
+// ---- Native "⋯" menu (reader header) / right-click on a list row --------
+
+export function showMessageMoreMenu(anchor: HTMLElement | { x: number; y: number }, ids: string[]) {
   const { Menu, MenuItem } = require('@electron/remote');
   const s = offlineMailStore;
   const menu = new Menu();
@@ -422,6 +489,9 @@ export function showMessageMoreMenu(anchor: HTMLElement, ids: string[]) {
       : tr('✉️ סמן כלא נקרא', '✉️ Mark as unread'),
     () => actSetUnread(!selectionUnread(ids), ids)
   );
+  const tagMenu = new Menu();
+  for (const it of tagMenuItems(ids)) tagMenu.append(it);
+  menu.append(new MenuItem({ label: tr('🏷️ תגית', '🏷️ Tag'), submenu: tagMenu }));
   menu.append(new MenuItem({ type: 'separator' }));
   item(tr('👤 הוסף שולח לאנשי הקשר', '👤 Add sender to contacts'), () => actAddContacts(ids));
   item(tr('⛔ חסום שולח', '⛔ Block sender'), () => actBlockSenders(ids));
@@ -437,8 +507,12 @@ export function showMessageMoreMenu(anchor: HTMLElement, ids: string[]) {
     () => require('./offline-export').openExport(ids[0]),
     ids.length === 1
   );
-  const r = anchor.getBoundingClientRect();
-  menu.popup({ x: Math.round(r.left), y: Math.round(r.bottom) });
+  if ('getBoundingClientRect' in anchor) {
+    const r = anchor.getBoundingClientRect();
+    menu.popup({ x: Math.round(r.left), y: Math.round(r.bottom) });
+  } else {
+    menu.popup({ x: Math.round(anchor.x), y: Math.round(anchor.y) });
+  }
 }
 
 // ---- Host: toast, folder picker, blocked senders ------------------------
@@ -631,12 +705,137 @@ export class OfflineActionsHost extends React.Component<Record<string, never>, H
     );
   }
 
+  _renderTags() {
+    if (!offlineActionsUi.tagsOpen) {
+      return null;
+    }
+    const s = offlineMailStore;
+    const close = () => {
+      offlineActionsUi.tagsOpen = false;
+      offlineActionsUi.emit();
+    };
+    const add = () => {
+      const name = offlineActionsUi.tagDraft.trim();
+      if (!name) return;
+      if (s.saveTag({ name, color: '' })) {
+        offlineActionsUi.tagDraft = '';
+        offlineActionsUi.emit();
+      }
+    };
+    const tags = s.tags();
+    return (
+      <div className="offline-modal-backdrop" onMouseDown={close}>
+        <div
+          className="offline-modal offline-tag-manager"
+          dir={offlineDir()}
+          role="dialog"
+          aria-label={tr('ניהול תגיות', 'Manage tags')}
+          data-offline-tag-manager={tags.length}
+          onMouseDown={(e) => e.stopPropagation()}
+          onKeyDown={(e) => e.key === 'Escape' && close()}
+        >
+          <div className="offline-modal-title">
+            {tr('🏷️ תגיות צבע', '🏷️ Color tags')} <OfflineHelpTip tip="tags" />
+          </div>
+          <div className="offline-modal-note">
+            {tr(
+              'תגיות נשמרות רק במחשב הזה. אפשר לתייג מהסרגל, מהקליק הימני ומכללים, ולסנן לפיהן ברשימה.',
+              'Tags are kept on this computer only. Tag from the ribbon, the right-click menu or rules, and filter the list by them.'
+            )}
+          </div>
+          <div className="offline-tag-rows">
+            {tags.map((t) => (
+              <div key={t.id} className="offline-tag-row" data-offline-tag-row={t.id}>
+                <input
+                  type="color"
+                  className="offline-tag-color"
+                  data-offline-tag-color={t.id}
+                  value={t.color}
+                  title={tr('צבע', 'Color')}
+                  onChange={(e) => s.saveTag({ id: t.id, name: t.name, color: e.target.value })}
+                />
+                <input
+                  type="text"
+                  dir="auto"
+                  className="offline-tag-name"
+                  data-offline-tag-name={t.id}
+                  defaultValue={t.name}
+                  maxLength={40}
+                  onBlur={(e) => {
+                    const v = e.target.value.trim();
+                    if (v && v !== t.name) s.saveTag({ id: t.id, name: v, color: t.color });
+                    else e.target.value = t.name;
+                  }}
+                  onKeyDown={(e) => e.key === 'Enter' && (e.target as HTMLInputElement).blur()}
+                />
+                <span className="offline-tag-usage">
+                  {tr(`${s.tagCount(t.id)} הודעות`, `${s.tagCount(t.id)} messages`)}
+                </span>
+                <button
+                  type="button"
+                  className="btn btn-small"
+                  data-offline-tag-delete={t.id}
+                  onClick={() => {
+                    const n = s.tagCount(t.id);
+                    if (
+                      !n ||
+                      offlineActionsUi.confirm(
+                        tr(
+                          `למחוק את התגית „${t.name}”? היא תוסר מ-${n} הודעות (ההודעות עצמן לא נמחקות).`,
+                          `Delete the tag "${t.name}"? It is removed from ${n} messages (the messages stay).`
+                        )
+                      )
+                    ) {
+                      s.deleteTag(t.id);
+                    }
+                  }}
+                >
+                  {tr('מחק', 'Delete')}
+                </button>
+              </div>
+            ))}
+          </div>
+          <div className="offline-tag-add">
+            <input
+              type="text"
+              dir="auto"
+              data-offline-tag-new="true"
+              placeholder={tr('שם תגית חדשה…', 'New tag name…')}
+              maxLength={40}
+              value={offlineActionsUi.tagDraft}
+              onChange={(e) => {
+                offlineActionsUi.tagDraft = e.target.value;
+                offlineActionsUi.emit();
+              }}
+              onKeyDown={(e) => e.key === 'Enter' && add()}
+            />
+            <button
+              type="button"
+              className="btn btn-small"
+              data-offline-tag-add="true"
+              disabled={!offlineActionsUi.tagDraft.trim()}
+              onClick={add}
+            >
+              {tr('הוסף', 'Add')}
+            </button>
+          </div>
+          <div className="offline-modal-actions">
+            <button type="button" className="btn" onClick={close}>
+              {tr('סגור', 'Close')}
+            </button>
+          </div>
+        </div>
+      </div>
+    );
+  }
+
   render() {
     const t = offlineActionsUi.toast;
     return (
       <>
         {this._renderPicker()}
         {this._renderBlocked()}
+        {this._renderTags()}
         {t ? (
           <div className="offline-toast" dir={offlineDir()} role="status" data-offline-toast={t.id}>
             <span className="offline-toast-text" dir="auto">

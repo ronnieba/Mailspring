@@ -54,7 +54,17 @@ import {
   openMovePicker,
   selectionStarred,
   selectionUnread,
+  showTagMenu,
+  openTagManager,
 } from './offline-message-actions';
+import {
+  appearanceButton,
+  showAppearanceMenu,
+  stepText,
+  textScale,
+  setTextScale,
+} from './offline-appearance';
+import { TEXT_SCALES } from '../core/offline-visual';
 import { localPlaceOf } from '../core/offline-local-overlay';
 import { attachReplyOriginals, replyOriginalsInfo } from './offline-reply-originals';
 import { OfflineRulesDialog, newRuleFromMessage, openRules } from './offline-rules-view';
@@ -428,6 +438,17 @@ export class OfflineRibbon extends React.Component<Record<string, never>, State>
         label: unread ? tr('סמן כנקרא', 'Mark read') : tr('סמן כלא נקרא', 'Mark unread'),
         title: tr('סימון נקרא / לא נקרא (מקומי)', 'Read / unread mark (local)'),
         onClick: () => actSetUnread(!unread, ids),
+      },
+      {
+        id: 'act-tag',
+        icon: '🏷️',
+        label: tr('תגית', 'Tag'),
+        menu: true,
+        title: tr(
+          'הוסף או הסר תגית צבע (עבודה, חשבונות, משפחה…) — רק במחשב הזה',
+          'Add or remove a color tag (work, bills, family…) — this computer only'
+        ),
+        onClick: (e) => showTagMenu(e.currentTarget, ids),
       },
       {
         id: 'act-block',
@@ -855,9 +876,56 @@ export class OfflineRibbon extends React.Component<Record<string, never>, State>
             ],
           },
           {
+            id: 'text-size',
+            label: tr('גודל טקסט', 'Text size'),
+            buttons: [
+              {
+                id: 'text-smaller',
+                icon: 'A−',
+                label: tr('טקסט קטן יותר', 'Smaller text'),
+                disabled: textScale() <= TEXT_SCALES[0],
+                title: tr(
+                  `גודל הטקסט ברשימה, בקורא ובחלונית ה-AI: ${Math.round(textScale() * 100)}% (נשמר)`,
+                  `Text size in the list, reader and AI panel: ${Math.round(textScale() * 100)}% (remembered)`
+                ),
+                onClick: () => stepText(-1),
+              },
+              {
+                id: 'text-bigger',
+                icon: 'A+',
+                label: tr('טקסט גדול יותר', 'Bigger text'),
+                disabled: textScale() >= TEXT_SCALES[TEXT_SCALES.length - 1],
+                title: tr(
+                  `גודל הטקסט ברשימה, בקורא ובחלונית ה-AI: ${Math.round(textScale() * 100)}% (נשמר)`,
+                  `Text size in the list, reader and AI panel: ${Math.round(textScale() * 100)}% (remembered)`
+                ),
+                onClick: () => stepText(1),
+              },
+              {
+                id: 'text-reset',
+                icon: 'A',
+                label: `${Math.round(textScale() * 100)}%`,
+                pressed: textScale() !== 1,
+                title: tr('חזרה לגודל טקסט רגיל', 'Back to the normal text size'),
+                onClick: () => setTextScale(1),
+              },
+            ],
+          },
+          {
             id: 'look',
             label: tr('מראה', 'Look'),
             buttons: [
+              {
+                id: 'appearance',
+                icon: appearanceButton().icon,
+                label: appearanceButton().label,
+                menu: true,
+                title: tr(
+                  'בהיר / כהה / אוטומטי (לפי הגדרת Windows)',
+                  'Light / dark / automatic (follows the Windows setting)'
+                ),
+                onClick: (e) => showAppearanceMenu(e.currentTarget),
+              },
               {
                 id: 'theme',
                 icon: '🎨',
@@ -1096,6 +1164,24 @@ export class OfflineRibbon extends React.Component<Record<string, never>, State>
                     label: tr('חזרה לדואר', 'Back to mail'),
                     onClick: () => sendCommand('application:show-mail'),
                   },
+              {
+                id: 'appearance-s',
+                icon: appearanceButton().icon,
+                label: appearanceButton().label,
+                menu: true,
+                title: tr(
+                  'בהיר / כהה / אוטומטי (לפי הגדרת Windows)',
+                  'Light / dark / automatic (follows the Windows setting)'
+                ),
+                onClick: (e) => showAppearanceMenu(e.currentTarget),
+              },
+              {
+                id: 'tags-s',
+                icon: '🏷️',
+                label: tr('תגיות', 'Tags'),
+                title: tr('ניהול תגיות צבע מקומיות', 'Manage local color tags'),
+                onClick: () => openTagManager(),
+              },
               {
                 id: 'theme-s',
                 icon: '🎨',

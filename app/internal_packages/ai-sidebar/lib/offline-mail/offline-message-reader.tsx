@@ -27,6 +27,10 @@ import {
 } from '../core/offline-attachments';
 import { openWithDefaultApp, saveBytesAs } from './offline-file-actions';
 import fs from 'fs';
+import { OfflineWelcome } from './offline-welcome';
+import { OfflineAvatar, OfflineIcon, OfflineTagChips } from './offline-visual-ui';
+import { actSetTag, showTagMenu } from './offline-message-actions';
+import { textScale } from './offline-appearance';
 
 type State = { showText: boolean; textIds: string[] };
 
@@ -184,7 +188,7 @@ function readerQuickActions(ids: string[], small = false): React.ReactNode {
         aria-label={starred ? tr('הסר כוכב', 'Remove star') : tr('סמן בכוכב', 'Star')}
         onClick={() => actToggleStar(ids)}
       >
-        {starred ? '★' : '☆'}
+        <OfflineIcon name={starred ? 'star-on' : 'star'} size={15} />
       </button>
       <button
         type="button"
@@ -274,6 +278,11 @@ export class OfflineMessageReader extends OfflineStoreComponent<Record<string, n
           }}
         >
           <span className="offline-thread-caret">{expanded ? '▾' : '▸'}</span>
+          <OfflineAvatar
+            from={m ? m.from : entry.from}
+            size={24}
+            className="offline-thread-avatar"
+          />
           <span className="offline-thread-from" dir="auto">
             {m ? m.from : entry.from}
           </span>
@@ -282,7 +291,11 @@ export class OfflineMessageReader extends OfflineStoreComponent<Record<string, n
               {otherFolder.name}
             </span>
           ) : null}
-          {entry.hasAttachments ? <span className="offline-thread-attach">📎</span> : null}
+          {entry.hasAttachments ? (
+            <span className="offline-thread-attach" title={tr('קבצים מצורפים', 'Attachments')}>
+              <OfflineIcon name="attach" />
+            </span>
+          ) : null}
           <span className="offline-thread-date" dir="auto">
             {m ? m.date : entry.date}
           </span>
@@ -359,7 +372,7 @@ export class OfflineMessageReader extends OfflineStoreComponent<Record<string, n
                     title={tr('גוף ההודעה', 'Message body')}
                     sandbox=""
                     referrerPolicy="no-referrer"
-                    srcDoc={buildSandboxedHtmlDocument(m.html as string)}
+                    srcDoc={buildSandboxedHtmlDocument(m.html as string, { zoom: textScale() })}
                   />
                 ) : (
                   <div className="offline-reader-text" dir="auto" data-offline-reader-body="text">
@@ -409,12 +422,34 @@ export class OfflineMessageReader extends OfflineStoreComponent<Record<string, n
         <h2 className="offline-reader-subject" dir="auto" data-offline-reader-subject="true">
           {subject}
         </h2>
+        {this._renderTags(s.actionIds().length ? s.actionIds() : [newest])}
         <div className="offline-thread-meta">
           {tr(`${t.ids.length} הודעות בשיחה`, `${t.ids.length} messages in this conversation`)}
         </div>
         <div className="offline-thread-list">
           {t.ids.map((id) => this._renderThreadMessage(id, id === newest))}
         </div>
+      </div>
+    );
+  }
+
+  /** Local tag chips under the subject (× removes, + adds). */
+  _renderTags(ids: string[]) {
+    const s = offlineMailStore;
+    const ids0 = ids.filter(Boolean);
+    const on = s.tags().filter((t) => s.allHaveTag(ids0, t.id));
+    return (
+      <div className="offline-reader-tags" data-offline-reader-tags={on.map((t) => t.id).join(' ')}>
+        <OfflineTagChips tags={on} onRemove={(t) => actSetTag(t.id, false, ids0)} />
+        <button
+          type="button"
+          className="offline-tag-add-btn"
+          data-offline-reader-tag-add="true"
+          title={tr('הוסף תגית (מקומי)', 'Add a tag (local)')}
+          onClick={(e) => showTagMenu(e.currentTarget, ids0)}
+        >
+          <OfflineIcon name="tag" size={12} /> {on.length ? '+' : tr('תגית', 'Tag')}
+        </button>
       </div>
     );
   }
@@ -442,13 +477,8 @@ export class OfflineMessageReader extends OfflineStoreComponent<Record<string, n
     }
     if (!open) {
       return (
-        <div className="offline-reader empty" data-offline-reader="none">
-          <div className="offline-reader-placeholder">
-            {tr(
-              'בחר הודעה כדי לקרוא אותה (עותק מקומי, קריאה בלבד).',
-              'Select a message to read it (local copy, read-only).'
-            )}
-          </div>
+        <div className="offline-reader empty welcome" data-offline-reader="none">
+          <OfflineWelcome />
         </div>
       );
     }
@@ -528,24 +558,28 @@ export class OfflineMessageReader extends OfflineStoreComponent<Record<string, n
         <h2 className="offline-reader-subject" dir="auto" data-offline-reader-subject="true">
           {m.subject}
         </h2>
-        <dl className="offline-reader-headers">
-          <dt>{tr('מאת', 'From')}</dt>
-          <dd dir="auto">{m.from}</dd>
-          {m.to ? (
-            <>
-              <dt>{tr('אל', 'To')}</dt>
-              <dd dir="auto">{m.to}</dd>
-            </>
-          ) : null}
-          {m.cc ? (
-            <>
-              <dt>{tr('עותק', 'Cc')}</dt>
-              <dd dir="auto">{m.cc}</dd>
-            </>
-          ) : null}
-          <dt>{tr('תאריך', 'Date')}</dt>
-          <dd>{m.date}</dd>
-        </dl>
+        {this._renderTags([open.id])}
+        <div className="offline-reader-from-row">
+          <OfflineAvatar from={m.from} size={40} className="offline-reader-avatar" />
+          <dl className="offline-reader-headers">
+            <dt>{tr('מאת', 'From')}</dt>
+            <dd dir="auto">{m.from}</dd>
+            {m.to ? (
+              <>
+                <dt>{tr('אל', 'To')}</dt>
+                <dd dir="auto">{m.to}</dd>
+              </>
+            ) : null}
+            {m.cc ? (
+              <>
+                <dt>{tr('עותק', 'Cc')}</dt>
+                <dd dir="auto">{m.cc}</dd>
+              </>
+            ) : null}
+            <dt>{tr('תאריך', 'Date')}</dt>
+            <dd>{m.date}</dd>
+          </dl>
+        </div>
         {renderMessageAttachments(open.id, m.attachments)}
         {useHtml ? (
           <iframe
@@ -555,7 +589,7 @@ export class OfflineMessageReader extends OfflineStoreComponent<Record<string, n
             title={tr('גוף ההודעה', 'Message body')}
             sandbox=""
             referrerPolicy="no-referrer"
-            srcDoc={buildSandboxedHtmlDocument(m.html as string)}
+            srcDoc={buildSandboxedHtmlDocument(m.html as string, { zoom: textScale() })}
           />
         ) : (
           <div className="offline-reader-text" dir="auto" data-offline-reader-body="text">

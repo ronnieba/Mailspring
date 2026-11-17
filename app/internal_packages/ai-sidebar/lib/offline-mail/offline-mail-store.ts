@@ -53,7 +53,11 @@ import {
 } from '../offline-archive-catalog';
 import {
   LocalPlace,
+  LocalTag,
   LOCAL_PLACE_LABELS,
+  MAX_TAGS,
+  newTagId,
+  sanitizeTags,
   OverlayData,
   OverlayMessage,
   applyOverlay,
@@ -68,6 +72,8 @@ import {
   writeOverlay,
 } from '../core/offline-local-overlay';
 import { tr } from '../core/offline-i18n';
+import { AnsweredMark, TAG_COLORS, answeredMarks, markFor } from '../core/offline-visual';
+import { offlineFolderRole } from '../core/offline-folder-roles';
 import {
   LocalRule,
   LocalRuleThen,
@@ -202,6 +208,9 @@ class OfflineMailStore {
   /** Quick filters (this session). */
   unreadOnly = false;
   starredOnly = false;
+  /** Quick filter by local tag id (this session). */
+  tagFilter: string | null = null;
+  private _answered: { key: string; map: Map<string, AnsweredMark> } | null = null;
   private _hidden = new Set<string>();
   private _rawById = new Map<string, OfflineIndexEntry>();
 
@@ -485,12 +494,138 @@ class OfflineMailStore {
   }
 
   /** Row flags: a conversation counts its messages in this folder. */
-  rowFlags(row: OfflineListRow): { unread: boolean; starred: boolean } {
+  rowFlags(row: OfflineListRow): {
+    unread: boolean;
+    starred: boolean;
+    tags: LocalTag[];
+    replied: boolean;
+    forwarded: boolean;
+  } {
     const ids = this.rowIdsInFolder(row);
+    const tagIds = new Set<string>();
+    let replied = false;
+    let forwarded = false;
+    for (const id of ids) {
+      for (const t of this.overlay.messages[id]?.tags || []) tagIds.add(t);
+      const a = this.answeredOf(id);
+      if (a?.replied) replied = true;
+      if (a?.forwarded) forwarded = true;
+    }
     return {
       unread: ids.some((id) => this.isUnread(id)),
       starred: ids.some((id) => this.isStarred(id)),
+      tags: this.tags().filter((t) => tagIds.has(t.id)),
+      replied,
+      forwarded,
     };
+  }
+
+  // ---- Local color tags (t243) ----
+
+  tags(): LocalTag[] {
+    return this.overlay.tags || [];
+  }
+
+  tagsOf(id: string): LocalTag[] {
+    const ids = this.overlay.messages[id]?.tags || [];
+    return this.tags().filter((t) => ids.includes(t.id));
+  }
+
+  /** Messages carrying a tag (in the whole mail copy). */
+  tagCount(tagId: string): number {
+    let n = 0;
+    for (const m of Object.values(this.overlay.messages)) if (m.tags && m.tags.includes(tagId)) n++;
+    return n;
+  }
+
+  /** True when every one of `ids` has the tag. */
+  allHaveTag(ids: string[], tagId: string): boolean {
+    return (
+      ids.length > 0 && ids.every((id) => (this.overlay.messages[id]?.tags || []).includes(tagId))
+    );
+  }
+
+  /** Add (on) or remove a tag on messages; undo restores the previous tags. */
+  setTag(ids: string[], tagId: string, on: boolean): OfflineUndo {
+    if (!this.tags().some((t) => t.id === tagId)) return () => undefined;
+    return this._patch(ids, (id) => {
+      const cur = this.overlay.messages[id]?.tags || [];
+      const next = on ? Array.from(new Set([...cur, tagId])) : cur.filter((t) => t !== tagId);
+      return { tags: next };
+    });
+  }
+
+  /** Create or update a tag definition. Returns the tag or null if invalid. */
+  saveTag(input: { id?: string; name: string; color: string }): LocalTag | null {
+    const name = String(input.name || '')
+      .trim()
+      .slice(0, 40);
+    if (!name) return null;
+    const list = this.tags().slice();
+    if (input.id) {
+      const i = list.findIndex((t) => t.id === input.id);
+      if (i < 0) return null;
+      list[i] = { ...list[i], name, color: input.color || list[i].color };
+    } else {
+      if (list.length >= MAX_TAGS) return null;
+      list.push({
+        id: newTagId(name, list),
+        name,
+        color: input.color || TAG_COLORS[list.length % TAG_COLORS.length],
+      });
+    }
+    this.overlay.tags = sanitizeTags(list);
+    this.overlayVersion++;
+    this._saveOverlay();
+    this._emit();
+    return this.overlay.tags.find((t) => t.name === name) || null;
+  }
+
+  /** Delete a tag: removed from every message and from rules that add it. */
+  deleteTag(tagId: string) {
+    this.overlay.tags = this.tags().filter((t) => t.id !== tagId);
+    const now = Date.now();
+    for (const [id, m] of Object.entries(this.overlay.messages)) {
+      if (m.tags && m.tags.includes(tagId)) {
+        patchMessage(this.overlay, id, { tags: m.tags.filter((t) => t !== tagId) }, now);
+      }
+    }
+    this.overlay.rules = this.overlay.rules.filter(
+      (r) => !(r.then.kind === 'tag' && r.then.tag === tagId)
+    );
+    if (this.tagFilter === tagId) this.tagFilter = null;
+    this.overlayVersion++;
+    this._saveOverlay();
+    this._rebuildView(false);
+  }
+
+  setTagFilter(tagId: string | null) {
+    this.tagFilter = tagId && this.tags().some((t) => t.id === tagId) ? tagId : null;
+    this._visibleCache = null;
+    this._rowsCache = null;
+    this._emit();
+  }
+
+  /** Replied / forwarded from this mailbox (a matching message in Sent). */
+  answeredOf(id: string): AnsweredMark | null {
+    const e = this._rawById.get(id);
+    if (!e || !e.msgId || !this.index) return null;
+    const key = `${this.index.builtAt}:${this.index.entries.length}`;
+    if (!this._answered || this._answered.key !== key) {
+      const roles = new Map<string, boolean>();
+      const isSent = (folder: string) => {
+        if (!roles.has(folder)) {
+          const parts = folder.split('/');
+          roles.set(
+            folder,
+            offlineFolderRole(parts[parts.length - 1], parts.length - 1) === 'sent'
+          );
+        }
+        return roles.get(folder) as boolean;
+      };
+      this._answered = { key, map: answeredMarks(this.index.entries, isSent) };
+    }
+    return markFor(this._answered.map, e.msgId);
   }
 
   rowIdsInFolder(row: OfflineListRow): string[] {
@@ -1103,6 +1238,11 @@ class OfflineMailStore {
     this._emit();
   }
 
+  /** Re-render listeners (appearance / text size changed). */
+  touch() {
+    this._emit();
+  }
+
   setDensity(density: OfflineListDensity) {
     if (this.density === density) {
       return;
@@ -1169,7 +1309,7 @@ class OfflineMailStore {
   visibleMessages(): OfflineIndexEntry[] {
     const key = `${this.currentFolder}\u0000${this.filter}\u0000${this.attachmentsOnly ? 1 : 0}\u0000${
       this.unreadOnly ? 1 : 0
-    }${this.starredOnly ? 1 : 0}\u0000${this.overlayVersion}`;
+    }${this.starredOnly ? 1 : 0}\u0000${this.tagFilter || ''}\u0000${this.overlayVersion}`;
     if (this._visibleCache && this._visibleCache.key === key) {
       return this._visibleCache.rows;
     }
@@ -1180,6 +1320,10 @@ class OfflineMailStore {
     }
     if (this.starredOnly) {
       list = list.filter((e) => this.isStarred(e.id));
+    }
+    if (this.tagFilter) {
+      const t = this.tagFilter;
+      list = list.filter((e) => (this.overlay.messages[e.id]?.tags || []).includes(t));
     }
     const q = this.filter.trim().toLowerCase();
     const rows = q ? list.filter((e) => `${e.subject} ${e.from}`.toLowerCase().includes(q)) : list;
@@ -1243,7 +1387,7 @@ class OfflineMailStore {
     const sort = this.sort;
     const key = `${this.currentFolder}\u0000${this.filter}\u0000${this.threaded ? 1 : 0}\u0000${
       this.attachmentsOnly ? 1 : 0
-    }${this.unreadOnly ? 1 : 0}${this.starredOnly ? 1 : 0}\u0000${sort.key}:${sort.dir}\u0000${
+    }${this.unreadOnly ? 1 : 0}${this.starredOnly ? 1 : 0}\u0000${this.tagFilter || ''}\u0000${sort.key}:${sort.dir}\u0000${
       this.overlayVersion
     }`;
     if (this._rowsCache && this._rowsCache.key === key) {

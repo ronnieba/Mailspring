@@ -4394,3 +4394,577 @@ body.theme-ui-dark {
     animation: none !important;
   }
 }
+
+// ---------------------------------------------------------------------------
+// t243 visual polish: bundled Hebrew font, text size, avatars, icons, tags,
+// welcome screen, unified AI bubbles and a "thinking" animation. Every rule
+// has a dark variant (ui-dark, and "automatic" when Windows is dark).
+// ---------------------------------------------------------------------------
+:root {
+  --ofl-text-scale: 1;
+  --ofl-bubble-user: #e8f0fe;
+  --ofl-bubble-user-fg: #1b2a41;
+  --ofl-bubble-ai: #f3f4f6;
+  --ofl-bubble-ai-fg: #1f2933;
+  --ofl-bubble-border: rgba(0, 0, 0, 0.06);
+  --ofl-source-bg: #ffffff;
+  --ofl-chip-bg: rgba(0, 0, 0, 0.04);
+  --ofl-card-bg: #ffffff;
+  --ofl-card-border: rgba(0, 0, 0, 0.09);
+  --ofl-icon: #6b7280;
+  --ofl-star: #eab308;
+}
+body.theme-ui-dark,
+body.theme-ui-darkside,
+body.theme-ui-ubuntu {
+  --ofl-bubble-user: #1e3a5f;
+  --ofl-bubble-user-fg: #e6eefb;
+  --ofl-bubble-ai: #2a3138;
+  --ofl-bubble-ai-fg: #e6e9ec;
+  --ofl-bubble-border: rgba(255, 255, 255, 0.07);
+  --ofl-source-bg: #20262c;
+  --ofl-chip-bg: rgba(255, 255, 255, 0.07);
+  --ofl-card-bg: rgba(255, 255, 255, 0.04);
+  --ofl-card-border: rgba(255, 255, 255, 0.1);
+  --ofl-icon: #9aa4ae;
+  --ofl-star: #facc15;
+}
+
+// Bundled Assistant font (fonts/Assistant-Variable.ttf, OFL) — offline UI only;
+// the message body iframe keeps its own font.
+body.ofl-font {
+  font-family: 'OfflineAssistant', 'Segoe UI', Arial, sans-serif;
+  input,
+  textarea,
+  select,
+  button {
+    font-family: inherit;
+  }
+  code,
+  pre,
+  kbd,
+  .citation-id,
+  .gemini-howto-cmd {
+    font-family: Consolas, 'Courier New', monospace;
+  }
+}
+
+// Text size (A− / A+): content areas zoom; list rows are taller in JS.
+.offline-message-row > *:not(.offline-tag-strip),
+.offline-reader-subject,
+.offline-reader-tags,
+.offline-reader-from-row,
+.offline-reader-text,
+.offline-thread-msg-head,
+.offline-thread-meta,
+.offline-welcome,
+.ai-sidebar .ai-sidebar-messages,
+.offline-live-panel .offline-live-body {
+  zoom: var(--ofl-text-scale, 1);
+}
+.offline-message-row > .offline-row-check {
+  zoom: 1;
+}
+
+// Sender avatars (initials on a stable color; generated locally).
+.offline-avatar {
+  display: inline-block;
+  border-radius: 50%;
+  color: #fff;
+  text-align: center;
+  font-weight: 700;
+  letter-spacing: 0.02em;
+  user-select: none;
+  flex: none;
+  overflow: hidden;
+  white-space: nowrap;
+  text-shadow: 0 1px 1px rgba(0, 0, 0, 0.18);
+}
+.offline-message-row .offline-row-avatar {
+  align-self: center;
+}
+.offline-reader-from-row {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  .offline-reader-headers {
+    flex: 1;
+    min-width: 0;
+  }
+}
+.offline-thread-msg-head .offline-thread-avatar {
+  margin-inline-end: 6px;
+  vertical-align: middle;
+}
+
+// Consistent stroke icons (attachment, star, replied, forwarded, tag).
+.offline-icon {
+  display: inline-block;
+  vertical-align: -2px;
+  flex: none;
+}
+.offline-row-flag {
+  flex: none;
+  display: inline-flex;
+  align-items: center;
+  color: var(--ofl-icon);
+  font-weight: normal;
+}
+.offline-row-replied {
+  color: #2e7d32;
+}
+.offline-row-forwarded {
+  color: #6a1b9a;
+}
+body.theme-ui-dark,
+body.theme-ui-darkside,
+body.theme-ui-ubuntu {
+  .offline-row-replied {
+    color: #81c784;
+  }
+  .offline-row-forwarded {
+    color: #ce93d8;
+  }
+}
+.offline-message-row .offline-row-star {
+  display: inline-flex;
+  align-items: center;
+  color: var(--ofl-icon);
+  &.on {
+    color: var(--ofl-star);
+  }
+}
+.offline-quick-btn[data-offline-quick='star'].on {
+  color: var(--ofl-star);
+}
+.offline-thread-attach {
+  color: var(--ofl-icon);
+}
+
+// Local color tags.
+.offline-tag-strip {
+  position: absolute;
+  inset-inline-end: 0;
+  top: 0;
+  bottom: 0;
+  width: 5px;
+  display: flex;
+  flex-direction: column;
+  > span {
+    flex: 1;
+  }
+}
+.offline-tag-chips {
+  display: inline-flex;
+  flex-wrap: wrap;
+  gap: 4px;
+}
+.offline-tag-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  padding: 1px 8px;
+  border-radius: 999px;
+  border: 1px solid;
+  background: color-mix(in srgb, var(--ofl-tag, #888) 14%, transparent);
+  font-size: 12px;
+  line-height: 18px;
+  .offline-tag-dot {
+    width: 8px;
+    height: 8px;
+    border-radius: 50%;
+  }
+  .offline-tag-chip-x {
+    border: 0;
+    background: transparent;
+    color: inherit;
+    opacity: 0.6;
+    padding: 0 0 0 2px;
+    cursor: pointer;
+    font-size: 13px;
+    line-height: 1;
+    &:hover {
+      opacity: 1;
+    }
+  }
+}
+.offline-reader-tags {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+  margin: -2px 0 8px;
+}
+.offline-tag-add-btn {
+  border: 1px dashed var(--ofl-card-border);
+  background: transparent;
+  color: var(--ofl-icon);
+  border-radius: 999px;
+  padding: 1px 8px;
+  font-size: 12px;
+  line-height: 18px;
+  cursor: pointer;
+  &:hover {
+    color: inherit;
+    border-style: solid;
+  }
+}
+.offline-list-tagfilter {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  select {
+    border: 0;
+    background: transparent;
+    color: inherit;
+    font-size: inherit;
+    padding: 0;
+    max-width: 120px;
+  }
+  &.active {
+    border-color: var(--ofl-tag, @offline-accent) !important;
+    box-shadow: inset 0 0 0 1px var(--ofl-tag, @offline-accent);
+  }
+  option {
+    color: @text-color;
+    background: @background-primary;
+  }
+}
+.offline-modal.offline-tag-manager {
+  width: 460px;
+  .offline-tag-rows {
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+    overflow-y: auto;
+    max-height: 40vh;
+  }
+  .offline-tag-row {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+  }
+  .offline-tag-color {
+    width: 28px;
+    height: 24px;
+    padding: 0;
+    border: 1px solid var(--ofl-card-border);
+    border-radius: 6px;
+    background: transparent;
+    cursor: pointer;
+  }
+  .offline-tag-name,
+  .offline-tag-add input {
+    flex: 1;
+    min-width: 0;
+    padding: 5px 8px;
+    border-radius: 6px;
+    border: 1px solid var(--ofl-border, @border-color-primary);
+    background: var(--ofl-list-bg, @background-primary);
+    color: inherit;
+  }
+  .offline-tag-usage {
+    font-size: 11px;
+    opacity: 0.65;
+    white-space: nowrap;
+  }
+  .offline-tag-add {
+    display: flex;
+    gap: 8px;
+    padding-top: 6px;
+    border-top: 1px solid var(--ofl-card-border);
+  }
+}
+
+// Welcome / summary screen (reader, nothing selected).
+.offline-reader.empty.welcome {
+  align-items: stretch;
+  justify-content: flex-start;
+  overflow-y: auto;
+}
+.offline-welcome {
+  max-width: 820px;
+  width: 100%;
+  margin: 0 auto;
+  padding: 8px 4px 16px;
+  .offline-welcome-title {
+    font-size: 24px;
+    font-weight: 700;
+  }
+  .offline-welcome-sub {
+    color: @text-color-subtle;
+    margin: 2px 0 14px;
+    font-size: 13px;
+  }
+  .offline-welcome-cards {
+    display: grid;
+    grid-template-columns: ~'repeat(auto-fill, minmax(min(100%, 104px), 1fr))';
+    gap: 10px;
+    margin-bottom: 14px;
+  }
+  .offline-welcome-card {
+    display: flex;
+    flex-direction: column;
+    align-items: flex-start;
+    gap: 2px;
+    padding: 10px 12px;
+    border-radius: 12px;
+    border: 1px solid var(--ofl-card-border);
+    background: var(--ofl-card-bg);
+    color: inherit;
+    text-align: start;
+    cursor: pointer;
+    transition: transform 0.12s ease, box-shadow 0.12s ease;
+    &:disabled {
+      cursor: default;
+    }
+    &:not(:disabled):hover {
+      transform: translateY(-1px);
+      box-shadow: 0 4px 12px rgba(0, 0, 0, 0.08);
+    }
+    .offline-welcome-card-icon {
+      font-size: 16px;
+    }
+    .offline-welcome-card-n {
+      font-size: 22px;
+      font-weight: 700;
+      line-height: 1.1;
+    }
+    .offline-welcome-card-label {
+      font-size: 12px;
+      color: @text-color-subtle;
+    }
+  }
+  .offline-welcome-grid {
+    display: grid;
+    grid-template-columns: ~'repeat(auto-fit, minmax(min(100%, 230px), 1fr))';
+    gap: 12px;
+  }
+  .offline-welcome-box {
+    border: 1px solid var(--ofl-card-border);
+    background: var(--ofl-card-bg);
+    border-radius: 12px;
+    padding: 10px 12px;
+    min-width: 0;
+    &.wide {
+      grid-column: ~'1 / -1';
+    }
+    h3 {
+      margin: 0 0 8px;
+      font-size: 13px;
+      font-weight: 700;
+      color: @text-color-subtle;
+    }
+  }
+  .offline-welcome-bars {
+    display: flex;
+    align-items: flex-end;
+    gap: 4px;
+    height: 90px;
+    .offline-welcome-bar {
+      flex: 1;
+      height: 100%;
+      display: flex;
+      align-items: flex-end;
+      border-radius: 4px;
+      background: var(--ofl-chip-bg);
+      > span {
+        display: block;
+        width: 100%;
+        min-height: 2px;
+        border-radius: 4px;
+        background: var(--ofl-accent, @component-active-color);
+      }
+    }
+  }
+  .offline-welcome-person,
+  .offline-welcome-recent {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    width: 100%;
+    padding: 4px 6px;
+    border: 0;
+    border-radius: 8px;
+    background: transparent;
+    color: inherit;
+    text-align: start;
+    cursor: pointer;
+    min-width: 0;
+    &:hover {
+      background: var(--ofl-chip-bg);
+    }
+  }
+  .offline-welcome-person-name,
+  .offline-welcome-recent-from {
+    flex: 1;
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    font-weight: 600;
+  }
+  .offline-welcome-recent-from {
+    flex: 0 0 28%;
+  }
+  .offline-welcome-recent-subject {
+    flex: 1;
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    color: @text-color-subtle;
+  }
+  .offline-welcome-person-n,
+  .offline-welcome-recent-date {
+    flex: none;
+    font-size: 12px;
+    color: @text-color-very-subtle;
+  }
+  .offline-welcome-quicks {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 8px;
+    margin-top: 14px;
+  }
+  .offline-welcome-quick {
+    padding: 6px 12px;
+    border-radius: 999px;
+    border: 1px solid var(--ofl-card-border);
+    background: var(--ofl-card-bg);
+    color: inherit;
+    cursor: pointer;
+    &:hover {
+      border-color: var(--ofl-accent, @component-active-color);
+    }
+  }
+  .offline-welcome-foot {
+    margin-top: 12px;
+    font-size: 11px;
+    color: @text-color-very-subtle;
+  }
+  .offline-welcome-empty {
+    font-size: 12px;
+    opacity: 0.7;
+  }
+}
+// The bundled font is a little wider in Hebrew: keep short buttons on one line.
+.ai-sidebar .input-actions button {
+  white-space: nowrap;
+}
+
+// AI panel: one bubble style for answers, questions, sources and the live
+// transcript.
+.ai-sidebar .message {
+  border-radius: 14px;
+  border: 1px solid var(--ofl-bubble-border);
+  &.message-user {
+    background: var(--ofl-bubble-user);
+    color: var(--ofl-bubble-user-fg);
+    border-start-end-radius: 4px;
+  }
+  &.message-assistant {
+    background: var(--ofl-bubble-ai);
+    color: var(--ofl-bubble-ai-fg);
+    border-start-start-radius: 4px;
+  }
+  .message-citations {
+    border-top-color: var(--ofl-bubble-border);
+    .citation-btn {
+      background: var(--ofl-source-bg);
+      color: inherit;
+      border: 1px solid var(--ofl-bubble-border);
+      border-inline-start: 3px solid var(--ofl-accent, @component-active-color);
+      border-radius: 8px;
+      &:hover {
+        background: var(--ofl-chip-bg);
+      }
+      .citation-subject {
+        color: inherit;
+      }
+    }
+  }
+}
+.offline-live-panel {
+  .offline-live-bubble {
+    border: 1px solid var(--ofl-bubble-border);
+    &.user {
+      background: var(--ofl-bubble-user);
+      color: var(--ofl-bubble-user-fg);
+    }
+    &.gemini {
+      background: var(--ofl-bubble-ai);
+      color: var(--ofl-bubble-ai-fg);
+    }
+  }
+}
+body.theme-ui-dark .offline-live-panel {
+  border-color: rgba(255, 255, 255, 0.12);
+  .offline-live-bubble.user {
+    background: var(--ofl-bubble-user);
+  }
+  .offline-live-bubble.gemini {
+    background: var(--ofl-bubble-ai);
+  }
+  .offline-live-head,
+  .offline-live-history,
+  .offline-live-foot {
+    border-color: rgba(255, 255, 255, 0.1);
+  }
+  .offline-live-history-item:hover,
+  .offline-live-history-item.current {
+    background: rgba(100, 160, 255, 0.14);
+  }
+}
+
+// "Thinking…" three dots while an answer is on its way.
+.ai-thinking {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 2px 0;
+  > span {
+    width: 7px;
+    height: 7px;
+    border-radius: 50%;
+    background: currentColor;
+    opacity: 0.35;
+    animation: ofl-think 1.2s ease-in-out infinite;
+  }
+  > span:nth-child(2) {
+    animation-delay: 0.15s;
+  }
+  > span:nth-child(3) {
+    animation-delay: 0.3s;
+  }
+  &.small > span {
+    width: 5px;
+    height: 5px;
+  }
+}
+.ai-sidebar .message.message-thinking {
+  align-self: flex-start;
+  padding: 10px 14px;
+  min-width: 0;
+}
+@keyframes ofl-think {
+  0%,
+  80%,
+  100% {
+    opacity: 0.25;
+    transform: translateY(0);
+  }
+  40% {
+    opacity: 0.9;
+    transform: translateY(-3px);
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .ai-thinking > span {
+    animation: none !important;
+    opacity: 0.6;
+  }
+  .offline-welcome .offline-welcome-card {
+    transition: none;
+  }
+}

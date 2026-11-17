@@ -43,8 +43,57 @@ export type OverlayMessage = {
   place?: LocalPlace;
   /** Moved to another (stored) folder. */
   folder?: string;
+  /** Local color tags (ids from OverlayData.tags). */
+  tags?: string[];
   at?: number;
 };
+
+/** A user-defined local tag (t243). */
+export type LocalTag = { id: string; name: string; color: string };
+export const MAX_TAGS = 30;
+export const MAX_TAGS_PER_MESSAGE = 8;
+const TAG_ID_RE = /^[a-z0-9-]{1,40}$/;
+const COLOR_RE = /^#[0-9a-f]{6}$/i;
+
+/** Suggested tags for a new profile (can be renamed / deleted). */
+export function defaultTags(): LocalTag[] {
+  return [
+    { id: 'work', name: 'עבודה', color: '#1e88e5' },
+    { id: 'bills', name: 'חשבונות', color: '#fb8c00' },
+    { id: 'family', name: 'משפחה', color: '#43a047' },
+  ];
+}
+
+export function sanitizeTags(raw: unknown): LocalTag[] {
+  const out: LocalTag[] = [];
+  const seen = new Set<string>();
+  for (const t of Array.isArray(raw) ? raw : []) {
+    if (!t || typeof t.id !== 'string' || !TAG_ID_RE.test(t.id) || seen.has(t.id)) continue;
+    const name = typeof t.name === 'string' ? t.name.trim().slice(0, 40) : '';
+    if (!name) continue;
+    seen.add(t.id);
+    out.push({
+      id: t.id,
+      name,
+      color: typeof t.color === 'string' && COLOR_RE.test(t.color) ? t.color : '#757575',
+    });
+    if (out.length >= MAX_TAGS) break;
+  }
+  return out;
+}
+
+export function newTagId(name: string, existing: LocalTag[], now = Date.now()): string {
+  const base =
+    String(name || '')
+      .toLowerCase()
+      .replace(/[^a-z0-9]+/g, '-')
+      .replace(/^-+|-+$/g, '')
+      .slice(0, 20) || 'tag';
+  let id = base === 'tag' ? `tag-${now.toString(36)}` : base;
+  let k = 2;
+  while (existing.some((t) => t.id === id)) id = `${base}-${k++}`;
+  return id;
+}
 
 export type BlockedSender = { email: string; name: string; at: number };
 export type SavedContact = { email: string; name: string; at: number };
@@ -58,6 +107,8 @@ export type OverlayData = {
   rules: LocalRule[];
   /** Last rule runs, newest last (for "Undo last run"). */
   ruleRuns: RuleRun[];
+  /** Local color tags (t243). */
+  tags: LocalTag[];
 };
 
 export function emptyOverlay(): OverlayData {
@@ -68,6 +119,7 @@ export function emptyOverlay(): OverlayData {
     contacts: [],
     rules: [],
     ruleRuns: [],
+    tags: defaultTags(),
   };
 }
 
@@ -84,8 +136,14 @@ export function cleanMessage(m: any): OverlayMessage | null {
   if (!out.place && typeof m.folder === 'string' && m.folder && m.folder.length < 1000) {
     out.folder = m.folder;
   }
+  if (Array.isArray(m.tags)) {
+    const tags = Array.from(
+      new Set(m.tags.filter((t: unknown) => typeof t === 'string' && TAG_ID_RE.test(t)))
+    ).slice(0, MAX_TAGS_PER_MESSAGE) as string[];
+    if (tags.length) out.tags = tags;
+  }
   if (typeof m.at === 'number' && isFinite(m.at)) out.at = m.at;
-  return out.star || out.unread || out.place || out.folder ? out : null;
+  return out.star || out.unread || out.place || out.folder || out.tags ? out : null;
 }
 
 function cleanPerson(p: any): { email: string; name: string; at: number } | null {
@@ -122,6 +180,19 @@ export function sanitizeOverlay(raw: any): OverlayData {
     if (c && !seen.has(c.email)) {
       seen.add(c.email);
       out.contacts.push(c);
+    }
+  }
+  out.tags = Array.isArray(raw.tags) ? sanitizeTags(raw.tags) : defaultTags();
+  const known = new Set(out.tags.map((t) => t.id));
+  for (const [id, m] of Object.entries(out.messages)) {
+    if (!m.tags) continue;
+    const keep = m.tags.filter((t) => known.has(t));
+    if (keep.length) m.tags = keep;
+    else {
+      delete m.tags;
+      const c = cleanMessage(m);
+      if (c) out.messages[id] = c;
+      else delete out.messages[id];
     }
   }
   out.rules = sanitizeRules(raw.rules);
@@ -217,7 +288,13 @@ export function patchMessage(
 ) {
   const cur: any = { ...(data.messages[id] || {}) };
   for (const [k, v] of Object.entries(patch)) {
-    if (v === undefined || v === false || v === null || v === '') {
+    if (
+      v === undefined ||
+      v === false ||
+      v === null ||
+      v === '' ||
+      (Array.isArray(v) && !v.length)
+    ) {
       delete cur[k];
     } else {
       cur[k] = v;
@@ -243,17 +320,20 @@ export function overlayCounts(data: OverlayData) {
   let starred = 0;
   let unread = 0;
   let moved = 0;
+  let tagged = 0;
   const places: { [p in LocalPlace]: number } = { trash: 0, archive: 0, spam: 0 };
   for (const m of Object.values(data.messages)) {
     if (m.star) starred++;
     if (m.unread) unread++;
     if (m.place) places[m.place]++;
     if (m.folder) moved++;
+    if (m.tags && m.tags.length) tagged++;
   }
   return {
     starred,
     unread,
     moved,
+    tagged,
     ...places,
     blocked: data.blocked.length,
     contacts: data.contacts.length,

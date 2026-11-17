@@ -22,10 +22,17 @@ export type LocalRuleWhen = {
   folder?: string;
 };
 
-export type LocalRuleActionKind = 'move' | 'star' | 'unread' | 'trash' | 'block';
-export const RULE_ACTIONS: LocalRuleActionKind[] = ['move', 'star', 'unread', 'trash', 'block'];
+export type LocalRuleActionKind = 'move' | 'star' | 'unread' | 'trash' | 'block' | 'tag';
+export const RULE_ACTIONS: LocalRuleActionKind[] = [
+  'move',
+  'star',
+  'unread',
+  'trash',
+  'block',
+  'tag',
+];
 
-export type LocalRuleThen = { kind: LocalRuleActionKind; folder?: string };
+export type LocalRuleThen = { kind: LocalRuleActionKind; folder?: string; tag?: string };
 
 export type LocalRule = {
   id: string;
@@ -86,6 +93,10 @@ export function sanitizeRule(r: any): LocalRule | null {
   if (t.kind === 'move') {
     if (typeof t.folder !== 'string' || !t.folder || t.folder.length >= 1000) return null;
     then.folder = t.folder;
+  }
+  if (t.kind === 'tag') {
+    if (typeof t.tag !== 'string' || !/^[a-z0-9-]{1,40}$/.test(t.tag)) return null;
+    then.tag = t.tag;
   }
   const num = (v: unknown) => (typeof v === 'number' && isFinite(v) && v >= 0 ? v : 0);
   return {
@@ -258,6 +269,10 @@ export function planRules(
         delete p.place;
         patch = p;
         changed = true;
+      } else if (k === 'tag' && r.then.tag && !(cur.tags || []).includes(r.then.tag)) {
+        cur.tags = [...(cur.tags || []), r.then.tag];
+        patch = { ...(patch || {}), tags: cur.tags.slice() };
+        changed = true;
       } else if (k === 'block') {
         const s = opts.senderOf(t.from);
         if (s.email && !blocked.has(s.email)) {
@@ -279,6 +294,7 @@ const ACTION_LABELS: { [k in LocalRuleActionKind]: [string, string] } = {
   unread: ['סמן כלא נקרא', 'Mark as unread'],
   trash: ['מחק (לאשפה המקומית)', 'Delete (to local Trash)'],
   block: ['חסום את השולח', 'Block the sender'],
+  tag: ['הוסף תגית', 'Add tag'],
 };
 
 export function ruleActionLabel(kind: LocalRuleActionKind, lang: 'he' | 'en'): string {
@@ -289,7 +305,8 @@ export function ruleActionLabel(kind: LocalRuleActionKind, lang: 'he' | 'en'): s
 export function describeRule(
   r: Pick<LocalRule, 'when' | 'then'>,
   lang: 'he' | 'en',
-  folderName: (p: string) => string = (p) => p
+  folderName: (p: string) => string = (p) => p,
+  tagName: (id: string) => string = (id) => id
 ): string {
   const he = lang === 'he';
   const w = r.when;
@@ -303,7 +320,8 @@ export function describeRule(
   const cond = parts.join(he ? ' וגם ' : ' and ');
   const act =
     ruleActionLabel(r.then.kind, lang) +
-    (r.then.kind === 'move' && r.then.folder ? `: "${folderName(r.then.folder)}"` : '');
+    (r.then.kind === 'move' && r.then.folder ? `: "${folderName(r.then.folder)}"` : '') +
+    (r.then.kind === 'tag' && r.then.tag ? `: "${tagName(r.then.tag)}"` : '');
   return he ? `אם ${cond} ← ${act}` : `If ${cond} → ${act}`;
 }
 

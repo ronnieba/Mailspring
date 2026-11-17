@@ -1,13 +1,21 @@
 import React from 'react';
 import classNames from 'classnames';
-import { tr, offlineDir, offlineDateLocale } from '../core/offline-i18n';
+import { tr, offlineDir, offlineLang } from '../core/offline-i18n';
+import { friendlyDate, fullDate } from '../core/offline-visual';
+import { textScale } from './offline-appearance';
+import { OfflineAvatar, OfflineIcon, OfflineTagStrip } from './offline-visual-ui';
 import { offlineMailStore, OfflineListRow } from './offline-mail-store';
 import { offlineDraftsStore } from './offline-drafts-store';
 import { OfflineDraftsList } from './offline-drafts-view';
 import { OfflineStoreComponent } from './use-offline-store';
 import { offlineSearchStore } from './offline-search-store';
 import { OfflineSearchBar, OfflineSearchResults } from './offline-search-view';
-import { actDelete, actToggleStar, actRestore } from './offline-message-actions';
+import {
+  actDelete,
+  actToggleStar,
+  actRestore,
+  showMessageMoreMenu,
+} from './offline-message-actions';
 import {
   OFFLINE_SORT_KEYS,
   OfflineSortKey,
@@ -17,25 +25,16 @@ import {
 
 const OVERSCAN = 8;
 
-/** Row height for the current density (compact = one line, expanded = three). */
+/** Row height for the current density (compact = one line, expanded = three),
+ * grown with the remembered text size (A− / A+). */
 function rowHeight(): number {
-  return ROW_HEIGHTS[offlineMailStore.density] || ROW_HEIGHTS.expanded;
+  const base = ROW_HEIGHTS[offlineMailStore.density] || ROW_HEIGHTS.expanded;
+  return Math.round(base * textScale());
 }
 
+/** Friendly list date: היום 14:05 / אתמול / weekday / 12 בנוב׳ / 3.2.24. */
 function formatDate(ts: number): string {
-  if (!ts) {
-    return '';
-  }
-  const d = new Date(ts);
-  const now = new Date();
-  if (d.toDateString() === now.toDateString()) {
-    return d.toLocaleTimeString(offlineDateLocale(), { hour: '2-digit', minute: '2-digit' });
-  }
-  return d.toLocaleDateString(offlineDateLocale(), {
-    year: 'numeric',
-    month: 'short',
-    day: 'numeric',
-  });
+  return friendlyDate(ts, Date.now(), offlineLang());
 }
 
 function shortFrom(from: string): string {
@@ -189,7 +188,9 @@ export class OfflineMessageList extends OfflineStoreComponent<Record<string, nev
           'is-thread': isThread,
           unread: flags.unread,
           starred: flags.starred,
+          tagged: flags.tags.length > 0,
         })}
+        data-offline-tags={flags.tags.length ? flags.tags.map((t) => t.id).join(' ') : undefined}
         data-offline-unread={flags.unread ? 'true' : undefined}
         data-offline-starred={flags.starred ? 'true' : undefined}
         style={{ top: i * ROW_HEIGHT, height: ROW_HEIGHT }}
@@ -205,6 +206,16 @@ export class OfflineMessageList extends OfflineStoreComponent<Record<string, nev
             range: ev.shiftKey,
           })
         }
+        onContextMenu={(ev) => {
+          ev.preventDefault();
+          if (!selected) {
+            offlineMailStore.select(row.key, {});
+          }
+          const ids = offlineMailStore.actionIds();
+          if (ids.length) {
+            showMessageMoreMenu({ x: ev.clientX, y: ev.clientY }, ids);
+          }
+        }}
       >
         <span
           className={classNames('offline-row-check', { checked: selected })}
@@ -228,6 +239,8 @@ export class OfflineMessageList extends OfflineStoreComponent<Record<string, nev
         >
           {selected ? '✓' : ''}
         </span>
+        <OfflineTagStrip tags={flags.tags} />
+        <OfflineAvatar from={e.from} size={compact ? 22 : 34} className="offline-row-avatar" />
         <div className="offline-row-main">
           <div className="offline-row-line1">
             <span className="offline-row-from" dir="auto">
@@ -255,11 +268,34 @@ export class OfflineMessageList extends OfflineStoreComponent<Record<string, nev
               </span>
             ) : null}
             {hasAttachments ? (
-              <span className="offline-row-attach" title={tr('קבצים מצורפים', 'Attachments')}>
-                📎
+              <span
+                className="offline-row-attach offline-row-flag"
+                title={tr('קבצים מצורפים', 'Attachments')}
+              >
+                <OfflineIcon name="attach" />
               </span>
             ) : null}
-            <span className="offline-row-date">{formatDate(e.ts)}</span>
+            {flags.replied ? (
+              <span
+                className="offline-row-replied offline-row-flag"
+                data-offline-row-replied="true"
+                title={tr('נענתה (יש תשובה ב״נשלח״)', 'Replied (a reply is in Sent)')}
+              >
+                <OfflineIcon name="reply" />
+              </span>
+            ) : null}
+            {flags.forwarded ? (
+              <span
+                className="offline-row-forwarded offline-row-flag"
+                data-offline-row-forwarded="true"
+                title={tr('הועברה (נמצאה ב״נשלח״)', 'Forwarded (found in Sent)')}
+              >
+                <OfflineIcon name="forward" />
+              </span>
+            ) : null}
+            <span className="offline-row-date" title={fullDate(e.ts, offlineLang())}>
+              {formatDate(e.ts)}
+            </span>
             <button
               type="button"
               className={classNames('offline-row-star', { on: flags.starred })}
@@ -276,7 +312,7 @@ export class OfflineMessageList extends OfflineStoreComponent<Record<string, nev
                 actToggleStar(isThread ? offlineMailStore.rowIdsInFolder(row) : [e.id]);
               }}
             >
-              {flags.starred ? '★' : '☆'}
+              <OfflineIcon name={flags.starred ? 'star-on' : 'star'} />
             </button>
           </div>
           {compact ? null : (
@@ -377,6 +413,35 @@ export class OfflineMessageList extends OfflineStoreComponent<Record<string, nev
         >
           {tr('⭐ בכוכב', '⭐ Starred')}
         </button>
+        {s.tags().length ? (
+          <label
+            className={classNames('offline-list-chip offline-list-tagfilter', {
+              active: !!s.tagFilter,
+            })}
+            title={tr('הצג רק הודעות עם תגית', 'Show only messages with a tag')}
+            style={
+              s.tagFilter
+                ? ({
+                    ['--ofl-tag' as any]: s.tags().find((t) => t.id === s.tagFilter)?.color,
+                  } as any)
+                : undefined
+            }
+          >
+            <OfflineIcon name="tag" size={12} />
+            <select
+              data-offline-tag-filter={s.tagFilter || ''}
+              value={s.tagFilter || ''}
+              onChange={(e) => s.setTagFilter(e.target.value || null)}
+            >
+              <option value="">{tr('כל התגיות', 'All tags')}</option>
+              {s.tags().map((t) => (
+                <option key={t.id} value={t.id}>
+                  {t.name}
+                </option>
+              ))}
+            </select>
+          </label>
+        ) : null}
         {s.overlay.blocked.length ? (
           <button
             type="button"

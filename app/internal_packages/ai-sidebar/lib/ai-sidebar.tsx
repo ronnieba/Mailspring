@@ -4,7 +4,7 @@
  */
 import React from 'react';
 import { localized, Rx } from 'mailspring-exports';
-import { FluxContainer, Spinner } from 'mailspring-component-kit';
+import { FluxContainer } from 'mailspring-component-kit';
 import AISidebarStore from './ai-sidebar-store';
 import { ScopeMode, RetrievalMode, ConversationMessage, Citation } from './core/types';
 import { DemoMessagePreview, isDemoMode } from './synthetic-demo';
@@ -1407,6 +1407,20 @@ class AISidebarInner extends React.Component<Record<string, never>, AISidebarSta
     return (
       <div className="ai-sidebar-messages">
         {conversation.map((msg) => this._renderMessage(msg))}
+        {this.state.isProcessing ? (
+          <div
+            className="message message-assistant message-thinking"
+            data-ai-thinking-bubble="true"
+          >
+            <div className="message-content">
+              <span className="ai-thinking" role="status" aria-label={tr('חושב…', 'Thinking…')}>
+                <span />
+                <span />
+                <span />
+              </span>
+            </div>
+          </div>
+        ) : null}
         <div ref={this._messagesEndRef} />
       </div>
     );
@@ -1515,7 +1529,11 @@ class AISidebarInner extends React.Component<Record<string, never>, AISidebarSta
 
     return (
       <div className="ai-sidebar-progress">
-        <Spinner visible />
+        <span className="ai-thinking small" data-ai-thinking="true" aria-hidden="true">
+          <span />
+          <span />
+          <span />
+        </span>
         <span className="progress-text">
           {this.state.progressPhase === 'local'
             ? tr('מחפש בעותק המקומי... ', 'Searching the local copy... ') +

@@ -21,6 +21,7 @@ import * as offlineVoiceModule from './offline-voice';
 import { proofreadDraftViaIpc } from '../gemini-ipc-transport';
 import AISidebarStore from '../ai-sidebar-store';
 import { offlineLang, offlineLangBodyClass, offlineDir } from '../core/offline-i18n';
+import * as offlineAppearance from './offline-appearance';
 
 /** Mark <body> with the offline UI language so styles can follow it. */
 export function applyOfflineLanguageToDocument(doc: Document = document): void {
@@ -33,6 +34,8 @@ export function applyOfflineLanguageToDocument(doc: Document = document): void {
 
 export function registerOfflineMailBrowser(archivePath: string, sidebar: any) {
   applyOfflineLanguageToDocument();
+  offlineAppearance.installOfflineAppearance();
+  offlineAppearance.onAppearanceChange(() => offlineMailStore.touch());
   ComponentRegistry.register(OfflineFolderSidebar, {
     location: WorkspaceStore.Location.RootSidebar,
   });
@@ -153,6 +156,7 @@ export function registerOfflineMailBrowser(archivePath: string, sidebar: any) {
     exportHooks: offlineExportHooks,
     openExport,
     voice: { ...offlineVoiceModule },
+    appearance: offlineAppearance,
   };
   void offlineMailStore.start(archivePath, cachePath);
   // Window size/position/maximized state is restored by the main process

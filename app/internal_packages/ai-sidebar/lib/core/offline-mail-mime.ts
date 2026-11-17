@@ -670,7 +670,9 @@ export function containsHebrew(s: string): boolean {
  * same-origin). The CSP blocks every network fetch: remote images, fonts,
  * stylesheets, frames and forms. Only data: images (inline cid parts) render.
  */
-export function buildSandboxedHtmlDocument(html: string): string {
+export function buildSandboxedHtmlDocument(html: string, opts: { zoom?: number } = {}): string {
+  const z = Number(opts.zoom);
+  const zoomCss = Number.isFinite(z) && z !== 1 && z >= 0.5 && z <= 2 ? `html{zoom:${z};}` : '';
   const csp =
     "default-src 'none'; img-src data:; style-src 'unsafe-inline'; font-src data:; form-action 'none'; base-uri 'none'";
   const cleaned = html
@@ -682,7 +684,9 @@ export function buildSandboxedHtmlDocument(html: string): string {
     `<meta http-equiv="Content-Security-Policy" content="${csp}">` +
     '<style>html,body{margin:0;padding:8px 12px;font-family:"Segoe UI",Arial,sans-serif;font-size:14px;' +
     'color:#222;background:#fff;overflow-wrap:anywhere;}img{max-width:100%;height:auto;}' +
-    'table{max-width:100%;}img:not([src^="data:"]){display:none !important;}</style></head><body dir="auto">' +
+    'table{max-width:100%;}img:not([src^="data:"]){display:none !important;}' +
+    zoomCss +
+    '</style></head><body dir="auto">' +
     cleaned +
     '</body></html>'
   );

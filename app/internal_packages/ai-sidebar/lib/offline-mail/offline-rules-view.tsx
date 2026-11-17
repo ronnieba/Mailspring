@@ -113,7 +113,7 @@ export function editRule(r: LocalRule) {
     hasAttachment: !!r.when.hasAttachment,
     folder: r.when.folder || '',
     kind: r.then.kind,
-    target: r.then.folder || '',
+    target: r.then.folder || r.then.tag || '',
     runNow: false,
   };
   offlineRulesUi.emit();
@@ -175,6 +175,11 @@ export function saveRuleForm(): LocalRule | null {
     offlineRulesUi.emit();
     return null;
   }
+  if (f.kind === 'tag' && !offlineMailStore.tags().some((t) => t.id === f.target)) {
+    offlineRulesUi.form = { ...f, error: tr('בחרו איזו תגית להוסיף.', 'Choose the tag to add.') };
+    offlineRulesUi.emit();
+    return null;
+  }
   if (f.kind === 'move' && !f.target) {
     offlineRulesUi.form = {
       ...f,
@@ -187,7 +192,11 @@ export function saveRuleForm(): LocalRule | null {
     id: f.id,
     name: f.name.trim(),
     when,
-    then: { kind: f.kind, folder: f.kind === 'move' ? f.target : undefined },
+    then: {
+      kind: f.kind,
+      folder: f.kind === 'move' ? f.target : undefined,
+      tag: f.kind === 'tag' ? f.target : undefined,
+    },
   });
   if (!rule) {
     offlineRulesUi.form = { ...f, error: tr('לא ניתן לשמור את הכלל.', 'Could not save the rule.') };
@@ -209,6 +218,11 @@ function folderOptions(): { path: string; label: string }[] {
     .allFolderNodes()
     .filter((n) => !localPlaceOf(n.path))
     .map((n) => ({ path: n.path, label: `${'\u00a0\u00a0'.repeat(n.depth)}${n.name}` }));
+}
+
+function tagName(id: string): string {
+  const t = offlineMailStore.tags().find((x) => x.id === id);
+  return t ? t.name : id;
 }
 
 function folderName(p: string): string {
@@ -326,7 +340,7 @@ export class OfflineRulesDialog extends React.Component<Record<string, never>, S
                 name="offline-rule-kind"
                 data-offline-rule-kind={k}
                 checked={f.kind === k}
-                onChange={() => this._set({ kind: k })}
+                onChange={() => this._set({ kind: k, target: k === f.kind ? f.target : '' })}
               />
               {ruleActionLabel(k, offlineLang())}
             </label>
@@ -344,6 +358,23 @@ export class OfflineRulesDialog extends React.Component<Record<string, never>, S
               {folders.map((o) => (
                 <option key={o.path} value={o.path}>
                   {o.label}
+                </option>
+              ))}
+            </select>
+          </label>
+        ) : null}
+        {f.kind === 'tag' ? (
+          <label className="offline-rule-field">
+            <span>{tr('תגית', 'Tag')}</span>
+            <select
+              data-offline-rule-input="tag"
+              value={f.target}
+              onChange={(e) => this._set({ target: e.target.value })}
+            >
+              <option value="">{tr('בחרו תגית…', 'Choose a tag…')}</option>
+              {offlineMailStore.tags().map((t) => (
+                <option key={t.id} value={t.id}>
+                  {t.name}
                 </option>
               ))}
             </select>
@@ -430,7 +461,7 @@ export class OfflineRulesDialog extends React.Component<Record<string, never>, S
                     </div>
                   ) : null}
                   <div className="offline-rule-desc" dir="auto">
-                    {describeRule(r, lang, folderName)}
+                    {describeRule(r, lang, folderName, tagName)}
                   </div>
                   <div className="offline-rule-meta">
                     {tr(`שינה עד עכשיו: ${r.applied}`, `Changed so far: ${r.applied}`)}
