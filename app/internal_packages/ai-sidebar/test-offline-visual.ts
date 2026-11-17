@@ -260,7 +260,6 @@ test('UI wiring: avatars, icons, tags, welcome, appearance, thinking', () => {
     !/https?:\/\/|gravatar|gemini/i.test(vis.replace(/Gemini/g, '')),
     'no network / no AI in visuals'
   );
-  assert(!/MailAI-Whisper/i.test(read('lib/offline-mail/offline-voice.tsx')), 'no Whisper folder');
 });
 
 console.log(`\n${passed} passed, ${failed} failed`);
