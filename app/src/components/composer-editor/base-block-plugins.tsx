@@ -8,6 +8,13 @@ import When from 'slate-when';
 import { MessageWithEditorState } from 'mailspring-exports';
 import { BuildToggleButton, IEditorToolbarConfigItem } from './toolbar-component-factories';
 import { ComposerEditorPlugin } from './types';
+import {
+  deserializeBlockData,
+  focusedParagraphDirection,
+  htmlDirForBlock,
+  htmlLangForBlock,
+  setCurrentParagraphDirection,
+} from './paragraph-direction';
 
 function nodeIsEmpty(node: Node) {
   if (node.text !== '') {
@@ -96,16 +103,17 @@ export const BLOCK_CONFIG: {
     type: 'div',
     tagNames: ['div', 'br', 'p'],
     render: ({ node, attributes, children, targetIsHTML }) => {
-      let explicitHTMLAttributes = undefined;
+      const dir = htmlDirForBlock(node);
+      const lang = htmlLangForBlock(node);
+      const dirAttrs = {
+        ...(dir ? { dir } : {}),
+        ...(lang ? { lang } : {}),
+      };
 
-      if (targetIsHTML) {
-        explicitHTMLAttributes = {};
-        if (node.isLeafBlock() && node.getTextDirection() === 'rtl') {
-          explicitHTMLAttributes.dir = 'rtl';
-        }
-      }
-
-      const sourceClassName = node.data['className'] || node.data.get('className');
+      const data: any = node.data;
+      const sourceClassName = data
+        ? data.className || (typeof data.get === 'function' ? data.get('className') : undefined)
+        : undefined;
       const className = [
         sourceClassName,
         !targetIsHTML && nodeIsEmpty(node) && 'empty-composer-block',
@@ -114,10 +122,10 @@ export const BLOCK_CONFIG: {
         .join(' ');
 
       if (targetIsHTML && nodeIsEmpty(node)) {
-        return <br {...attributes} />;
+        return <br {...attributes} {...dirAttrs} />;
       }
       return (
-        <div {...attributes} {...explicitHTMLAttributes} className={className || undefined}>
+        <div {...attributes} {...dirAttrs} className={className || undefined}>
           {children}
         </div>
       );
@@ -324,13 +332,11 @@ const rules = [
 
       // return block
       if (config) {
-        const className = el.getAttribute('class');
-        const data = className ? { className } : undefined;
         return {
           object: 'block',
           type: config.type,
           nodes: next(el.childNodes),
-          data: data,
+          data: deserializeBlockData(el),
         };
       }
     },
@@ -421,10 +427,46 @@ export function hideQuotedTextByDefault(draft: MessageWithEditorState) {
 
 // plugins
 
+function ParagraphDirectionToolbar({
+  editor,
+  value,
+  className,
+}: {
+  editor: Editor;
+  value: Value;
+  className: string;
+}) {
+  const current = focusedParagraphDirection(value);
+  const btn = (dir: 'rtl' | 'ltr' | 'auto', label: string, aria: string) => (
+    <button
+      type="button"
+      className={`${className || ''} ${current === dir ? 'active' : ''}`}
+      aria-label={aria}
+      aria-pressed={current === dir}
+      data-paragraph-dir={dir}
+      title={aria}
+      onMouseDown={(e) => {
+        e.preventDefault();
+        setCurrentParagraphDirection(editor, dir);
+      }}
+    >
+      {label}
+    </button>
+  );
+  return (
+    <span className="paragraph-dir-controls" role="group" aria-label="כיוון פסקה">
+      {btn('rtl', 'RTL', 'פסקה מימין לשמאל (RTL)')}
+      {btn('ltr', 'LTR', 'פסקה משמאל לימין (LTR)')}
+      {btn('auto', 'Auto', 'כיוון פסקה אוטומטי')}
+    </span>
+  );
+}
+
 const MailspringBaseBlockPlugin: ComposerEditorPlugin = {
   toolbarComponents: Object.values(BLOCK_CONFIG)
     .filter((config) => config.button)
-    .map(BuildToggleButton),
+    .map(BuildToggleButton)
+    .concat([ParagraphDirectionToolbar as any]),
   renderNode,
   appCommands: {
     'core:select-all': (event, editor: Editor) => {

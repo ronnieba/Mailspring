@@ -1,0 +1,8 @@
+From: Archive Sender <archive-sender@example.test>
+To: Archive Reader <archive-reader@example.test>
+Subject: Starred maildir fixture
+Date: Wed, 30 Oct 2024 15:00:00 +0000
+Message-ID: <starred@example.test>
+Content-Type: text/plain; charset=utf-8
+
+Maildir cur/ entry without a .eml suffix.

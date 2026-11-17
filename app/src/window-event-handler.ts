@@ -4,6 +4,12 @@ import url from 'url';
 import { localized } from './intl';
 import { developerToolsAvailable } from './developer-tools';
 import DOMUtils from './dom-utils';
+import { isDemoMode } from './demo-mode';
+import {
+  ensurePersonalDictionary,
+  getActivePersonalDictionary,
+} from './spellcheck/personal-dictionary';
+import { nativeContextSpellItems } from './spellcheck/native-availability';
 
 let ComponentRegistry = null;
 
@@ -175,13 +181,19 @@ export default class WindowEventHandler {
         return;
       }
 
+      event.preventDefault();
+
       const { Menu, MenuItem } = require('@electron/remote');
       const menu = new Menu();
+      const spell = nativeContextSpellItems(params);
 
-      // Add spelling suggestions if there's a misspelled word
-      if (params.misspelledWord) {
-        if (params.dictionarySuggestions && params.dictionarySuggestions.length > 0) {
-          for (const suggestion of params.dictionarySuggestions) {
+      // Suggestions come only from Electron/NSSpellChecker. 34a90265: English
+      // and Hebrew misspelledWord with empty dictionarySuggestions — electron
+      // #24455 / macOS Automatic by Language, not a missing handler. Never
+      // invent or auto-apply replacements.
+      if (spell.misspelledWord) {
+        if (spell.suggestions.length > 0) {
+          for (const suggestion of spell.suggestions) {
             menu.append(
               new MenuItem({
                 label: suggestion,
@@ -198,7 +210,14 @@ export default class WindowEventHandler {
           new MenuItem({
             label: localized('Learn Spelling'),
             click: () => {
-              webContents.session.addWordToSpellCheckerDictionary(params.misspelledWord);
+              if (isDemoMode()) {
+                const dict =
+                  getActivePersonalDictionary() ||
+                  ensurePersonalDictionary(AppEnv.getConfigDirPath());
+                dict.add(spell.misspelledWord);
+                return;
+              }
+              webContents.session.addWordToSpellCheckerDictionary(spell.misspelledWord);
             },
           })
         );

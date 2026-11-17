@@ -2,6 +2,7 @@ import React from 'react';
 import { localized, DefaultClientHelper } from 'mailspring-exports';
 import { Notification } from 'mailspring-component-kit';
 import { IDisposable } from 'rx-core';
+import { isDemoMode } from '../../../../src/demo-mode';
 
 const SETTINGS_KEY = 'mailto.prompted-about-default';
 
@@ -24,6 +25,11 @@ export default class DefaultClientNotification extends React.Component<
 
   componentDidMount() {
     this.mounted = true;
+    // Demo must not register mailto or prompt to become the OS default client.
+    if (isDemoMode()) {
+      this.setState({ initializing: false, alreadyPrompted: true, registered: true });
+      return;
+    }
     this.helper.isRegisteredForURLScheme('mailto', (registered) => {
       if (this.mounted) {
         this.setState({

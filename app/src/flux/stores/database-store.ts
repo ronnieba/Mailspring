@@ -10,6 +10,16 @@ import { Model } from '../models/model';
 import MailspringStore from '../../global/mailspring-store';
 import * as Utils from '../models/utils';
 import Query from '../models/query';
+import { isDemoMode } from '../../demo-mode';
+import { isOfflineArchiveMode } from '../../offline-archive';
+import { sanitizeSpawnEnv } from '../../browser/gemini-demo-secret';
+import {
+  shouldOpenMailCacheDatabase,
+  shouldRebuildMailCacheOnError,
+  fixtureOnlyQueryResult,
+  MAIL_CACHE_SQLITE_OPEN_OPTIONS,
+  applyMailCacheConnectionPragmas,
+} from '../../mail-database-policy';
 
 const debug = createDebug('app:RxDB');
 const debugVerbose = createDebug('app:RxDB:all');
@@ -37,6 +47,10 @@ function trimTo(str: string, size?: number) {
 function handleUnrecoverableDatabaseError(
   err = new Error(`Manually called handleUnrecoverableDatabaseError`)
 ) {
+  if (!shouldRebuildMailCacheOnError({ demoMode: isDemoMode() })) {
+    console.error('[Demo Mode] Mail cache error (no rebuild/relaunch):', err);
+    return;
+  }
   AppEnv.errorLogger.reportError(err);
   const app = require('@electron/remote').getGlobal('application');
   if (!app) {
@@ -50,22 +64,17 @@ function handleUnrecoverableDatabaseError(
 
 async function openDatabase(dbPath: string) {
   try {
-    const db = new Sqlite3(dbPath, { readonly: true, timeout: 10000 }) as Sqlite3.Database;
+    const db = new Sqlite3(dbPath, MAIL_CACHE_SQLITE_OPEN_OPTIONS) as Sqlite3.Database;
 
     // https://www.sqlite.org/wal.html
     // WAL provides more concurrency as readers do not block writers and a writer
     // does not block readers. Reading and writing can proceed concurrently.
-    db.pragma(`journal_mode = WAL`);
-
     // Note: These are properties of the connection, so they must be set regardless
     // of whether the database setup queries are run.
-
+    //
     // https://www.sqlite.org/intern-v-extern-blob.html
     // A database page size of 8192 or 16384 gives the best performance for large BLOB I/O.
-    db.pragma(`main.page_size = 8192`);
-    db.pragma(`main.cache_size = 20000`);
-    db.pragma(`main.synchronous = NORMAL`);
-
+    //
     // https://www.sqlite.org/mmap.html
     // Pages inside the mapping are read straight from the OS page cache instead of being
     // copied into SQLite's cache. The mapping covers the start of the file, not its hottest
@@ -73,7 +82,7 @@ async function openDatabase(dbPath: string) {
     // mapping stops the sync engine from truncating the file; SQLite ignores that failure
     // (ERROR_USER_MAPPED_FILE in winTruncate) and the file keeps its size until a later
     // truncate succeeds.
-    db.pragma(`mmap_size = 2147418112`);
+    applyMailCacheConnectionPragmas(db);
     return db;
   } catch (err) {
     handleUnrecoverableDatabaseError(err);
@@ -143,18 +152,44 @@ class DatabaseStore extends MailspringStore {
   _preparedStatementCache = new LRUCache<string, Sqlite3.Statement<any[]>>({ max: 500 });
   _databasePath = databasePath(AppEnv.getConfigDirPath(), AppEnv.inSpecMode());
   _db?: Sqlite3.Database;
+  _fixtureOnly = false;
 
   constructor() {
     super();
 
     this.setupEmitter();
 
-    if (!AppEnv.inSpecMode()) {
-      this.open();
+    if (AppEnv.inSpecMode()) {
+      return;
     }
+    if (
+      !shouldOpenMailCacheDatabase({
+        demoMode: isDemoMode(),
+        offlineArchive: isOfflineArchiveMode(),
+      })
+    ) {
+      // Fixture-only: do not open edgehill.db. Readonly+WAL on a missing or
+      // stub file is SqliteError SQLITE_READONLY and a rebuild loop.
+      this._fixtureOnly = true;
+      this._open = true;
+      console.log('[DatabaseStore] mail cache not opened (fixtures / offline archive)');
+      return;
+    }
+    this.open();
   }
 
   async open() {
+    if (
+      this._fixtureOnly ||
+      !shouldOpenMailCacheDatabase({
+        demoMode: isDemoMode(),
+        offlineArchive: isOfflineArchiveMode(),
+      })
+    ) {
+      this._fixtureOnly = true;
+      this._open = true;
+      return;
+    }
     this._db = await openDatabase(this._databasePath);
     this._open = true;
     for (const w of this._waiting) {
@@ -225,6 +260,10 @@ class DatabaseStore extends MailspringStore {
   _query(query: SQLString, values: SQLValue[] = [], background = false) {
     // eslint-disable-next-line no-async-promise-executor
     return new Promise<{ [key: string]: any }[]>(async (resolve, reject) => {
+      if (this._fixtureOnly) {
+        resolve(fixtureOnlyQueryResult(query));
+        return;
+      }
       if (!this._open) {
         this._waiting.push(() => this._query(query, values).then(resolve, reject));
         return;
@@ -364,12 +403,11 @@ class DatabaseStore extends MailspringStore {
     if (!this._agent && !this._agentSpawnFailed) {
       this._agentOpenQueries = {};
       try {
-        // Pass a null-prototype copy of the environment so a prototype-pollution
-        // bug elsewhere in the process cannot inject inherited properties into
-        // this forked Node agent's environment. See GHSA-gjr7-3mj2-cr54.
+        // Null-prototype copy (GHSA-gjr7-3mj2-cr54) with Gemini DEMO
+        // credential names stripped so this fork cannot re-inherit them.
         this._agent = childProcess.fork(AGENT_PATH, [], {
           silent: true,
-          env: Object.assign(Object.create(null), process.env),
+          env: sanitizeSpawnEnv(process.env),
         });
         if (this._agent.stdout)
           this._agent.stdout.on('data', (data) => console.log(data.toString()));

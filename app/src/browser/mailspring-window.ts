@@ -4,6 +4,7 @@ import fs from 'fs';
 import url from 'url';
 import { EventEmitter } from 'events';
 import { isWaylandSession } from './is-wayland';
+import { offlineAppIconPath } from './offline-branding';
 import { developerToolsAvailable } from '../developer-tools';
 import { XDG_DATA_PATHS, getFirstExistingPath } from '../utils/xdg-paths';
 import { prepareViewWebview, guardViewGuest } from './view-sessions';
@@ -127,6 +128,7 @@ export default class MailspringWindow extends EventEmitter {
         nodeIntegration: true,
         contextIsolation: false,
         webviewTag: true,
+        spellcheck: true,
         // Withholding the capability, rather than only the ways to ask for it, is what makes
         // the console unreachable in a packaged build: these windows hand the renderer a
         // @electron/remote handle to their own webContents, so any code running in them could
@@ -159,6 +161,12 @@ export default class MailspringWindow extends EventEmitter {
         }
       }
       browserWindowOptions.icon = WindowIconPath;
+    }
+
+    // Offline experiment on Windows: its own "Mail AI" window/taskbar icon.
+    const offlineIcon = offlineAppIconPath(this.resourcePath);
+    if (offlineIcon) {
+      browserWindowOptions.icon = offlineIcon;
     }
 
     this.browserWindow = new BrowserWindow(browserWindowOptions);

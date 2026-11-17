@@ -1,0 +1,8 @@
+From: Archive Sender <archive-sender@example.test>
+To: Archive Reader <archive-reader@example.test>
+Subject: Trash fixture
+Date: Thu, 31 Oct 2024 09:00:00 +0000
+Message-ID: <trash@example.test>
+Content-Type: text/plain; charset=utf-8
+
+Trash is inventoried when present in the local archive.

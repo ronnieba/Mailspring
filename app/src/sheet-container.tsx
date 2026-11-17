@@ -7,6 +7,7 @@ import Toolbar from './sheet-toolbar';
 import { Flexbox } from './components/flexbox';
 import { InjectedComponentSet } from './components/injected-component-set';
 import { NavRail } from './components/nav-rail';
+import { isOfflineArchiveMode } from './offline-archive';
 import { SheetDeclaration } from './flux/stores/workspace-store';
 import { Disposable } from 'rx-core';
 
@@ -157,7 +158,9 @@ export default class SheetContainer extends React.Component<
   render() {
     const totalSheets = this.state.stack.length;
     const topSheet = this.state.stack[totalSheets - 1];
-    const hasNavRail = AppEnv.isMainWindow();
+    // Offline experiment: no side rail (Mail is the only section; Views and
+    // other cloud features are off, Settings lives in the top ribbon).
+    const hasNavRail = AppEnv.isMainWindow() && !isOfflineArchiveMode();
 
     if (!topSheet) {
       return <div />;

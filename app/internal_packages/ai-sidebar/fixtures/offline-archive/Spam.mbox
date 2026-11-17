@@ -1,0 +1,19 @@
+From MAILER-DAEMON Fri Nov 01 13:00:00 2024
+From: Spam Fixture <spam@example.test>
+To: Archive Reader <archive-reader@example.test>
+Subject: Spam mbox fixture
+Date: Fri, 01 Nov 2024 13:00:00 +0000
+Message-ID: <spam@example.test>
+Content-Type: text/plain; charset=utf-8
+
+Spam/Bulk inclusion must be inventoried, not silent.
+
+From MAILER-DAEMON Fri Nov 01 13:05:00 2024
+From: Spam Fixture <spam@example.test>
+To: Archive Reader <archive-reader@example.test>
+Subject: Second spam mbox fixture
+Date: Fri, 01 Nov 2024 13:05:00 +0000
+Message-ID: <spam2@example.test>
+Content-Type: text/plain; charset=utf-8
+
+Second mboxrd message. From quoting is restored.

@@ -19,6 +19,7 @@ import KeyManager from '../key-manager';
 import * as Actions from './actions';
 import * as Utils from './models/utils';
 import { Model } from 'mailspring-exports';
+import { isOfflineArchiveMode } from '../offline-archive';
 
 const MAX_CRASH_HISTORY = 10;
 
@@ -430,6 +431,14 @@ export default class MailsyncBridge {
   }
 
   _onQueueTask(task: Task) {
+    if (isOfflineArchiveMode()) {
+      // Offline experiment: there is no mailsync to run tasks (send, move,
+      // delete, flag, mark read...). Drop them so nothing is ever synced back.
+      console.warn(
+        `[Offline archive] dropped ${task && task.constructor ? task.constructor.name : 'task'} (read-only offline copy)`
+      );
+      return;
+    }
     if (!DatabaseObjectRegistry.isInRegistry(task.constructor.name)) {
       console.log(task);
       throw new Error(

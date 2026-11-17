@@ -48,6 +48,49 @@
     .empty-composer-block {
       min-height: 1.4em;
     }
+
+    [dir='rtl'] {
+      direction: rtl;
+      unicode-bidi: isolate;
+      text-align: right;
+    }
+
+    [dir='ltr'] {
+      direction: ltr;
+      unicode-bidi: isolate;
+      text-align: left;
+    }
+
+    .spell-error {
+      border-bottom: 1.5px dotted #c0392b;
+      background: rgba(192, 57, 43, 0.08);
+    }
+  }
+}
+
+.spell-suggestion-popover {
+  margin: 8px 0;
+  padding: 8px;
+  border: 1px solid @border-color-divider;
+  background: @background-primary;
+  color: @text-color;
+  font-size: 12px;
+
+  .spell-suggestion,
+  .spell-dict-add,
+  .spell-dict-remove {
+    display: block;
+    width: 100%;
+    min-height: 28px;
+    text-align: start;
+    margin-top: 4px;
+    padding: 6px 8px;
+    color: @text-color;
+    background: @background-off-primary;
+    border: 1px solid @border-color-divider;
+    -webkit-appearance: none;
+    appearance: none;
+    cursor: pointer;
   }
 }
 
@@ -176,6 +219,22 @@
 
   button.active {
     color: @component-active-color;
+  }
+
+  .paragraph-dir-controls {
+    display: inline-flex;
+    align-items: center;
+    gap: 2px;
+    margin: 0 4px;
+
+    button {
+      max-width: none;
+      width: auto;
+      flex: 0 0 auto;
+      font-size: 11px;
+      font-weight: 600;
+      padding: 4px 6px;
+    }
   }
 
   .dropdown {

@@ -7,6 +7,9 @@ import { Disposable } from 'event-kit';
 import * as Utils from './flux/models/utils';
 import * as MenuHelpers from './menu-helpers';
 import { IMenuItem } from './menu-helpers';
+import { isOfflineArchiveMode } from './offline-archive';
+import { getCurrentLocale } from './intl';
+import { offlineMenuTemplate, readShortCommit } from './offline-menu';
 
 export default class MenuManager {
   resourcePath: string;
@@ -84,6 +87,15 @@ export default class MenuManager {
     });
   };
 
+  private _offlineCommit: string | null = null;
+
+  offlineShortCommit(): string {
+    if (this._offlineCommit === null) {
+      this._offlineCommit = readShortCommit(path.resolve(this.resourcePath, '..'));
+    }
+    return this._offlineCommit;
+  }
+
   loadBaseItems() {
     const dir = path.join(this.resourcePath, 'menus');
     const platformMenuPath = path.join(dir, `${process.platform}.js`);
@@ -132,6 +144,16 @@ export default class MenuManager {
 
   sendToBrowserProcess(template: IMenuItem[], keystrokesByCommand: Record<string, string[]>) {
     const filtered = this.filterMultipleKeystroke(keystrokesByCommand);
+    if (isOfflineArchiveMode()) {
+      // Offline experiment: language, hidden items, "Ctrl+," and version line.
+      const out = offlineMenuTemplate(Utils.deepClone(template) as any, filtered, {
+        lang: /^(he|iw)/i.test(getCurrentLocale() || 'he') ? 'he' : 'en',
+        platform: process.platform,
+        shortCommit: this.offlineShortCommit(),
+        developerMenu: process.env.MAILSPRING_OFFLINE_DEVELOPER_MENU === '1',
+      });
+      return ipcRenderer.send('update-application-menu', out.template, out.keystrokes);
+    }
     return ipcRenderer.send('update-application-menu', template, filtered);
   }
 }

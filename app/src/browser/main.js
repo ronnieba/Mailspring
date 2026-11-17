@@ -5,6 +5,14 @@ const util = require('util');
 
 const fs = require('fs');
 
+// Native e1ec474c: renderer PID 70413 inherited MAILSPRING_DEMO_GEMINI_API_KEY
+// from the launch environment. Native 33d7f263: JS unsetenv contained children
+// but macOS ps eww still showed KEY/PAID on Electron main and the Node
+// launcher. Capture from the dedicated demo Keychain item (or explicit
+// KEY_FILE) into module memory before requiring Electron. Launch-env KEY/PAID
+// are ignored. Does not rewrite exec-time environ.
+require('./gemini-demo-secret').captureAndStripGeminiDemoCredentials();
+
 // On Linux, writes to process.stdout/stderr use a synchronous fast path when
 // the fd is a pipe or a plain file. If the destination goes away or becomes
 // unwritable — the reader end of a pipe exits (EPIPE), or the fd is backed by
@@ -36,35 +44,45 @@ console.inspect = function consoleInspect(val) {
 const { app, session, protocol } = require('electron');
 const path = require('path');
 const { developerToolsAvailable } = require('../developer-tools');
+const {
+  isolatedPaths,
+  startupFlagsFromArgv,
+  identityFromArgv,
+} = require('./dev-isolation');
 
 if (typeof process.setFdLimit === 'function') {
   process.setFdLimit(1024);
 }
 
-const setupConfigDir = args => {
-  let dirname = 'Mailspring';
-  if (args.devMode) {
-    dirname = 'Mailspring-dev';
-  }
-  if (args.specMode) {
-    dirname = 'Mailspring-spec';
-  }
+const setupConfigDir = (args, identity) => {
+  const appData = app.getPath('appData');
+  let override = args.configDirPath;
 
-  // Check if a custom config dir was provided via --config-dir-path
-  let configDirPath = args.configDirPath || path.join(app.getPath('appData'), dirname);
-
-  if (process.platform === 'linux' && process.env.SNAP) {
+  if (process.platform === 'linux' && process.env.SNAP && !override) {
     // for linux snap, use the sandbox directory that is persisted between snap revisions
-    configDirPath = args.configDirPath || process.env.SNAP_USER_COMMON;
+    override = process.env.SNAP_USER_COMMON;
   }
 
-  // crete the directory
-  fs.mkdirSync(configDirPath, { recursive: true });
+  const paths = isolatedPaths(appData, identity, override);
 
-  // tell Electron to use this folder for local storage, etc. as well
-  app.setPath('userData', configDirPath);
+  fs.mkdirSync(paths.configDirPath, { recursive: true });
+  fs.mkdirSync(paths.crashDumps, { recursive: true });
+  fs.mkdirSync(paths.logs, { recursive: true });
 
-  return configDirPath;
+  // Must run before app 'ready'. Default crashDumps otherwise stays at
+  // Application Support/Mailspring/Crashpad (production productName).
+  app.setPath('userData', paths.userData);
+  app.setPath('sessionData', paths.sessionData);
+  app.setPath('crashDumps', paths.crashDumps);
+  try {
+    app.setPath('logs', paths.logs);
+  } catch (err) {
+    // logs path is not writable on every Electron version
+  }
+
+  app.commandLine.appendSwitch('crash-dumps-dir', paths.crashDumps);
+
+  return paths.configDirPath;
 };
 
 const setupCompileCache = (configDirPath, devMode) => {
@@ -144,6 +162,42 @@ const declareOptions = argv => {
     .alias('b', 'background')
     .boolean('b')
     .describe('b', 'Start Mailspring in the background');
+  options
+    .boolean('demo')
+    .describe(
+      'demo',
+      'Start in demo mode with synthetic data (dev only). Skips onboarding and shows main window with mock data.'
+    );
+  options
+    .string('demo-capture')
+    .describe(
+      'demo-capture',
+      'Demo only: capture this instance\'s own BrowserWindow to a PNG path via Electron capturePage, then keep running.'
+    );
+  options
+    .string('demo-delay-ms')
+    .describe(
+      'demo-delay-ms',
+      'Demo+dev only: delay mock responses by N ms so Cancel can be inspected. Ignored without --demo. Capped at 30000. Not a debug or network endpoint.'
+    );
+  options
+    .boolean('real-selected-summary')
+    .describe(
+      'real-selected-summary',
+      'Dev only, not --demo: opt-in one selected-message summary via native MessageStore. Uses Mailspring-dev, never the official app profile. Ignored on packaged production, --demo, and --offline-archive.'
+    );
+  options
+    .boolean('offline-archive')
+    .describe(
+      'offline-archive',
+      'Dev only: disconnected experiment reader. Skips mailsync and never opens Yahoo. Reads a local .eml/maildir/mbox archive. Not --demo. Not live --real-selected-summary.'
+    );
+  options
+    .string('offline-archive-path')
+    .describe(
+      'offline-archive-path',
+      'Absolute path to an immutable local mail archive (Maildir, .eml tree, or mbox). Ignored without --offline-archive. Never points at official Mailspring/.'
+    );
   return options;
 };
 
@@ -172,6 +226,22 @@ const parseCommandLine = argv => {
   const safeMode = args['safe'];
   const background = args['background'];
   const configDirPath = args['config-dir-path'];
+  // Demo is developer-build only. --demo implies isolated synthetic mode and
+  // does not enable --dev by itself on a packaged release.
+  const demoMode = developerBuild && !!args['demo'];
+  const offlineArchive = developerBuild && !!args['offline-archive'] && !demoMode;
+  const realSelectedSummary =
+    developerBuild && !!args['real-selected-summary'] && !demoMode && !offlineArchive;
+  const offlineArchivePath =
+    offlineArchive && args['offline-archive-path'] ? String(args['offline-archive-path']) : null;
+  const demoCapturePath = demoMode && args['demo-capture'] ? args['demo-capture'] : null;
+  let demoDelayMs = 0;
+  if (demoMode && args['demo-delay-ms'] != null && args['demo-delay-ms'] !== '') {
+    const n = parseInt(args['demo-delay-ms'], 10);
+    if (Number.isFinite(n) && n > 0) {
+      demoDelayMs = Math.min(n, 30000);
+    }
+  }
   const specDirectory = args['spec-directory'] && path.resolve(args['spec-directory']);
   if (specDirectory && !fs.existsSync(specDirectory)) {
     process.stderr.write(`--spec-directory does not exist: ${specDirectory}\n`);
@@ -213,7 +283,13 @@ const parseCommandLine = argv => {
 
   return {
     version,
-    devMode,
+    devMode: devMode || demoMode || realSelectedSummary || offlineArchive,
+    demoMode,
+    realSelectedSummary,
+    offlineArchive,
+    offlineArchivePath,
+    demoCapturePath,
+    demoDelayMs,
     background,
     logFile,
     specMode,
@@ -280,22 +356,62 @@ const handleStartupEventWithSquirrel = () => {
 };
 
 const start = () => {
-  if (process.platform === 'win32') {
+  // Isolate from raw argv BEFORE Optimist. Native 63b7210: declareOptions
+  // threw `options.number is not a function` (optimist 0.4 has no .number),
+  // so setName/setPath never ran and GPU/network helpers used production
+  // --user-data-dir=.../Mailspring, not Mailspring-demo. Production launch
+  // (no --demo/--dev/--test, or packaged) still gets appName "Mailspring".
+  const earlyFlags = startupFlagsFromArgv(process.argv);
+  const identity = identityFromArgv(process.argv, {
+    developerBuild: developerToolsAvailable(),
+  });
+  app.setName(identity.appName);
+  if (identity.useMockKeychain) {
+    app.commandLine.appendSwitch('use-mock-keychain');
+  }
+  const configDirPath = setupConfigDir(
+    { configDirPath: earlyFlags.configDirPath },
+    identity
+  );
+  if (identity.appName === 'Mailspring-demo') {
+    process.env.MAILSPRING_DEMO = '1';
+  }
+  if (identity.appName === 'Mailspring-offline') {
+    process.env.MAILSPRING_OFFLINE_ARCHIVE = '1';
+  }
+
+  let options;
+  try {
+    options = parseCommandLine(process.argv);
+  } catch (err) {
+    console.error(
+      `[Startup] CLI parse failed after isolation appName=${identity.appName} userData=${configDirPath}`
+    );
+    throw err;
+  }
+  options.isolation = identity;
+  options.configDirPath = configDirPath;
+
+  if (options.demoMode) {
+    process.env.MAILSPRING_DEMO = '1';
+    if (options.demoDelayMs > 0) {
+      process.env.MAILSPRING_DEMO_DELAY_MS = String(options.demoDelayMs);
+    }
+  }
+  if (options.offlineArchive) {
+    process.env.MAILSPRING_OFFLINE_ARCHIVE = '1';
+    if (options.offlineArchivePath) {
+      process.env.MAILSPRING_OFFLINE_ARCHIVE_PATH = String(options.offlineArchivePath);
+    }
+  }
+
+  if (process.platform === 'win32' && !identity.skipDefaultClient) {
     // Must be set before setAppUserModelId so RegisterActivator writes it
     // into the Start Menu shortcut. Without this, action/reply notification
     // events are silently dropped (COM server is never registered).
     app.setToastActivatorCLSID('{E6AD16B0-2830-48E7-9DB7-439152FA917B}');
     app.setAppUserModelId('com.squirrel.mailspring.mailspring');
   }
-
-  // Set the app name explicitly for Linux to ensure the system tray icon
-  // gets a unique ID. Without this, all Electron apps share the same
-  // StatusNotifierItem ID on Linux, causing their tray visibility settings
-  // to be synchronized. See: https://github.com/electron/electron/issues/40936
-  if (process.platform === 'linux') {
-    app.setName('Mailspring');
-  }
-
 
   protocol.registerSchemesAsPrivileged([
     {
@@ -328,7 +444,8 @@ const start = () => {
   // mailto: links (this doesn't make it the default, just registers it as an option).
   // This handles existing installations and ensures registration completes even if
   // the Squirrel install hook's detached processes didn't finish in time.
-  if (process.platform === 'win32') {
+  // Skip in dev/demo/spec so this process never writes production registry identity.
+  if (process.platform === 'win32' && !identity.skipDefaultClient) {
     const WindowsUpdater = require('./windows-updater');
     if (WindowsUpdater.existsSync()) {
       WindowsUpdater.registerAppUserModelId();
@@ -348,21 +465,24 @@ const start = () => {
   app.commandLine.appendSwitch('autoplay-policy', 'no-user-gesture-required');
   app.commandLine.appendSwitch('js-flags', '--harmony');
 
-  const options = parseCommandLine(process.argv);
   global.errorLogger = setupErrorLogger(options);
-  const configDirPath = setupConfigDir(options);
-  options.configDirPath = configDirPath;
 
   // On macOS, setLoginItemSettings doesn't support passing custom args, so we
   // detect login-item launches via wasOpenedAtLogin and start in background.
-  if (process.platform === 'darwin' && !options.background) {
+  // Skip in demo so we never touch login-item / production launch settings.
+  if (
+    process.platform === 'darwin' &&
+    !options.background &&
+    !options.demoMode &&
+    !options.offlineArchive
+  ) {
     const settings = app.getLoginItemSettings();
     if (settings.wasOpenedAtLogin) {
       options.background = true;
     }
   }
 
-  if (!options.devMode) {
+  if (!identity.skipSingleInstanceLock) {
     const gotTheLock = app.requestSingleInstanceLock();
 
     if (!gotTheLock) {

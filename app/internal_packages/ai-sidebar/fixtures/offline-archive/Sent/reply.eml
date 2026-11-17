@@ -1,0 +1,8 @@
+From: Archive Reader <archive-reader@example.test>
+To: Archive Sender <archive-sender@example.test>
+Subject: Re: Welcome to the local archive
+Date: Fri, 01 Nov 2024 11:00:00 +0000
+Message-ID: <reply@example.test>
+Content-Type: text/plain; charset=utf-8
+
+Sent-folder fixture. This never leaves disk.

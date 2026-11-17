@@ -1,6 +1,7 @@
 import React from 'react';
 import ReactDOM from 'react-dom';
 import { Utils } from 'mailspring-exports';
+import { isRTL } from '../intl';
 
 export const ResizableHandle: { [side: string]: IResizeHandle } = {
   Top: {
@@ -229,11 +230,24 @@ export class ResizableRegion extends React.Component<
     event.preventDefault();
   };
 
+  // With an RTL UI the stylesheets are mirrored by rtlcss, so a "Right" handle
+  // is drawn on the column's left edge (and vice versa). Mirror the drag math
+  // too, otherwise dragging a divider snaps the column to its min width.
+  _effectiveHandle(): IResizeHandle {
+    const h = this.props.handle;
+    if (!isRTL || h.axis !== 'horizontal') {
+      return h;
+    }
+    if (h === ResizableHandle.Right) return ResizableHandle.Left;
+    if (h === ResizableHandle.Left) return ResizableHandle.Right;
+    return h;
+  }
+
   _mouseMove = (event: MouseEvent) => {
     if (!this.state.dragging) {
       return;
     }
-    this.setState(this.props.handle.transform(this.state, this.props, event));
+    this.setState(this._effectiveHandle().transform(this.state, this.props, event));
     if (this.props.onResize) {
       this.props.onResize(this.state.height != null ? this.state.height : this.state.width);
     }

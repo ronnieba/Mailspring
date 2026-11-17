@@ -39,7 +39,21 @@ function writeCachedJavascript(relativeCachePath, code) {
   const cachePath = path.join(cacheDirectory, relativeCachePath);
   fs.mkdirSync(path.dirname(cacheTmpPath), { recursive: true });
   fs.writeFileSync(cacheTmpPath, code, 'utf8');
-  fs.renameSync(cacheTmpPath, cachePath);
+  try {
+    fs.renameSync(cacheTmpPath, cachePath);
+  } catch (err) {
+    // Windows: another Mailspring process may have written the same cache
+    // entry (content-addressed) and still hold it open. The existing entry is
+    // identical, so drop our temp file instead of failing the module load.
+    try {
+      fs.unlinkSync(cacheTmpPath);
+    } catch (_e) {
+      // ignore
+    }
+    if (!fs.existsSync(cachePath)) {
+      throw err;
+    }
+  }
 }
 
 function addSourceURL(jsCode, filePath) {

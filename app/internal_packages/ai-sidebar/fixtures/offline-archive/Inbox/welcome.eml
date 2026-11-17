@@ -1,0 +1,22 @@
+From: Archive Sender <archive-sender@example.test>
+To: Archive Reader <archive-reader@example.test>
+Subject: Welcome to the local archive
+Date: Fri, 01 Nov 2024 10:00:00 +0000
+Message-ID: <welcome@example.test>
+MIME-Version: 1.0
+Content-Type: multipart/mixed; boundary="mix1"
+
+--mix1
+Content-Type: text/html; charset=utf-8
+
+<html><body>
+<script>alert(1)</script>
+<img src="https://evil.example.test/pixel.png" onerror="alert(1)">
+<p>Inbox body for the disconnected archive reader.</p>
+</body></html>
+--mix1
+Content-Type: text/plain; charset=utf-8
+Content-Disposition: attachment; filename="note.txt"
+
+fixture-attachment
+--mix1--

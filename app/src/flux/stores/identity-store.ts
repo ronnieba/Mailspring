@@ -9,6 +9,7 @@ import KeyManager from '../../key-manager';
 import { makeRequest, rootURLForServer } from '../mailspring-api-request';
 import { Disposable } from 'event-kit';
 import { debounce } from 'underscore';
+import { isDemoMode } from '../../demo-mode';
 
 // Note this key name is used when migrating to Mailspring Pro accounts from old N1.
 const PASSWORD_NAME = 'Mailspring Account';
@@ -47,6 +48,14 @@ class _IdentityStore extends MailspringStore {
 
   constructor() {
     super();
+
+    // Demo mode: Skip all keychain and identity operations.
+    // This prevents any keychain prompts or credential access during synthetic demo.
+    if (isDemoMode()) {
+      console.log('[Demo Mode] IdentityStore: Skipping identity/keychain initialization');
+      this._identity = null;
+      return;
+    }
 
     if (AppEnv.isEmptyWindow()) {
       /*

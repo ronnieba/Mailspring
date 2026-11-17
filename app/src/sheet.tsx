@@ -165,7 +165,7 @@ export default class Sheet extends React.Component<SheetProps, SheetState> {
     const data = props.data;
 
     if (data && data.columns[state.mode]) {
-      data.columns[state.mode].forEach((location, idx) => {
+      data.columns[state.mode].forEach((location) => {
         if (WorkspaceStore.isLocationHidden(location)) {
           return;
         }
@@ -198,11 +198,15 @@ export default class Sheet extends React.Component<SheetProps, SheetState> {
 
         const width = AppEnv.getColumnWidth(columnWidthKey(location.id));
         const col = { maxWidth, minWidth, location, width };
+        // Index into the visible columns, not the declaration: hidden locations
+        // are skipped above, so `idx` would point one column too far and give
+        // the flexible width to the wrong column (e.g. the sidebar panel).
+        const visibleIdx = state.columns.length;
         state.columns.push(col);
 
         if (maxWidth > widestWidth) {
           widestWidth = maxWidth;
-          widest = idx;
+          widest = visibleIdx;
         }
       });
     }

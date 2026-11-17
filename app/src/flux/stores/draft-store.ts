@@ -20,6 +20,7 @@ import * as ExtensionRegistry from '../../registries/extension-registry';
 import { localized } from '../../intl';
 import { DatabaseChangeRecord } from './database-change-record';
 import AttachmentStore from './attachment-store';
+import { isOfflineArchiveMode } from '../../offline-archive';
 
 interface IThreadMessageModelOrId {
   thread?: Thread;
@@ -46,6 +47,12 @@ class DraftStore extends MailspringStore {
 
   constructor() {
     super();
+    if (isOfflineArchiveMode()) {
+      // Offline experiment: no account and no mailsync. Compose, reply,
+      // forward, send, mailto and draft persistence are intentionally inert.
+      console.log('[Offline archive] DraftStore disabled: compose/reply/forward/send are off');
+      return;
+    }
     this.listenTo(DatabaseStore, this._onDataChanged);
     this.listenTo(Actions.composeReply, this._onComposeReply);
     this.listenTo(Actions.composeForward, this._onComposeForward);

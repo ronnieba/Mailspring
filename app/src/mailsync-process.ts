@@ -11,6 +11,7 @@ import { EventEmitter } from 'events';
 import fs from 'fs';
 import { localized } from './intl';
 import { developerToolsAvailable } from './developer-tools';
+import { sanitizeSpawnEnv } from './browser/gemini-demo-secret';
 import { IIdentity, Account } from 'mailspring-exports';
 
 import {
@@ -209,7 +210,7 @@ export class MailsyncProcess extends EventEmitter {
     // genuine environment variables, not properties a prototype-pollution bug
     // elsewhere in the process could have added to Object.prototype. See
     // GHSA-gjr7-3mj2-cr54.
-    const env = Object.assign(Object.create(null), process.env, {
+    const env = Object.assign(sanitizeSpawnEnv(process.env), {
       CONFIG_DIR_PATH: this.configDirPath,
       GMAIL_CLIENT_ID: GMAIL_CLIENT_ID,
       GMAIL_CLIENT_SECRET: GMAIL_CLIENT_SECRET,
